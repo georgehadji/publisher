@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "publisher-reproducibility"
+version = "0.1.0"
+description = "Nightly reproducibility check — cold-vs-cached byte comparison on golden corpus"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["publisher_reproducibility*"]

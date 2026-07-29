@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/profile/1",
+  "title": "OutputProfile",
+  "description": "Vendor-specific output specification — trim, bleed, PDF version, colour space.",
+  "type": "object",
+  "properties": {
+    "schema": { "type": "string", "enum": ["profile/1"] },
+    "name": { "type": "string", "maxLength": 128 },
+    "vendor": { "type": "string", "enum": ["kdp", "ingramspark", "lulu", "barnesnoble", "generic"] },
+    "vendorProfileVersion": { "type": "string", "maxLength": 32 },
+    "trimSize": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "number", "minimum": 76, "maximum": 340, "description": "mm" },
+        "height": { "type": "number", "minimum": 100, "maximum": 340, "description": "mm" },
+        "unit": { "type": "string", "enum": ["mm", "in"], "default": "mm" }
+      },
+      "required": ["width", "height"],
+      "additionalProperties": false
+    },
+    "bleed": {
+      "type": "object",
+      "properties": {
+        "all": { "type": "number", "minimum": 0, "maximum": 25, "description": "mm", "default": 3 },
+        "top": { "type": "number", "minimum": 0, "maximum": 25 },
+        "bottom": { "type": "number", "minimum": 0, "maximum": 25 },
+        "inside": { "type": "number", "minimum": 0, "maximum": 25 },
+        "outside": { "type": "number", "minimum": 0, "maximum": 25 }
+      },
+      "additionalProperties": false
+    },
+    "pdfSpec": {
+      "type": "object",
+      "properties": {
+        "version": { "type": "string", "enum": ["1.3", "1.4", "1.5", "1.6", "1.7", "2.0"], "default": "1.7" },
+        "standard": { "type": "string", "enum": ["none", "pdfx-1a", "pdfx-3", "pdfx-4", "pdfa-2b"], "default": "pdfx-1a" },
+        "colorSpace": { "type": "string", "enum": ["cmyk", "gray", "rgb"], "default": "cmyk" },
+        "outputIntent": {
+          "type": "object",
+          "properties": {
+            "iccProfileHash": { "$ref": "#/$defs/sha256" },
+            "iccProfileName": { "type": "string", "maxLength": 128 },
+            "registryUrl": { "type": "string", "format": "uri" }
+          },
+          "required": ["iccProfileHash"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["standard", "colorSpace"],
+      "additionalProperties": false
+    },
+    "coverSpec": {
+      "type": "object",
+      "properties": {
+        "paperType": { "type": "string", "enum": ["matte", "glossy", "premium-matte", "linen", "none"] },
+        "ink": { "type": "string", "enum": ["full-color", "black-and-white"], "default": "full-color" },
+        "finish": { "type": "string", "enum": ["perfect-bound", "saddle-stitch", "case-bound", "spiral"] }
+      },
+      "additionalProperties": false
+    },
+    "proofSpec": {
+      "type": "object",
+      "properties": {
+        "watermark": { "type": "boolean", "default": true },
+        "dpi": { "type": "integer", "enum": [72, 150, 300], "default": 150 },
+        "sizeBudgetBytes": { "type": "integer", "minimum": 0, "description": "0 = no limit" }
+      },
+      "additionalProperties": false,
+      "description": "Proof PDF spec — O4: if sizeBudgetBytes is set, preflight enforces it as a policy_violation"
+    },
+    "deliverySpec": {
+      "type": "object",
+      "properties": {
+        "interiorFormat": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["pdf", "epub", "idml", "onix"] },
+          "maxItems": 4
+        },
+        "coverFormat": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["pdf", "jpeg"] },
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "minPages": { "type": "integer", "minimum": 1, "description": "Vendor minimum page count" },
+    "maxPages": { "type": "integer", "minimum": 1, "description": "Vendor maximum page count" },
+    "pageSizeMultiple": { "type": "integer", "minimum": 1, "default": 4, "description": "e.g. 4 for KDP (books are 4-page multiples)" },
+    "validatedAt": { "type": "string", "format": "date-time" }
+  },
+  "required": ["schema", "name", "vendor", "trimSize", "pdfSpec"],
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

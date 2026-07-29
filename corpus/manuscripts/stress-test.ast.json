@@ -1,0 +1,2710 @@
+{
+  "schema": "ast/1",
+  "metadata": {
+    "title": "Synthetic: Stress Test",
+    "language": "en-US"
+  },
+  "frontMatter": [
+    {
+      "type": "half_title",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "title_page",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been <b>here</b> before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "copyright",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "dedication",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "epigraph",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, <b>she</b> thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "foreword",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "preface",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "acknowledgments",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "body": [
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 1,
+        "title": "Echoes",
+        "id": "ch1",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "The rain had stopped three hours ago, but the streets still gleamed like polished slate."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "verse",
+          "content": [
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The ink flows freely from the pen,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "And words take shape on empty page."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A story waiting to begin,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A prisoner escaping cage."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The night is long, but dawn will come,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The silence break, the shadows flee."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Until the final page is turned,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The tale belongs to you and me."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "sceneBreak",
+          "attrs": {
+            "ornament": "fleuron"
+          }
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not <b>been</b> reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "attrs": {
+            "language": "python",
+            "numbered": true
+          },
+          "content": "def hello():\n    print('Hello, world!')\n\nif __name__ == '__main__':\n    hello()"
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 2,
+        "title": "The Long Way Down",
+        "id": "ch2",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "The map was wrong. It had been wrong for centuries, but nobody had bothered to check."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had <b>taken</b> pains to ensure their visit would be discovered only now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but <b>by</b> a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        },
+        {
+          "type": "verse",
+          "content": [
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The ink flows freely from the pen,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "And words take shape on empty page."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A story waiting to begin,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A prisoner escaping cage."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The night is long, but dawn will come,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The silence break, the shadows flee."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Until the final page is turned,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The tale belongs to you and me."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes <b>danced</b> in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "verse",
+          "content": [
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The ink flows freely from the pen,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "And words take shape on empty page."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A story waiting to begin,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A prisoner escaping cage."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The night is long, but dawn will come,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The silence break, the shadows flee."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Until the final page is turned,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The tale belongs to you and me."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "table",
+          "attrs": {
+            "caption": "Table 2.4: Experimental Results",
+            "colgroup": [
+              {
+                "width": "33%"
+              },
+              {
+                "width": "33%"
+              },
+              {
+                "width": "33%"
+              }
+            ]
+          },
+          "content": [
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": true
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had expected. It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"I don't believe you,\" she said, her voice steady despite the trembling in her hands."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 3,
+        "title": "Echoes",
+        "id": "ch3",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "It had been a long time since anyone had visited the old house."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "sceneBreak",
+          "attrs": {
+            "ornament": "asterism"
+          }
+        },
+        {
+          "type": "epigraph",
+          "attrs": {
+            "source": "Unknown"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "They walked in silence, the kind of silence that accumulates between people who have run out of word"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "table",
+          "attrs": {
+            "caption": "Table 3.4: Experimental Results",
+            "colgroup": [
+              {
+                "width": "33%"
+              },
+              {
+                "width": "33%"
+              },
+              {
+                "width": "33%"
+              }
+            ]
+          },
+          "content": [
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": true
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, <b>the</b> kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had expected. It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had expected. It was worse."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 4,
+        "title": "Consequences",
+        "id": "ch4",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "There are stories that begin with a death, and stories that begin with a birth. This one begins with a door."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had expected. It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"I don't believe you,\" she said, her voice steady despite the trembling in her hands."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had <b>not</b> been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "verse",
+          "content": [
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The ink flows freely from the pen,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "And words take shape on empty page."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A story waiting to begin,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A prisoner escaping cage."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The night is long, but dawn will come,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The silence break, the shadows flee."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Until the final page is turned,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The tale belongs to you and me."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"I don't believe you,\" she said, her voice steady despite the trembling in her hands."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 5,
+        "title": "The Beginning",
+        "id": "ch5",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "The letter arrived on a Tuesday, though it was postmarked from a Thursday."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"But why now?\" The question hung in the air, unanswered."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had <b>been</b> willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to <b>announce</b> their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are <b>all</b> looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between <b>people</b> who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "attrs": {
+            "language": "python",
+            "numbered": true
+          },
+          "content": "def hello():\n    print('Hello, world!')\n\nif __name__ == '__main__':\n    hello()"
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"But why now?\" The question hung in the air, unanswered."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, <b>a</b> comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 6,
+        "title": "The Long Way Down",
+        "id": "ch6",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "It had been a long time since anyone had visited the old house."
+            }
+          ]
+        },
+        {
+          "type": "verse",
+          "content": [
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The ink flows freely from the pen,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "And words take shape on empty page."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A story waiting to begin,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A prisoner escaping cage."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The night is long, but dawn will come,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The silence break, the shadows flee."
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Until the final page is turned,"
+                }
+              ]
+            },
+            {
+              "type": "line",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The tale belongs to you and me."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "epigraph",
+          "attrs": {
+            "source": "Unknown"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"You knew all along, didn't you?\" There was no accusation in her voice, only resignation."
+            }
+          ]
+        },
+        {
+          "type": "sceneBreak",
+          "attrs": {
+            "ornament": "dinkus"
+          }
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"But why now?\" The question hung in the air, unanswered."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"You knew all along, didn't you?\" There was no accusation in her voice, only resignation."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "He said nothing, which was, in its own way, the most damning answer of all."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The <b>first</b> two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "table",
+          "attrs": {
+            "caption": "Table 6.3: Experimental Results",
+            "colgroup": [
+              {
+                "width": "50%"
+              },
+              {
+                "width": "50%"
+              }
+            ]
+          },
+          "content": [
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": true
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 7,
+        "title": "Echoes",
+        "id": "ch7",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "The rain had stopped three hours ago, but the streets still gleamed like polished slate."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"This changes everything,\" he whispered. \"Everything.\""
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had expected. It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"I don't believe you,\" she said, her voice steady despite the trembling in her hands."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken <b>so</b> quietly he almost missed it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 8,
+        "title": "The Distance Between",
+        "id": "ch8",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "The letter arrived on a Tuesday, though it was postmarked from a Thursday."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "He said nothing, which was, in its own way, the most damning answer of all."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "attrs": {
+            "language": "python",
+            "numbered": true
+          },
+          "content": "def hello():\n    print('Hello, world!')\n\nif __name__ == '__main__':\n    hello()"
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "He said nothing, which was, in its own way, the most damning answer of all."
+            }
+          ]
+        },
+        {
+          "type": "table",
+          "attrs": {
+            "caption": "Table 8.3: Experimental Results",
+            "colgroup": [
+              {
+                "width": "25%"
+              },
+              {
+                "width": "25%"
+              },
+              {
+                "width": "25%"
+              },
+              {
+                "width": "25%"
+              }
+            ]
+          },
+          "content": [
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": true
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 4"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 4"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 4"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 4"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table-row",
+              "attrs": {
+                "header": false
+              },
+              "content": [
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 1"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 2"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 3"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table-cell",
+                  "attrs": {},
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Col 4"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "normal"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "\"This changes everything,\" he whispered. \"Everything.\""
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "backMatter": [
+    {
+      "type": "afterword",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "appendix",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "notes",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "bibliography",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought <b>to</b> be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "index",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "about_author",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "also_by",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "colophon",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "integrityHash": "sha256:f8b75c24f212e169b1917a9896b965e7d53598c5f0c5c9ec6e3a80b3a27072c9",
+  "sourceRef": {
+    "manuscriptId": "synthetic-stress-test-v1",
+    "inferenceVersion": 1,
+    "createdAt": "2026-07-29T13:37:52.830252ZZ"
+  }
+}

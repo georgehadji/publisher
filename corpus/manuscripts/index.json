@@ -1,0 +1,45 @@
+{
+  "schema": "corpus-index/1",
+  "generatedAt": "2026-07-29T13:37:52.883123ZZ",
+  "seed": 42,
+  "templates": [
+    "minimal-novel",
+    "messy-novel",
+    "technical-book",
+    "fiction-dialogue-heavy",
+    "memoir-illustrated",
+    "stress-test"
+  ],
+  "manuscripts": [
+    {
+      "id": "synthetic-minimal-novel-v1",
+      "template": "minimal-novel",
+      "description": "Simple 3-chapter novel, clean styles, no complications"
+    },
+    {
+      "id": "synthetic-messy-novel-v1",
+      "template": "messy-novel",
+      "description": "6-chapter novel with typical hard-coded formatting"
+    },
+    {
+      "id": "synthetic-technical-book-v1",
+      "template": "technical-book",
+      "description": "STEM book with code blocks, equations, tables, footnotes"
+    },
+    {
+      "id": "synthetic-fiction-dialogue-heavy-v1",
+      "template": "fiction-dialogue-heavy",
+      "description": "Novel with extensive dialogue, scene breaks, verse"
+    },
+    {
+      "id": "synthetic-memoir-illustrated-v1",
+      "template": "memoir-illustrated",
+      "description": "Memoir with embedded images, sidebars, blockquotes"
+    },
+    {
+      "id": "synthetic-stress-test-v1",
+      "template": "stress-test",
+      "description": "Maximum complexity: all complication types simultaneously"
+    }
+  ]
+}

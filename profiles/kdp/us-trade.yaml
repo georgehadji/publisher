@@ -1,0 +1,81 @@
+# KDP (Kindle Direct Publishing) vendor profile v2025.1
+# Source: https://kdp.amazon.com/en_US/help/topic/G201834340
+schema: profile/1
+name: KDP US Trade 6x9
+vendor: kdp
+vendorProfileVersion: "2025.1"
+trimSize:
+  width: 152.4
+  height: 228.6
+  unit: mm
+bleed:
+  all: 3.175
+pdfSpec:
+  version: "1.7"
+  standard: pdfx-1a
+  colorSpace: cmyk
+coverSpec:
+  paperType: matte
+  ink: full-color
+  finish: perfect-bound
+proofSpec:
+  watermark: true
+  dpi: 150
+  sizeBudgetBytes: 50000000  # 50 MB max for proof
+minPages: 24
+maxPages: 828
+pageSizeMultiple: 4
+---
+# KDP US Trade 5.5x8.5
+schema: profile/1
+name: KDP US Trade 5.5x8.5
+vendor: kdp
+vendorProfileVersion: "2025.1"
+trimSize:
+  width: 139.7
+  height: 215.9
+  unit: mm
+bleed:
+  all: 3.175
+pdfSpec:
+  version: "1.7"
+  standard: pdfx-1a
+  colorSpace: cmyk
+coverSpec:
+  paperType: matte
+  ink: full-color
+  finish: perfect-bound
+proofSpec:
+  watermark: true
+  dpi: 150
+  sizeBudgetBytes: 50000000
+minPages: 24
+maxPages: 828
+pageSizeMultiple: 4
+---
+# KDP US Trade 8.5x11
+schema: profile/1
+name: KDP US Trade 8.5x11
+vendor: kdp
+vendorProfileVersion: "2025.1"
+trimSize:
+  width: 215.9
+  height: 279.4
+  unit: mm
+bleed:
+  all: 3.175
+pdfSpec:
+  version: "1.7"
+  standard: pdfx-1a
+  colorSpace: cmyk
+coverSpec:
+  paperType: matte
+  ink: full-color
+  finish: perfect-bound
+proofSpec:
+  watermark: true
+  dpi: 150
+  sizeBudgetBytes: 70000000
+minPages: 24
+maxPages: 828
+pageSizeMultiple: 4

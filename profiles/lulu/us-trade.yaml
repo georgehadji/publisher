@@ -1,0 +1,26 @@
+# Lulu Direct vendor profile v2025.1
+schema: profile/1
+name: Lulu US Trade 6x9
+vendor: lulu
+vendorProfileVersion: "2025.1"
+trimSize:
+  width: 152.4
+  height: 228.6
+  unit: mm
+bleed:
+  all: 3.175
+pdfSpec:
+  version: "1.7"
+  standard: pdfx-1a
+  colorSpace: cmyk
+coverSpec:
+  paperType: matte
+  ink: full-color
+  finish: perfect-bound
+proofSpec:
+  watermark: true
+  dpi: 150
+  sizeBudgetBytes: 50000000
+minPages: 20
+maxPages: 740
+pageSizeMultiple: 2

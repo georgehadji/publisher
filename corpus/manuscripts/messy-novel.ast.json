@@ -1,0 +1,953 @@
+{
+  "schema": "ast/1",
+  "metadata": {
+    "title": "Synthetic: Messy Novel",
+    "language": "en-US"
+  },
+  "frontMatter": [
+    {
+      "type": "half_title",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "title_page",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "copyright",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something <b>other</b> than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "dedication",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was <b>not</b> what anyone had expected. It was worse."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "epigraph",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "body": [
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 1,
+        "title": "Ashes",
+        "id": "ch1",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "The beginning was not the beginning, though it pretended to be."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of <b>being</b> in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not <b>been</b> reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not <b>a</b> dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, <b>was</b> not what anyone had expected. It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had <b>expected.</b> It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she <b>had</b> not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 2,
+        "title": "Echoes",
+        "id": "ch2",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "It had been a long time since anyone had visited the old house."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had expected. It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had expected. It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had <b>been</b> willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had expected. It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort <b>habit</b> acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room <b>full</b> of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 3,
+        "title": "Echoes",
+        "id": "ch3",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "History, they say, is written by the victors. But this history had no victors."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that <b>was</b> precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be <b>hidden</b> for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been <b>both</b> sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were <b>never</b> truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had expected. It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who <b>are</b> all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 4,
+        "title": "Departures",
+        "id": "ch4",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Numbers had never lied to Elara. People did, constantly, but numbers were faithful."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. <b>Someone</b> had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular <b>loneliness</b> of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, <b>a</b> word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 5,
+        "title": "Departures",
+        "id": "ch5",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "History, they say, is written by the victors. But this history had no victors."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood <b>when</b> books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "He remembered the exact moment when everything had changed. It was not a dramatic moment, not marked by thunder or revelation, but by a single sentence spoken so quietly he almost missed it."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full <b>of</b> people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The algorithm had been running for 47 hours when it finally returned its verdict. The answer, when it came, was not what anyone had expected. It was worse."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Three things cannot be hidden for long: the sun, the moon, and the truth. The first two, at least, had the decency to announce their movements."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chapter",
+      "attrs": {
+        "number": 6,
+        "title": "Echoes",
+        "id": "ch6",
+        "startsOn": "recto"
+      },
+      "content": [
+        {
+          "type": "paragraph",
+          "attrs": {
+            "role": "chapter-opening"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "The letter arrived on a Tuesday, though it was postmarked from a Thursday."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "She turned the page, though she had not been reading. The motion was reflexive, a comfort habit acquired from childhood when books had been both sanctuary and escape."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem proved something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "They walked in silence, the kind of silence that accumulates between people who have run out of words but not of feeling. The pavement stretched ahead of them, a grey ribbon binding together moments that refused to become memories."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes <b>danced</b> in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The room was quiet, save for the ticking of an ancient clock that seemed to measure something other than time. Dust motes danced in the afternoon light that filtered through curtains drawn against a world that had long since stopped paying attention."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The document was dated 1973, but the ink was fresh. Someone had been here before them, and had taken pains to ensure their visit would be discovered only now."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns <b>that,</b> to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "backMatter": [
+    {
+      "type": "acknowledgments",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "The theorem <b>proved</b> something that everyone had suspected but no one had been willing to state: the universe was not lazy, but it was efficient. Terribly, terribly efficient."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "about_author",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "There ought to be, she thought, a word for the particular loneliness of being in a room full of people who are all looking at their phones."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "also_by",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Data streamed across the screen in patterns that, to the untrained eye, would appear random. But patterns were never truly random, and that was precisely what made them dangerous."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "integrityHash": "sha256:1e197c5dfe858821482c4ddf3446a63d497229960cd5ba84a991001ce83f70f0",
+  "sourceRef": {
+    "manuscriptId": "synthetic-messy-novel-v1",
+    "inferenceVersion": 1,
+    "createdAt": "2026-07-29T13:37:52.730514ZZ"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "schema": "fixture-manifest/1",
+  "fixtureSet": "ast/v1",
+  "description": "AST fixture set v1 — canonical ASTs for contract testing",
+  "createdAt": "2026-07-29T00:00:00Z",
+  "generatedFrom": {
+    "corpusManuscripts": ["mini-novel-v1", "short-story-v1"],
+    "toolchain": { "ingest.version": "0.1.0", "structure.version": "0.1.0" }
+  },
+  "inputs": [
+    {"kind": "typescript-html", "description": "Extracted HTML from DOCX"}
+  ],
+  "expectedOutputs": [
+    {"kind": "ast.json", "schema": "ast/1", "description": "Canonical Book AST"}
+  ],
+  "fixtures": [
+    {
+      "name": "mini-novel",
+      "description": "A 3-chapter literary novel with front/back matter",
+      "inputFiles": {"typescript-html": "inputs/mini-novel.html"},
+      "expectedFiles": {"ast.json": "expected/mini-novel-ast.json"}
+    },
+    {
+      "name": "short-story",
+      "description": "A single-chapter short story with verse and dialogue",
+      "inputFiles": {"typescript-html": "inputs/short-story.html"},
+      "expectedFiles": {"ast.json": "expected/short-story-ast.json"}
+    }
+  ]
+}

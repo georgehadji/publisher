@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/pagemap/1",
+  "title": "PageMap",
+  "description": "Per-page layout metadata produced by paginate and consumed by stitch, folio, TOC, and index.",
+  "type": "object",
+  "properties": {
+    "schema": { "type": "string", "enum": ["pagemap/1"] },
+    "pages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pageEntry" },
+      "minItems": 1
+    },
+    "chapters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/chapterEntry" },
+      "minItems": 1
+    }
+  },
+  "required": ["schema", "pages", "chapters"],
+  "additionalProperties": false,
+  "$defs": {
+    "pageEntry": {
+      "type": "object",
+      "properties": {
+        "pageNumber": { "type": "integer", "minimum": 1 },
+        "folio": { "type": "integer", "minimum": 1 },
+        "side": { "type": "string", "enum": ["recto", "verso"] },
+        "widthPt": { "type": "number", "minimum": 100 },
+        "heightPt": { "type": "number", "minimum": 100 },
+        "chapterId": { "type": "string", "maxLength": 64 },
+        "sectionId": { "type": "string", "maxLength": 64 },
+        "type": {
+          "type": "string",
+          "enum": ["normal", "chapter-opening", "part-opening", "full-bleed", "title-page", "blank"]
+        },
+        "contentStart": { "type": "number", "minimum": 0, "description": "Y-offset where content begins (pt from top)" },
+        "hasOrphans": { "type": "boolean" },
+        "hasWidows": { "type": "boolean" },
+        "hasRunts": { "type": "boolean" },
+        "wordCount": { "type": "integer", "minimum": 0 },
+        "defectScore": { "type": "number", "minimum": 0 },
+        "paraRanges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "paraIndex": { "type": "integer", "minimum": 0 },
+              "linesOnPage": { "type": "integer", "minimum": 1 }
+            },
+            "required": ["paraIndex", "linesOnPage"],
+            "additionalProperties": false
+          },
+          "maxItems": 200
+        }
+      },
+      "required": ["pageNumber", "folio", "side", "widthPt", "heightPt", "chapterId"],
+      "additionalProperties": false
+    },
+    "chapterEntry": {
+      "type": "object",
+      "properties": {
+        "chapterId": { "type": "string", "maxLength": 64 },
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string", "maxLength": 512 },
+        "startPage": { "type": "integer", "minimum": 1 },
+        "endPage": { "type": "integer", "minimum": 1 },
+        "pageCount": { "type": "integer", "minimum": 1 },
+        "startsOn": { "type": "string", "enum": ["recto", "verso", "any"] }
+      },
+      "required": ["chapterId", "number", "startPage", "endPage", "pageCount"],
+      "additionalProperties": false
+    }
+  }
+}

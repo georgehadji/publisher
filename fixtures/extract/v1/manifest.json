@@ -1,0 +1,8 @@
+{
+  "schema": "fixture-manifest/1",
+  "fixtureSet": "extract/v1",
+  "description": "Tracer bullet fixture for extract/v1",
+  "inputs": [],
+  "expectedOutputs": [],
+  "fixtures": []
+}

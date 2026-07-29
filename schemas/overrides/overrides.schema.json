@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/overrides/1",
+  "title": "OverrideSet",
+  "description": "Human decisions layered on top of the derived AST — never mutates it.",
+  "type": "object",
+  "properties": {
+    "schema": { "type": "string", "enum": ["overrides/1"] },
+    "documentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "astVersion": { "type": "integer", "minimum": 1 },
+    "ops": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/overrideOp" },
+      "maxItems": 10000
+    },
+    "orphanedOps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "op": { "$ref": "#/$defs/overrideOp" },
+          "reason": { "type": "string", "enum": ["no_source_ref", "content_mismatch", "fuzzy_match_failed"] }
+        },
+        "required": ["op", "reason"],
+        "additionalProperties": false
+      },
+      "description": "Ops that couldn't be rebased after re-ingest"
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "required": ["schema", "documentId", "astVersion", "ops"],
+  "additionalProperties": false,
+  "$defs": {
+    "overrideOp": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^ov-[a-zA-Z0-9_-]+$", "maxLength": 64 },
+        "sourceRef": {
+          "type": "object",
+          "properties": {
+            "docxId": { "type": "string", "maxLength": 128 },
+            "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "fallbackText": { "type": "string", "maxLength": 256 }
+          },
+          "required": ["docxId"],
+          "additionalProperties": false
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "reclassify",
+            "split",
+            "merge",
+            "promote",
+            "demote",
+            "delete",
+            "insert",
+            "retitle",
+            "rename",
+            "set_attr",
+            "flag_ambiguity",
+            "resolve_ambiguity"
+          ]
+        },
+        "path": { "type": "string", "maxLength": 256, "description": "JSON Pointer to the target within the AST" },
+        "from": { "type": "string", "maxLength": 64 },
+        "to": { "type": "string", "maxLength": 64 },
+        "value": {},
+        "rationale": { "type": "string", "maxLength": 4096 },
+        "actor": { "type": "string", "maxLength": 64 },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "sourceRef", "op", "actor", "at"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "op": { "const": "reclassify" } } },
+          "then": { "required": ["from", "to"] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "retitle" } } },
+          "then": { "required": ["value"] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "flag_ambiguity" } } },
+          "then": { "required": ["rationale"] }
+        }
+      ]
+    }
+  }
+}

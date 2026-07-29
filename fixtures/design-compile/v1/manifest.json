@@ -1,0 +1,33 @@
+{
+  "schema": "fixture-manifest/1",
+  "fixtureSet": "design-compile/v1",
+  "description": "Design-compile fixture set v1 — DesignSpec → CSS/IDML/Typst emitters",
+  "createdAt": "2026-07-29T00:00:00Z",
+  "inputs": [
+    {"kind": "designspec", "schema": "designspec/1"}
+  ],
+  "expectedOutputs": [
+    {"kind": "css", "schema": "text/css"},
+    {"kind": "typst", "schema": "text/typst"}
+  ],
+  "fixtures": [
+    {
+      "name": "literary-novel",
+      "description": "Standard literary novel template (EB Garamond, 6x9)",
+      "inputFiles": {"designspec": "inputs/literary-novel.json"},
+      "expectedFiles": {
+        "css": "expected/literary-novel.css",
+        "typst": "expected/literary-novel.typ"
+      }
+    },
+    {
+      "name": "memoir",
+      "description": "Memoir template with chapter ornaments",
+      "inputFiles": {"designspec": "inputs/memoir.json"},
+      "expectedFiles": {
+        "css": "expected/memoir.css",
+        "typst": "expected/memoir.typ"
+      }
+    }
+  ]
+}

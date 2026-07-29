@@ -1,0 +1,26 @@
+# Generic publisher profile — safe defaults for testing
+schema: profile/1
+name: Generic 6x9
+vendor: generic
+vendorProfileVersion: "1.0"
+trimSize:
+  width: 152.4
+  height: 228.6
+  unit: mm
+bleed:
+  all: 3.0
+pdfSpec:
+  version: "1.7"
+  standard: pdfx-1a
+  colorSpace: cmyk
+coverSpec:
+  paperType: matte
+  ink: full-color
+  finish: perfect-bound
+proofSpec:
+  watermark: false
+  dpi: 300
+  sizeBudgetBytes: 100000000
+minPages: 1
+maxPages: 2000
+pageSizeMultiple: 1

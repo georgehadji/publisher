@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/manifest/1",
+  "title": "BuildManifest",
+  "description": "Immutable record of a completed build — captures every input, stage version, and output artifact.",
+  "type": "object",
+  "properties": {
+    "schema": { "type": "string", "enum": ["manifest/1"] },
+    "buildId": { "type": "string", "pattern": "^bld-[a-zA-Z0-9_-]+$", "maxLength": 64 },
+    "tenantId": { "type": "string", "maxLength": 64 },
+    "titleId": { "type": "string", "maxLength": 64 },
+    "documentId": { "type": "string", "maxLength": 64 },
+    "overrideSetId": { "type": "string", "maxLength": 64 },
+    "designSpecId": { "type": "string", "maxLength": 64 },
+    "profileIds": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 64 },
+      "maxItems": 10
+    },
+    "mode": { "type": "string", "enum": ["proof", "final"] },
+    "toolchain": { "$ref": "#/$defs/toolchainDigest" },
+    "stageVersions": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 1 },
+      "description": "Stage name → version number, e.g. { 'paginate': 17, 'finish': 9 }"
+    },
+    "stages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/stageRecord" },
+      "maxItems": 100
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/artifactRef" },
+      "description": "Artifact kind → ArtifactRef, e.g. { 'pdf-interior': { ... }, 'cover-pdf': { ... } }"
+    },
+    "preflightStatus": { "type": "string", "enum": ["pass", "fail", "not_run"] },
+    "preflightReport": { "$ref": "#/$defs/artifactRef" },
+    "pages": { "type": "integer", "minimum": 1 },
+    "reproductionKey": { "$ref": "#/$defs/sha256", "description": "Hash of (all inputs + toolchain) — used for reproducibility assertion" },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "version": { "type": "integer", "minimum": 1 }
+  },
+  "required": ["schema", "buildId", "toolchain", "stages", "reproductionKey"],
+  "additionalProperties": false,
+  "$defs": {
+    "toolchainDigest": {
+      "type": "object",
+      "properties": {
+        "images": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+          "description": "Service → image digest"
+        },
+        "fonts": { "$ref": "#/$defs/sha256" },
+        "icc": {
+          "type": "object",
+          "properties": {
+            "cmyk": { "$ref": "#/$defs/sha256" },
+            "rgb": { "$ref": "#/$defs/sha256" }
+          },
+          "additionalProperties": false
+        },
+        "hyphen": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Locale → dictionary version"
+        },
+        "engines": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Engine name → semver"
+        },
+        "schema": { "type": "string", "maxLength": 32, "description": "e.g. 'ast/3.2.0'" },
+        "exemplarSetHash": { "$ref": "#/$defs/sha256", "description": "D10: learned exemplar set hash" },
+        "ruleSetVersion": { "type": "string", "maxLength": 32, "description": "D10: rule set version" },
+        "promptVersion": { "type": "string", "maxLength": 32, "description": "D10: prompt version" },
+        "modelId": { "type": "string", "maxLength": 64, "description": "D10: model id for learned stages" }
+      },
+      "required": ["images", "engines"],
+      "additionalProperties": false
+    },
+    "stageRecord": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 64 },
+        "version": { "type": "integer", "minimum": 1 },
+        "status": { "type": "string", "enum": ["completed", "skipped", "failed", "cached"] },
+        "cacheHit": { "type": "boolean" },
+        "cacheKey": { "$ref": "#/$defs/sha256" },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string", "maxLength": 64 },
+              "hash": { "$ref": "#/$defs/sha256" }
+            },
+            "required": ["kind", "hash"],
+            "additionalProperties": false
+          },
+          "maxItems": 50
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string", "maxLength": 64 },
+              "hash": { "$ref": "#/$defs/sha256" }
+            },
+            "required": ["kind", "hash"],
+            "additionalProperties": false
+          },
+          "maxItems": 50
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/diagnostic" },
+          "maxItems": 100
+        },
+        "error": { "$ref": "#/$defs/stageError" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "version", "status"],
+      "additionalProperties": false
+    },
+    "artifactRef": {
+      "type": "object",
+      "properties": {
+        "hash": { "$ref": "#/$defs/sha256" },
+        "mediaType": { "type": "string", "maxLength": 128 },
+        "size": { "type": "integer", "minimum": 0 },
+        "path": { "type": "string", "maxLength": 512 }
+      },
+      "required": ["hash", "mediaType", "size"],
+      "additionalProperties": false
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "maxLength": 64 },
+        "severity": { "type": "string", "enum": ["error", "warning", "info"] },
+        "humanMessage": { "type": "string", "maxLength": 1024 },
+        "suggestedFix": { "type": "string", "maxLength": 1024 },
+        "sourceRef": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["code", "severity", "humanMessage"],
+      "additionalProperties": false
+    },
+    "stageError": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["bad_input", "policy_violation", "engine_bug", "infra", "external_limit"]
+        },
+        "message": { "type": "string", "maxLength": 2048 },
+        "diagnostics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/diagnostic" },
+          "maxItems": 50
+        },
+        "retryCount": { "type": "integer", "minimum": 0 },
+        "retryable": { "type": "boolean" }
+      },
+      "required": ["kind", "message"],
+      "additionalProperties": false
+    }
+  }
+}

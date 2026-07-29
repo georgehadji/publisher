@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "publisher-alttext"
+version = "0.1.0"
+description = "Publisher alttext writer"
+requires-python = ">=3.12"
+dependencies = []
+optional-dependencies = {test = ["pytest>=8.0"]}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["publisher_alttext*"]

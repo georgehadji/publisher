@@ -1,0 +1,73 @@
+# Publisher CI — matches BUILD_PLAN.md declared gates.
+# On push / pull_request to main.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e platform/cas/py -e platform/stages/py -e platform/cache/py -e platform/sandbox/py -e platform/reproducibility -e platform/supply-chain -e services/prepress -e services/structure -e services/agents -e services/learning
+      - name: Full test suite with collection floor
+        run: python -m pytest --tb=short
+      - name: Lint schemas (no free-text in structure routes)
+        run: python tools/lint_schemas.py
+        continue-on-error: true  # Will hard-fail after F3.1
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - run: cargo test
+      - run: cargo clippy -- -D warnings
+
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e platform/cas/py -e platform/stages/py -e platform/cache/py -e platform/sandbox/py -e platform/reproducibility -e platform/supply-chain -e services/prepress -e services/structure -e services/agents -e services/learning
+      - name: Codegen in sync (§3.1 Done)
+        run: |
+          cd schemas && node codegen/generate.mjs && cd ..
+          git diff --exit-code
+      - name: DAG integrity (§3.20)
+        run: python -m platform.stages.integrity
+        continue-on-error: true  # Will hard-fail after F2.1
+      - name: Generated contract tests (§3.20)
+        run: python -m pytest tests/contracts -v
+        continue-on-error: true  # Will hard-fail after F1.2
+      - name: Version-bump rule (§3.3, §7)
+        run: python tools/lint_stage_versions.py
+        continue-on-error: true  # Will hard-fail with cache backend
+
+  doctrine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e platform/cas/py -e platform/stages/py -e platform/cache/py -e platform/sandbox/py -e platform/reproducibility -e platform/supply-chain -e services/prepress -e services/structure -e services/agents -e services/learning
+      - name: Lint schemas (no free-text)
+        run: python tools/lint_schemas.py
+        continue-on-error: true
+      - name: Stage version bump check
+        run: python tools/lint_stage_versions.py
+        continue-on-error: true

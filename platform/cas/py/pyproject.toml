@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "publisher-cas"
+version = "0.1.0"
+description = "Content-addressed store — immutable blob storage keyed by sha256"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+]
+[project.optional-dependencies]
+test = ["pytest>=8.0", "pytest-asyncio"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["publisher_cas*"]

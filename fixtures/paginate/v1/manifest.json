@@ -1,0 +1,8 @@
+{
+  "schema": "fixture-manifest/1",
+  "fixtureSet": "paginate/v1",
+  "description": "Tracer bullet fixture for paginate/v1",
+  "inputs": [],
+  "expectedOutputs": [],
+  "fixtures": []
+}

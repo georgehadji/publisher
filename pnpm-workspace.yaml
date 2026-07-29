@@ -1,0 +1,6 @@
+packages:
+  - "schemas/*"
+  - "platform/*"
+  - "packages/*"
+  - "services/*"
+  - "infra/*"

@@ -1,0 +1,19 @@
+{
+  "name": "publisher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Publisher — DOCX to print-ready book PDF SaaS",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "gen": "node schemas/codegen/generate.mjs",
+    "gen:check": "git diff --exit-code -- '**/*.gen.*'",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "build": "pnpm -r build"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "schema": "fixture-manifest/1",
+  "fixtureSet": "structure/v1",
+  "description": "Tracer bullet fixture for structure/v1",
+  "inputs": [],
+  "expectedOutputs": [],
+  "fixtures": []
+}

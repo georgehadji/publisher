@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/preflight/1",
+  "title": "PreflightReport",
+  "description": "Preflight gate result — blocks delivery unless passed.",
+  "type": "object",
+  "properties": {
+    "schema": { "type": "string", "enum": ["preflight/1"] },
+    "status": { "type": "string", "enum": ["pass", "fail", "warn"] },
+    "profileId": { "type": "string", "maxLength": 64 },
+    "pageCount": { "type": "integer", "minimum": 1 },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/preflightCheck" },
+      "maxItems": 200
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "policyViolations": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["passed", "failed"],
+      "additionalProperties": false
+    },
+    "profileVersion": { "type": "string", "maxLength": 32 },
+    "vendorTemplate": { "type": "string", "maxLength": 64 },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "required": ["schema", "status", "checks", "summary"],
+  "additionalProperties": false,
+  "$defs": {
+    "preflightCheck": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "maxLength": 64, "description": "Unique check identifier, e.g. 'trim-size', 'bleed', 'resolution', 'color-space', 'embed-fonts', 'min-pages', 'max-pages', 'file-size' " },
+        "status": { "type": "string", "enum": ["pass", "fail", "warn", "skip"] },
+        "severity": { "type": "string", "enum": ["error", "warning", "info"] },
+        "humanMessage": { "type": "string", "maxLength": 1024 },
+        "suggestedFix": { "type": "string", "maxLength": 1024 },
+        "sourceRef": { "type": "string", "maxLength": 128, "description": "Reference to the artifact/page that caused the failure" },
+        "value": {},
+        "expected": {},
+        "policyUrl": { "type": "string", "format": "uri", "description": "Link to vendor spec documentation" }
+      },
+      "required": ["code", "status", "severity", "humanMessage"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "schema": "fixture-manifest/1",
+  "fixtureSet": "finish-gs/v1",
+  "description": "Tracer bullet fixture for finish-gs/v1",
+  "inputs": [],
+  "expectedOutputs": [],
+  "fixtures": []
+}

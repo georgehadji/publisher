@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/types/1",
+  "title": "Shared Publisher Types",
+  "description": "Shared type definitions referenced by all schemas.",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Hex-encoded SHA-256 hash"
+    },
+    "hexDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Algorithm-prefixed SHA-256 digest"
+    },
+    "trimSize": {
+      "type": "object",
+      "properties": {
+        "widthMm": { "type": "number", "minimum": 76, "maximum": 340 },
+        "heightMm": { "type": "number", "minimum": 100, "maximum": 340 }
+      },
+      "required": ["widthMm", "heightMm"],
+      "additionalProperties": false
+    },
+    "sourceRef": {
+      "type": "object",
+      "properties": {
+        "docxId": { "type": "string", "maxLength": 128 },
+        "contentHash": { "$ref": "#/$defs/sha256" },
+        "fallbackText": { "type": "string", "maxLength": 256 }
+      },
+      "required": ["docxId"],
+      "additionalProperties": false
+    },
+    "mediaType": {
+      "type": "string",
+      "enum": [
+        "application/pdf",
+        "application/epub+zip",
+        "application/vnd.adobe.indesign-idml-package",
+        "application/xml",
+        "text/html",
+        "text/css",
+        "text/plain",
+        "application/json",
+        "image/png",
+        "image/jpeg",
+        "image/svg+xml",
+        "image/tiff",
+        "font/ttf",
+        "font/otf",
+        "font/woff2"
+      ]
+    },
+    "renderEngine": {
+      "type": "string",
+      "enum": ["chrome-pagedjs", "typst", "prince", "tex"]
+    },
+    "pageSide": {
+      "type": "string",
+      "enum": ["recto", "verso"]
+    },
+    "printColorSpace": {
+      "type": "string",
+      "enum": ["cmyk", "gray", "rgb"]
+    },
+    "errorKind": {
+      "type": "string",
+      "enum": ["bad_input", "policy_violation", "engine_bug", "infra", "external_limit"]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["error", "warning", "info"]
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "maxLength": 64 },
+        "severity": { "$ref": "#/$defs/severity" },
+        "humanMessage": { "type": "string", "maxLength": 1024 },
+        "suggestedFix": { "type": "string", "maxLength": 1024 },
+        "sourceRef": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["code", "severity", "humanMessage"],
+      "additionalProperties": false
+    },
+    "stageName": {
+      "type": "string",
+      "enum": [
+        "acquire", "sanitize", "legacy-convert", "extract", "media-normalize",
+        "structure-rules", "structure-llm", "ast-assemble",
+        "resolve", "design-compile", "paginate", "typo-optimize",
+        "parity-pad", "finish", "preflight", "rasterize",
+        "cover", "epub", "idml", "onix", "package"
+      ]
+    },
+    "canonicalJson": {
+      "type": "object",
+      "description": "A JSON value with sorted keys, fixed float formatting, nulls dropped — used in cache key computation",
+      "additionalProperties": true
+    }
+  }
+}

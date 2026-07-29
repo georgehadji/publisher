@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/classification/1",
+  "title": "ClassificationResult",
+  "description": "LLM classification output — no prose, no free text, closed-enum only.",
+  "type": "object",
+  "properties": {
+    "schema": { "type": "string", "enum": ["classification/1"] },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/classifiedNode" },
+      "maxItems": 50000
+    },
+    "confidences": {
+      "type": "object",
+      "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 },
+      "description": "Per-node confidence scores, keyed by sourceRef"
+    },
+    "modelInfo": {
+      "type": "object",
+      "properties": {
+        "modelId": { "type": "string", "maxLength": 128 },
+        "promptVersion": { "type": "string", "maxLength": 32 },
+        "schemaVersion": { "type": "string", "enum": ["classification/1"] },
+        "cacheHit": { "type": "boolean" },
+        "costUsd": { "type": "number", "minimum": 0 }
+      },
+      "required": ["modelId"],
+      "additionalProperties": false
+    },
+    "suggestions": {
+      "type": "object",
+      "properties": {
+        "genre": { "type": "string", "enum": ["fiction", "nonfiction", "memoir", "poetry", "academic", "technical", "childrens", "drama"] },
+        "trimSizeSuggestion": { "$ref": "#/$defs/trimSizeSuggestion" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema", "nodes", "modelInfo"],
+  "additionalProperties": false,
+  "$defs": {
+    "classifiedNode": {
+      "type": "object",
+      "properties": {
+        "sourceRef": { "type": "string", "maxLength": 128 },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "chapter-title", "heading-1", "heading-2", "heading-3",
+            "paragraph", "chapter-opening", "first-paragraph",
+            "blockquote", "epigraph", "verse", "dialogue",
+            "scene-break", "dinkus",
+            "front-half-title", "front-title-page", "front-copyright", "front-dedication",
+            "front-toc", "front-foreword", "front-preface", "front-acknowledgments", "front-prologue",
+            "back-epilogue", "back-afterword", "back-appendix", "back-notes",
+            "back-bibliography", "back-index", "back-about-author", "back-also-by", "back-colophon",
+            "footnote", "endnote",
+            "table", "table-caption", "figure", "figure-caption",
+            "unordered-list", "ordered-list",
+            "sidebar", "code-block", "equation",
+            "page-break", "section-break",
+            "title-of-work", "foreign-term", "emphasis",
+            "uncertain"
+          ]
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "required": ["sourceRef", "classification", "confidence"],
+      "additionalProperties": false
+    },
+    "trimSizeSuggestion": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "number", "description": "mm" },
+        "height": { "type": "number", "description": "mm" },
+        "rationale": { "type": "string", "enum": ["genre-typical", "page-count-optimal", "vendor-popular"] }
+      },
+      "additionalProperties": false
+    }
+  }
+}

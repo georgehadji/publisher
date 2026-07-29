@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/agent-proposal/1",
+  "title": "AgentProposal",
+  "description": "An agent's proposed action — expressed as override ops, never AST writes.",
+  "type": "object",
+  "properties": {
+    "schema": { "type": "string", "enum": ["agent-proposal/1"] },
+    "agentId": { "type": "string", "maxLength": 128 },
+    "agentVersion": { "type": "string", "maxLength": 32 },
+    "promptVersion": { "type": "string", "maxLength": 32 },
+    "modelId": { "type": "string", "maxLength": 128 },
+    "proposals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/proposal" },
+      "maxItems": 500
+    },
+    "stateChanges": {
+      "type": "object",
+      "properties": {
+        "ruleSetVersion": { "type": "string", "maxLength": 32 },
+        "exemplarSetHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "evaluation": {
+      "type": "object",
+      "properties": {
+        "judgeModelId": { "type": "string", "maxLength": 128 },
+        "scores": {
+          "type": "object",
+          "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "expertReviewed": { "type": "boolean" },
+        "accepted": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "costUsd": { "type": "number", "minimum": 0 },
+    "latencyMs": { "type": "integer", "minimum": 0 },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "required": ["schema", "agentId", "proposals"],
+  "additionalProperties": false,
+  "$defs": {
+    "proposal": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^pr-[a-zA-Z0-9_-]+$", "maxLength": 64 },
+        "type": {
+          "type": "string",
+          "enum": [
+            "reclassify",
+            "merge_chapters",
+            "split_chapter",
+            "adjust_heading_level",
+            "identify_front_matter",
+            "identify_back_matter",
+            "flag_ambiguity",
+            "suggest_title"
+          ]
+        },
+        "sourceRef": {
+          "type": "object",
+          "properties": {
+            "docxId": { "type": "string", "maxLength": 128 },
+            "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          },
+          "required": ["docxId"],
+          "additionalProperties": false
+        },
+        "from": { "type": "string", "maxLength": 64 },
+        "to": { "type": "string", "maxLength": 64 },
+        "value": {
+          "oneOf": [
+            { "type": "string", "maxLength": 256 },
+            { "type": "integer" },
+            { "type": "boolean" },
+            { "type": "number" }
+          ],
+          "description": "Closed union of proposal values. No free-text, no nested objects."
+        },
+        "rationale": { "type": "string", "maxLength": 4096 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 1024 },
+          "maxItems": 20,
+          "description": "Specific evidence the agent used (style name, font size, context, etc.)"
+        }
+      },
+      "required": ["id", "type", "sourceRef", "rationale"],
+      "additionalProperties": false
+    }
+  }
+}
