@@ -163,6 +163,18 @@ def test_build_ast_draft():
     assert draft["body"][0]["attrs"]["title"] == "Chapter 7"
 
 
+def test_verse_lines_survive_parse_and_ast_draft():
+    """Regression test: back-to-back same-tag siblings inside a container
+    must not lose text, and verse-line paragraphs must classify as verse."""
+    blocks = parse_html(SAMPLE_HTML)
+    verse_texts = [b.text.strip() for b in blocks if "verse-line" in b.classes]
+    assert verse_texts == ["The ink flows freely", "From the pen."]
+
+    draft = build_ast_draft(SAMPLE_HTML)
+    verse_nodes = [c for c in draft["body"][0]["content"] if c["type"] == "verse"]
+    assert [v["text"] for v in verse_nodes] == ["The ink flows freely", "From the pen."]
+
+
 def test_block_properties():
     block = Block(type="paragraph", tag="p", classes=["center", "special"])
     assert block.is_centered
@@ -180,13 +192,13 @@ def test_compute_text_integrity_passes_for_matching_text():
     """
     The base case: a draft built from HTML must round-trip against that HTML.
 
-    Deliberately does NOT reuse SAMPLE_HTML's `<div class="verse">` block with two
-    consecutive `<p class="verse-line">` siblings. `TypescriptHTMLParser` silently
-    drops the second sibling in that shape (a stray unflushed text buffer survives
-    an early-return in `_save_previous_block()` when `_current_tag` is already
-    empty) — a real, separate parser completeness bug, not an integrity-gate bug.
-    Flagged as task_022aa8cd; once fixed, this test can switch to the full
-    SAMPLE_HTML and double as that bug's regression test.
+    Historically this avoided SAMPLE_HTML's `<div class="verse">` block, because
+    `TypescriptHTMLParser` dropped the second consecutive `<p class="verse-line">`
+    sibling (a stray unflushed text buffer survived an early return in
+    `_save_previous_block()` when `_current_tag` was already empty). That parser bug
+    is FIXED — `_save_previous_block` now preserves meaningful orphan text — so the
+    flat fixture below is kept only because it isolates the integrity gate from
+    parser behaviour. See test_verse_lines_survive_parsing for the regression cover.
     """
     flat_html = """<h1 class="chapter-title">Chapter 7</h1>
 <p class="chapter-opening">It had been a long time since anyone visited.</p>
@@ -259,3 +271,24 @@ def test_chapter_patterns():
             break
     else:
         assert False, "No pattern matched 'Prologue'"
+
+
+def test_verse_lines_survive_parsing():
+    """
+    Regression: `_save_previous_block()` returned early when `_current_tag` was empty,
+    silently discarding text buffered between sibling tags. Two consecutive
+    `<p class="verse-line">` inside a `<div class="verse">` lost the second line — text
+    vanishing before the integrity gate ever saw it.
+    """
+    draft = build_ast_draft(SAMPLE_HTML)
+    texts = [n["text"] for n in draft["body"][0]["content"]]
+    assert any("The ink flows freely" in t for t in texts)
+    assert any("From the pen." in t for t in texts), "second verse line lost in parsing"
+
+
+def test_verse_lines_are_classified_as_verse():
+    """A `verse-line` paragraph must not fall through to the body-paragraph branch."""
+    classifications = classify_blocks(parse_html(SAMPLE_HTML))
+    verse = [c for c in classifications if c.classification == "verse"]
+    assert len(verse) >= 2, f"expected both verse lines classified, got {len(verse)}"
+    assert all(c.confidence >= 0.8 for c in verse)   # never escalated to the LLM

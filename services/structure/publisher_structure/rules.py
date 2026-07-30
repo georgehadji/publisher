@@ -208,6 +208,16 @@ class TypescriptHTMLParser(HTMLParser):
     def _save_previous_block(self):
         """Save the accumulated tag/runs as a block."""
         if not self._current_tag:
+            # No open block to attach to (e.g. between sibling tags).
+            # Discard pure whitespace. Preserve meaningful orphan text as paragraph.
+            if self._current_text and self._current_text.strip():
+                self.blocks.append(Block(
+                    type="paragraph",
+                    tag="p",
+                    runs=[TextRun(text=self._current_text)],
+                ))
+            self._current_text = ""
+            self._current_runs = []
             return
         
         if self._current_runs or self._current_text:
@@ -463,6 +473,15 @@ def _classify_other(block: Block, i: int, text: str, classifications: list[Class
         ))
         return
     
+    # Verse line (paragraph inside a verse container). Must precede the standard
+    # paragraph branch, or a verse line would classify as body text.
+    if block.type == "paragraph" and "verse-line" in block.classes:
+        classifications.append(Classification(
+            block_index=i, classification="verse", confidence=0.9,
+            source_text=text[:80], evidence=["CSS class: verse-line"],
+        ))
+        return
+
     # Standard paragraph.
     #
     # Confidence must sit ABOVE the 0.8 escalation threshold. A plain <p> that matched
