@@ -167,3 +167,50 @@ def test_fuzzy_match():
     matches = _fuzzy_match("quick brown fox", source_map, cutoff=0.5)
     assert len(matches) >= 1
     assert matches[0]["sourceRef"] == "ref-1"
+
+
+# ── Structural sharing (ARCHITECTURE.md §3.6, BUILD_PLAN.md §3.7) ──────────────
+
+def _big_ast(n: int = 200) -> dict:
+    return {"body": [{"type": "chapter", "sourceRef": {"docxId": "ch1"}, "content": [
+        {"type": "p", "sourceRef": {"docxId": f"p{i}"},
+         "content": [{"type": "text", "text": f"para {i}"}]} for i in range(n)]}]}
+
+
+def test_apply_overrides_does_not_mutate_the_input():
+    ast = _big_ast(5)
+    before = json.dumps(ast, sort_keys=True)
+    apply_overrides(ast, [OverrideOp(id="o1", sourceRef="p3", op="reclassify",
+                                     to_value="chapter-title", actor="user:1")])
+    assert json.dumps(ast, sort_keys=True) == before, "input AST was mutated"
+
+
+def test_apply_overrides_shares_untouched_subtrees():
+    """
+    §3.7: "200 overrides on a 5000-node AST allocates ~200 paths, not a copy."
+    Every node an override did not reach must be the SAME object, not a copy — the
+    previous json round-trip copied all of them.
+    """
+    ast = _big_ast(200)
+    out = apply_overrides(ast, [OverrideOp(id="o1", sourceRef="p7", op="reclassify",
+                                           to_value="chapter-title", actor="user:1")])
+    src = ast["body"][0]["content"]
+    dst = out["body"][0]["content"]
+    shared = sum(1 for a, b in zip(src, dst) if a is b)
+    assert shared == len(src) - 1, f"only {shared}/{len(src)-1} untouched nodes shared"
+    assert dst[7] is not src[7] and dst[7]["type"] == "chapter-title"
+
+
+def test_apply_overrides_applies_every_op_type():
+    ast = _big_ast(4)
+    ops = [
+        OverrideOp(id="o1", sourceRef="p0", op="reclassify", to_value="epigraph", actor="u"),
+        OverrideOp(id="o2", sourceRef="p1", op="delete", actor="u"),
+        OverrideOp(id="o3", sourceRef="p2", op="flag_ambiguity", rationale="unclear", actor="u"),
+    ]
+    out = apply_overrides(ast, ops)
+    content = out["body"][0]["content"]
+    assert content[0]["type"] == "epigraph" and content[0]["_override"] == "o1"
+    assert content[1]["_deleted"] is True
+    assert content[2]["_flags"][0]["message"] == "unclear"
+    assert "_flags" not in content[3]

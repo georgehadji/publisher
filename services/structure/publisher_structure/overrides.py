@@ -272,75 +272,116 @@ def _fuzzy_match(text: str, source_map: dict, cutoff: float = FUZZY_CUTOFF) -> l
     return sorted(matches, key=lambda m: -m["similarity"])
 
 
-def apply_overrides(ast: dict, ops: list[OverrideOp]) -> dict:
+def _matches(node: dict, source_ref: str) -> bool:
+    src = node.get("sourceRef") or node.get("sourceRefLink") or {}
+    if isinstance(src, dict):
+        return src.get("docxId") == source_ref
+    return src == source_ref
+
+
+_CHILD_KEYS = ("content", "frontMatter", "backMatter", "body")
+
+
+def _rewrite(node: Any, source_ref: str, transform) -> Any:
     """
-    Apply override operations to an AST.
-    
-    Overrides never mutate the original AST in place — they produce
-    an "effective document" that is the AST with overrides applied.
-    The underlying AST remains unchanged.
+    Return `node` with the descendant matching `source_ref` replaced by
+    `transform(match)`. Subtrees that contain no match are returned BY IDENTITY, so
+    they are shared with the input rather than copied.
 
-    D4 justification for holding a whole document in memory: this copies the AST once
-    per build (not once per override), then mutates the copy. BUILD_PLAN.md §3.7 calls
-    for structural sharing — "200 overrides on a 5000-node AST allocates ~200 paths,
-    not a copy" — which would make this O(depth) instead of O(n).
-
-    ponytail: whole-document copy, O(n) once per build. Upgrade to a path-copying fold
-    over `_apply_*` if a profiler shows this on the critical path, or when the 900-page
-    anthology case (D4) makes one full copy per build actually hurt. Not done
-    speculatively: the copy is a few ms on a novel, and a partial rewrite of the four
-    mutators is a correctness risk with no measured payoff.
+    This is the structural sharing ARCHITECTURE.md §3.6 and BUILD_PLAN.md §3.7
+    specify: "200 overrides on a 5000-node AST allocates ~200 paths, not a copy" —
+    O(depth) per override instead of O(n). Only the nodes along the path from the root
+    to the changed node are shallow-copied.
     """
-    effective = json.loads(json.dumps(ast))  # deep copy — see ponytail note above
-    
-    for op in ops:
-        if op.op == "reclassify":
-            _apply_reclassify(effective, op)
-        elif op.op == "retitle":
-            _apply_retitle(effective, op)
-        elif op.op == "delete":
-            _apply_delete(effective, op)
-        elif op.op == "flag_ambiguity":
-            _apply_flag_ambiguity(effective, op)
-        # Other ops: split, merge, etc.
-    
-    return effective
+    if isinstance(node, list):
+        out, changed = [], False
+        for item in node:
+            new_item = _rewrite(item, source_ref, transform)
+            changed = changed or new_item is not item
+            out.append(new_item)
+        return out if changed else node
+
+    if not isinstance(node, dict):
+        return node
+
+    if _matches(node, source_ref):
+        return transform(node)
+
+    for key in _CHILD_KEYS:
+        val = node.get(key)
+        if val is None:
+            continue
+        new_val = _rewrite(val, source_ref, transform)
+        if new_val is not val:
+            # Shallow-copy only this node, re-pointing the one child that changed.
+            copied = dict(node)
+            copied[key] = new_val
+            return copied
+
+    return node
 
 
-def _apply_reclassify(ast: dict, op: OverrideOp):
-    """Reclassify a node (e.g., heading → chapter-title)."""
-    node = _find_by_source_ref(ast, op.sourceRef)
-    if node:
-        node["type"] = op.to_value
-        node["_override"] = op.id
+def _t_reclassify(op: OverrideOp):
+    def t(node: dict) -> dict:
+        return {**node, "type": op.to_value, "_override": op.id}
+    return t
 
 
-def _apply_retitle(ast: dict, op: OverrideOp):
-    """Change a node's title attribute."""
-    node = _find_by_source_ref(ast, op.sourceRef)
-    if node and "attrs" in node and isinstance(node["attrs"], dict):
-        if "title" in node["attrs"]:
-            node["attrs"]["title"] = op.value
-            node["_override"] = op.id
+def _t_retitle(op: OverrideOp):
+    def t(node: dict) -> dict:
+        attrs = node.get("attrs")
+        if not isinstance(attrs, dict) or "title" not in attrs:
+            return node
+        return {**node, "attrs": {**attrs, "title": op.value}, "_override": op.id}
+    return t
 
 
-def _apply_delete(ast: dict, op: OverrideOp):
-    """Remove a node from the AST."""
-    parent, key, index = _find_parent(ast, op.sourceRef)
-    if parent is not None and key is not None and index is not None:
-        if isinstance(parent[key], list) and 0 <= index < len(parent[key]):
-            parent[key][index]["_deleted"] = True
+def _t_delete(op: OverrideOp):
+    def t(node: dict) -> dict:
+        return {**node, "_deleted": True}
+    return t
 
 
-def _apply_flag_ambiguity(ast: dict, op: OverrideOp):
-    """Mark a node as ambiguous for human review."""
-    node = _find_by_source_ref(ast, op.sourceRef)
-    if node:
-        node.setdefault("_flags", []).append({
+def _t_flag_ambiguity(op: OverrideOp):
+    def t(node: dict) -> dict:
+        flags = list(node.get("_flags", []))
+        flags.append({
             "id": op.id,
             "message": op.rationale or "Flagged for review",
             "actor": op.actor,
         })
+        return {**node, "_flags": flags}
+    return t
+
+
+_TRANSFORMS = {
+    "reclassify": _t_reclassify,
+    "retitle": _t_retitle,
+    "delete": _t_delete,
+    "flag_ambiguity": _t_flag_ambiguity,
+}
+
+
+def apply_overrides(ast: dict, ops: list[OverrideOp]) -> dict:
+    """
+    Apply override operations to an AST.
+
+    Overrides never mutate the original AST in place — they produce an "effective
+    document" that is the AST with overrides applied. The underlying AST is untouched,
+    and every subtree that no override reached is SHARED with it, not copied.
+
+    Previously this did `json.loads(json.dumps(ast))` — a full serialize+reparse of the
+    whole document, then in-place mutation of the copy. That is O(n) per call and
+    conflicts with D4 (a function taking a whole document into memory needs a
+    justification) and with §3.7's structural-sharing requirement.
+    """
+    effective = ast
+    for op in ops:
+        make_transform = _TRANSFORMS.get(op.op)
+        if make_transform is None:
+            continue  # split/merge not implemented yet
+        effective = _rewrite(effective, op.sourceRef, make_transform(op))
+    return effective
 
 
 def _find_by_source_ref(ast: dict, source_ref: str) -> Optional[dict]:
@@ -364,22 +405,3 @@ def _find_by_source_ref(ast: dict, source_ref: str) -> Optional[dict]:
     return _search(ast)
 
 
-def _find_parent(ast: dict, source_ref: str):
-    """Find the parent list and index of a node by sourceRef."""
-    def _search(node, path=""):
-        if not isinstance(node, dict):
-            return None, None, None
-        for key in ("content", "frontMatter", "backMatter", "body"):
-            val = node.get(key)
-            if isinstance(val, list):
-                for i, item in enumerate(val):
-                    src = item.get("sourceRef") or item.get("sourceRefLink") or {}
-                    if isinstance(src, dict) and src.get("docxId") == source_ref:
-                        return node, key, i
-                    if isinstance(src, str) and src == source_ref:
-                        return node, key, i
-                    result = _search(item, f"{path}/{key}/{i}")
-                    if result[0]:
-                        return result
-        return None, None, None
-    return _search(ast)
