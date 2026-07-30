@@ -103,6 +103,18 @@ def test_build_ast_draft():
     assert draft["body"][0]["attrs"]["title"] == "Chapter 7"
 
 
+def test_verse_lines_survive_parse_and_ast_draft():
+    """Regression test: back-to-back same-tag siblings inside a container
+    must not lose text, and verse-line paragraphs must classify as verse."""
+    blocks = parse_html(SAMPLE_HTML)
+    verse_texts = [b.text.strip() for b in blocks if "verse-line" in b.classes]
+    assert verse_texts == ["The ink flows freely", "From the pen."]
+
+    draft = build_ast_draft(SAMPLE_HTML)
+    verse_nodes = [c for c in draft["body"][0]["content"] if c["type"] == "verse"]
+    assert [v["text"] for v in verse_nodes] == ["The ink flows freely", "From the pen."]
+
+
 def test_block_properties():
     block = Block(type="paragraph", tag="p", classes=["center", "special"])
     assert block.is_centered

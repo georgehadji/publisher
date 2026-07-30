@@ -208,6 +208,10 @@ class TypescriptHTMLParser(HTMLParser):
     def _save_previous_block(self):
         """Save the accumulated tag/runs as a block."""
         if not self._current_tag:
+            # No open block to attach to (e.g. whitespace between sibling
+            # tags) — discard so it doesn't leak into the next block's text.
+            self._current_text = ""
+            self._current_runs = []
             return
         
         if self._current_runs or self._current_text:
@@ -463,6 +467,14 @@ def _classify_other(block: Block, i: int, text: str, classifications: list[Class
         ))
         return
     
+    # Verse line (paragraph inside a verse container)
+    if block.type == "paragraph" and "verse-line" in block.classes:
+        classifications.append(Classification(
+            block_index=i, classification="verse", confidence=0.9,
+            source_text=text[:80], evidence=["CSS class: verse-line"],
+        ))
+        return
+
     # Standard paragraph
     if block.type == "paragraph":
         classifications.append(Classification(
@@ -507,7 +519,13 @@ def build_ast_draft(html: str, source_ref: Optional[str] = None) -> dict:
     chapter_number = 0
     chapter_count = 0
     
-    for block, classification in zip(blocks, classifications):
+    classifications_by_index = {c.block_index: c for c in classifications}
+    for i, block in enumerate(blocks):
+        classification = classifications_by_index.get(i)
+        if classification is None:
+            # classify_blocks skips blocks with no meaningful text
+            # (e.g. an empty verse-container <div>) — nothing to emit.
+            continue
         if classification.classification == "chapter-title":
             if current_chapter:
                 chapters.append(current_chapter)
