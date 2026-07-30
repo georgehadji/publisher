@@ -6,7 +6,7 @@ import type {
   ChapterReview,
   LowConfidenceNode,
   OverrideOp,
-} from "../../types";
+} from "../types";
 
 /**
  * StructureReviewPanel — the first human gate.

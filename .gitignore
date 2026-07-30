@@ -1,5 +1,9 @@
 # Node
 node_modules/
+# This is a pnpm workspace (pnpm-workspace.yaml; root scripts use `pnpm -r`).
+# An npm/yarn lockfile here would pin a second, conflicting dependency graph.
+package-lock.json
+yarn.lock
 dist/
 *.tsbuildinfo
 
