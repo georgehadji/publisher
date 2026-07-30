@@ -174,9 +174,10 @@ fn detect_widows(page: &PageEntry, defects: &mut Vec<Defect>) {
     // that also has lines on the previous page => widow candidate.
     if let Some(ref ranges) = page.para_ranges {
         for pr in ranges {
-            // A paragraph with 1 line on this page and that line is the
-            // last line of the paragraph (not the first) suggests a widow.
-            if pr.lines_on_page == 1 {
+            // A paragraph with fewer than MIN_LINES_PER_PARA lines on this page,
+            // where that line is the last of the paragraph (not the first),
+            // suggests a widow.
+            if pr.lines_on_page < MIN_LINES_PER_PARA {
                 // Check if this paragraph continues from previous page
                 // (not implemented in stub: needs inter-page paragraph tracking)
             }
