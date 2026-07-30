@@ -142,6 +142,8 @@ class StageRegistry:
 
     def __init__(self):
         self._stages: dict[str, StageDeclaration] = {}
+        # step name -> selected stage name. See select_implementation().
+        self._selection: dict[str, str] = {}
 
     def register(self, decl: StageDeclaration) -> None:
         if decl.name in self._stages:
@@ -157,6 +159,55 @@ class StageRegistry:
     def names(self) -> list[str]:
         return sorted(self._stages.keys())
 
+    # ── Alternative implementations ──────────────────────────────
+    #
+    # Declaring `implements="finish"` on two stages says they are alternatives. That
+    # alone is NOT enough to make the graph deterministic: derive_dag() would still
+    # match a consumer to BOTH producers, and the executor would bind whichever ran
+    # first. Exactly one alternative must be SELECTED, and the selection is explicit
+    # data — the same shape as the O1 renderer decision in BUILD_PLAN.md §5.1.
+
+    def implementations_of(self, step: str) -> list[str]:
+        """Names of every stage declaring `implements=step`, sorted."""
+        return sorted(n for n, d in self._stages.items() if d.implements == step)
+
+    def steps(self) -> set[str]:
+        """Every logical step that has at least one declared implementation."""
+        return {d.implements for d in self._stages.values() if d.implements}
+
+    def select_implementation(self, step: str, stage_name: str) -> None:
+        """
+        Choose which stage implements `step` for this build graph.
+
+        Raises rather than silently accepting an unknown stage or one that does not
+        declare the step — a typo here would otherwise re-introduce the ambiguity this
+        mechanism exists to remove.
+        """
+        decl = self._stages.get(stage_name)
+        if decl is None:
+            raise ValueError(f"cannot select unknown stage '{stage_name}' for step '{step}'")
+        if decl.implements != step:
+            raise ValueError(
+                f"stage '{stage_name}' declares implements={decl.implements!r}, "
+                f"not '{step}'"
+            )
+        self._selection[step] = stage_name
+
+    def selected_implementation(self, step: str) -> Optional[str]:
+        """The selected stage for `step`, or the sole implementation if only one exists."""
+        if step in self._selection:
+            return self._selection[step]
+        impls = self.implementations_of(step)
+        return impls[0] if len(impls) == 1 else None
+
+    def _is_active(self, stage_name: str) -> bool:
+        """False for an alternative that lost the selection — it produces nothing here."""
+        decl = self._stages[stage_name]
+        if not decl.implements:
+            return True
+        selected = self.selected_implementation(decl.implements)
+        return selected is None or selected == stage_name
+
     def derive_dag(self) -> dict[str, list[str]]:
         """
         Derive the DAG by matching each stage's declared inputs
@@ -164,9 +215,13 @@ class StageRegistry:
 
         Returns adjacency list: stage_name -> [dependency_stage_names].
         """
-        # Build reverse map: schema_id -> [stage_names_that_produce_it]
+        # Build reverse map: schema_id -> [stage_names_that_produce_it].
+        # Deselected alternatives are excluded, so a consumer binds to exactly one
+        # producer instead of to every implementation of the step.
         producers: dict[str, list[str]] = {}
         for name, decl in self._stages.items():
+            if not self._is_active(name):
+                continue
             for schema_id in decl.outputs.values():
                 producers.setdefault(schema_id, []).append(name)
 
@@ -226,11 +281,31 @@ class StageRegistry:
         """
         violations: list[dict[str, Any]] = []
         
-        # Build producer map: schema_id -> [stage_names]
+        # Build producer map: schema_id -> [stage_names], excluding deselected
+        # alternatives so the checked graph is the graph that will actually execute.
         producers: dict[str, list[str]] = {}
         for name, decl in self._stages.items():
+            if not self._is_active(name):
+                continue
             for schema_id in decl.outputs.values():
                 producers.setdefault(schema_id, []).append(name)
+
+        # A step with several implementations and no selection leaves the executor to
+        # pick one at random. Declaring `implements` records the intent; it does not
+        # resolve it.
+        for step in sorted(self.steps()):
+            impls = self.implementations_of(step)
+            if len(impls) > 1 and step not in self._selection:
+                violations.append({
+                    "kind": "unselected_alternatives",
+                    "stage": ",".join(impls),
+                    "message": (
+                        f"step '{step}' has {len(impls)} implementations {impls} and no "
+                        f"selection. Call registry.select_implementation('{step}', "
+                        f"'<stage>') so the derived DAG binds one producer."
+                    ),
+                    "severity": "error",
+                })
         
         # Check 1: unsatisfiable inputs (declared input with no producer,
         # unless declared as a root input)
@@ -278,22 +353,21 @@ class StageRegistry:
         for schema_id, prods in producers.items():
             if len(prods) <= 1:
                 continue
-            steps = {self._stages[p].implements for p in prods}
-            declared_alternatives = len(steps) == 1 and None not in steps
-            if declared_alternatives:
-                continue
+            # Reaching here means two ACTIVE stages produce one schema. Alternatives
+            # are already collapsed to the selected one by the producer map above, so
+            # this is a genuine collision: give them distinct output schema IDs, or
+            # declare them alternatives via implements= and select one.
             violations.append({
                 "kind": "ambiguous_producer",
                 "stage": ",".join(prods),
                 "message": (
-                    f"Schema '{schema_id}' has {len(prods)} producers: {prods}. "
-                    f"If these are alternative implementations of one step, declare the "
-                    f"same implements=\"<step>\" on each; otherwise give them distinct "
-                    f"output schema IDs."
+                    f"Schema '{schema_id}' has {len(prods)} active producers: {prods}. "
+                    f"Give them distinct output schema IDs, or declare the same "
+                    f"implements=\"<step>\" on each and select one."
                 ),
                 "severity": "error",
             })
-        
+
         # Check 4: cycles (proper DFS with recursion stack)
         dag = self.derive_dag()
         WHITE, GRAY, BLACK = 0, 1, 2

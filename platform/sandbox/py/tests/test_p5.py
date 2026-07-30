@@ -216,8 +216,22 @@ class TestCveGate:
         assert result.critical_count == 1
 
 
-@pytest.mark.skip(reason="Requires full project dependency files")
 class TestGenerateSBOM:
+    """Skip removed: the stated precondition ("requires full project dependency files")
+    holds in this repo — generate_sbom resolves 70+ dependencies from the committed
+    manifests. An unconditional skip left the supply-chain generator with zero executed
+    coverage while the sibling CVE/SBOM classes implied it was covered."""
+
     def test_generate_from_root(self):
         sbom = generate_sbom("test-006")
         assert len(sbom._dependencies) >= 1
+
+    def test_sbom_is_wellformed_cyclonedx(self):
+        doc = generate_sbom("test-007").to_dict()
+        assert doc["bomFormat"] == "CycloneDX"
+        assert doc["components"], "SBOM lists no components"
+        for c in doc["components"][:5]:
+            # A component without a name or purl cannot be matched against a CVE feed,
+            # which is the only reason the SBOM exists.
+            assert c.get("name"), f"component missing name: {c}"
+            assert c.get("purl", "").startswith("pkg:"), f"component missing purl: {c}"

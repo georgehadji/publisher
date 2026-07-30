@@ -37,3 +37,9 @@ __all__ = [
     "prepress_stages",
     "cover_stages",
 ]
+
+# The `finish` step has two implementations: `finish` (P0 pass-through scaffolding) and
+# `finish-gs` (P1 Ghostscript PDF/X). Select the real one so the derived DAG binds a
+# single producer of pdfx/1 instead of whichever stage happened to run first.
+from publisher_stages import get_registry as _get_registry  # noqa: E402
+_get_registry().select_implementation("finish", "finish-gs")

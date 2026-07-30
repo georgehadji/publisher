@@ -1,3 +1,4 @@
+import pytest
 """Tests for agent runtime and tools."""
 
 from publisher_agents.runtime import (
@@ -7,8 +8,13 @@ from publisher_agents.runtime import (
 
 
 def test_agent_runtime_creation():
+    """`assert runtime is not None` cannot fail — a constructor never returns None.
+    Assert the budget defaults the runtime exists to enforce (AGENT_DESIGN.md §1.5)."""
     runtime = AgentRuntime()
-    assert runtime is not None
+    budget = runtime.get_budget(AgentRole.COMPOSITOR)
+    assert budget.max_tokens >= 20000     # "minimum 20k for a repair session"
+    assert budget.max_subagents >= 0
+    assert budget.max_cost_usd > 0
 
 
 def test_agent_execute_structure_wrangler():
@@ -75,7 +81,7 @@ def test_tool_registry():
     assert tool is not None
     assert tool.name == "test-tool"
     
-    result = registry.call("test-tool")
+    result = registry.call("test-tool", None)   # None == trusted non-agent caller, explicit
     assert result == "done"
 
 
@@ -132,7 +138,11 @@ def test_compositor_from_runtime():
         {"page_number": 1, "defect_type": "Widow", "severity": "warning",
          "description": "Widow detected"},
     ])
-    assert result is not None
+    # `result is not None` cannot fail. Assert the agent actually ran and stayed
+    # inside its declared action space (DesignSpec patches, never the AST/PDF).
+    assert result.call.role is AgentRole.COMPOSITOR
+    assert not result.failed, result.error
+    assert isinstance(result.output, dict)
 
 
 def test_preflight_explainer_from_runtime():
@@ -251,3 +261,39 @@ def test_agent_execute_within_budget_still_succeeds():
         subagent_requests=0,
     )
     assert result.failed is False
+
+
+# ── Tool surface scoping (D7: capabilities passed, never ambient) ──────────────
+
+def test_tool_surface_hides_other_roles_tools():
+    """A ToolSurface cannot name a tool outside its role — there is no check to forget."""
+    reg = ToolRegistry()
+    reg.register(ToolSpec(name="patch-designspec", description="x"),
+                 lambda **k: "ran", roles=[AgentRole.COMPOSITOR])
+    reg.register(ToolSpec(name="read-preflight", description="y"), lambda **k: "ok")
+
+    compositor = reg.surface_for(AgentRole.COMPOSITOR)
+    explainer = reg.surface_for(AgentRole.PREFLIGHT_EXPLAINER)
+
+    assert "patch-designspec" in compositor.names()
+    assert "patch-designspec" not in explainer.names()   # scoped out entirely
+    assert "read-preflight" in explainer.names()          # unscoped tool stays shared
+
+
+def test_tool_surface_blocks_out_of_surface_call():
+    reg = ToolRegistry()
+    reg.register(ToolSpec(name="patch-designspec", description="x"),
+                 lambda **k: "ran", roles=[AgentRole.COMPOSITOR])
+    with pytest.raises(PermissionError):
+        reg.surface_for(AgentRole.PREFLIGHT_EXPLAINER).call("patch-designspec")
+
+
+def test_omitting_role_is_an_error_not_a_bypass():
+    """`registry.call("x")` used to silently skip the scope check. Now it cannot compile
+    away: role is a required parameter, so omission is a TypeError at the call site."""
+    reg = ToolRegistry()
+    reg.register(ToolSpec(name="scoped", description="x"),
+                 lambda **k: "ran", roles=[AgentRole.COMPOSITOR])
+    with pytest.raises(TypeError):
+        reg.call("scoped")                       # type: ignore[call-arg]
+    assert reg.call("scoped", AgentRole.COMPOSITOR) == "ran"

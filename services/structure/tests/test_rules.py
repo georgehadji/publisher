@@ -90,10 +90,16 @@ def test_classify_scene_break():
 
 
 def test_find_low_confidence():
+    """`isinstance(low_conf, list)` is guaranteed by the list comprehension inside
+    find_low_confidence and cannot fail. Assert the threshold is actually applied."""
     blocks = parse_html(SAMPLE_HTML)
+    classifications = classify_blocks(blocks)
     low_conf = find_low_confidence(blocks, threshold=0.8)
-    # Low confidence should be for uncertain items
-    assert isinstance(low_conf, list)
+    expected = [c.block_index for c in classifications if c.confidence < 0.8]
+    assert low_conf == expected
+    # Raising the threshold can only widen the set; lowering it can only narrow it.
+    assert set(low_conf) <= set(find_low_confidence(blocks, threshold=0.95))
+    assert find_low_confidence(blocks, threshold=0.0) == []
 
 
 def test_plain_paragraphs_are_not_escalated():

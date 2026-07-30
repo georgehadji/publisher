@@ -136,12 +136,19 @@ class ToolRegistry:
             return list(self._specs.values())
         return [s for n, s in self._specs.items() if self.allowed_for(n, role)]
 
-    def call(self, name: str, role: Optional[AgentRole] = None, **kwargs) -> Any:
+    def call(self, name: str, role: Optional[AgentRole], **kwargs) -> Any:
         """
-        Call a tool by name.
+        Call a tool by name. `role` is REQUIRED — pass None only to mean "trusted
+        non-agent caller", explicitly.
 
-        When `role` is supplied it is ENFORCED, not merely recorded — a role outside the
-        tool's surface raises rather than silently succeeding.
+        It used to default to None, which made enforcement opt-in: `registry.call("x")`
+        silently bypassed the scope check entirely, so the narrow tool surfaces existed
+        only for callers who remembered to opt in. Making the parameter mandatory turns
+        an omission into a TypeError at the call site instead of a silent escalation.
+
+        Prefer `surface_for(role)` over calling this directly: a ToolSurface cannot
+        reach outside its role at all, which is the capability-passing D7 asks for
+        rather than a permission check every caller must remember.
         """
         fn = self._tools.get(name)
         if fn is None:
@@ -152,6 +159,39 @@ class ToolRegistry:
                 f"its surface is {sorted(r.value for r in self._roles[name])}"
             )
         return fn(**kwargs)
+
+    def surface_for(self, role: AgentRole) -> "ToolSurface":
+        """
+        The tool surface for one role — a capability object, not a permission check.
+
+        BUILD_PLAN.md §3.17: "Seven narrow agents, each with its own tool surface";
+        D7: "A module receives capabilities... never ambient access". A ToolSurface
+        exposes no way to name a tool outside its role, so there is nothing to forget
+        to check and no global registry to reach past it.
+        """
+        return ToolSurface(self, role)
+
+
+class ToolSurface:
+    """A role-scoped view of a ToolRegistry. Cannot reach tools outside its role."""
+
+    def __init__(self, registry: "ToolRegistry", role: AgentRole):
+        self._registry = registry
+        self._role = role
+
+    @property
+    def role(self) -> AgentRole:
+        return self._role
+
+    def list_tools(self) -> list[ToolSpec]:
+        return self._registry.list_tools(self._role)
+
+    def names(self) -> list[str]:
+        return sorted(s.name for s in self.list_tools())
+
+    def call(self, name: str, **kwargs) -> Any:
+        """Call a tool inside this surface. Out-of-surface names raise PermissionError."""
+        return self._registry.call(name, self._role, **kwargs)
 
 
 # Global tool registry

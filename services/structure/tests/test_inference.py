@@ -10,8 +10,18 @@ from publisher_structure.inference import (
 
 
 def test_gateway_creation():
+    """A constructor cannot return None. Assert the gateway loaded its routes from
+    versioned YAML (LLM_STRATEGY.md §4) rather than from hardcoded literals."""
     gateway = InferenceGateway()
-    assert gateway is not None
+    routes = gateway._config.routes
+    assert "structure-classify" in routes
+    # Routing policy is data: concrete slugs only, never a moving `-latest` alias,
+    # because model_id is part of the cache key.
+    for name, cfg in routes.items():
+        assert not cfg.model_id.endswith("-latest"), f"{name} pins a moving alias"
+        assert "/" in cfg.model_id, f"{name} model_id {cfg.model_id!r} is not a full slug"
+    # §3.16 keeps alt-text out of the classification gateway.
+    assert "alttext" not in routes
 
 
 def test_classify_basic():
