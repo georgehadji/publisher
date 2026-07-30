@@ -99,6 +99,54 @@ def test_rebase_orphaned():
     assert orphaned[0].reason == "no_source_ref"
 
 
+def _node(docx_id: str, text: str) -> dict:
+    return {"type": "p", "sourceRef": {"docxId": docx_id},
+            "content": [{"type": "text", "text": text}]}
+
+
+def test_rebase_normalized_text_rung():
+    """
+    §3.7's ladder has a normalized-text rung between content-hash and fuzzy. It was
+    missing, so a node whose text was unchanged but whose quotes/whitespace shifted
+    (the ordinary re-export case) fell through to fuzzy or orphaned.
+    """
+    old_ast = {"body": [_node("p-old", '"Hello"  world')]}
+    new_ast = {"body": [_node("p-new", '“Hello” world')]}   # curly quotes, collapsed space
+
+    ops = [OverrideOp(id="ov-1", sourceRef="p-old", op="reclassify",
+                      sourceFallbackText='"Hello"  world', actor="user:1")]
+    rebased, orphaned = rebase_overrides(ops, old_ast, new_ast)
+    assert len(rebased) == 1 and not orphaned
+    assert rebased[0].sourceRef == "p-new"
+
+
+def test_rebase_never_reattaches_below_threshold():
+    """
+    §3.7: "never silently reattached below threshold". The cutoff is token Jaccard
+    >= 0.9; this pair sits well below it and must orphan rather than rebase.
+    Previously SequenceMatcher at 0.8 accepted matches the spec forbids.
+    """
+    old_ast = {"body": [_node("p-old", "the quick brown fox jumps over the lazy dog")]}
+    new_ast = {"body": [_node("p-new", "an entirely different sentence about cats")]}
+
+    ops = [OverrideOp(id="ov-1", sourceRef="p-old", op="reclassify",
+                      sourceFallbackText="the quick brown fox jumps over the lazy dog",
+                      actor="user:1")]
+    rebased, orphaned = rebase_overrides(ops, old_ast, new_ast)
+    assert not rebased and len(orphaned) == 1
+    assert orphaned[0].reason == "fuzzy_match_failed"
+
+
+def test_orphan_reason_distinguishes_rungs():
+    """`content_mismatch` and `fuzzy_match_failed` were declared and never emitted."""
+    new_ast = {"body": []}
+    hash_only = OverrideOp(id="a", sourceRef="gone", op="reclassify",
+                           sourceContentHash="deadbeef", actor="user:1")
+    bare = OverrideOp(id="b", sourceRef="gone", op="reclassify", actor="user:1")
+    _, orph = rebase_overrides([hash_only, bare], {"body": []}, new_ast)
+    assert {o.reason for o in orph} == {"content_mismatch", "no_source_ref"}
+
+
 def test_build_source_map():
     ast = {
         "body": [

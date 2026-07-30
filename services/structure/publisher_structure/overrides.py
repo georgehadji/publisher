@@ -279,8 +279,19 @@ def apply_overrides(ast: dict, ops: list[OverrideOp]) -> dict:
     Overrides never mutate the original AST in place — they produce
     an "effective document" that is the AST with overrides applied.
     The underlying AST remains unchanged.
+
+    D4 justification for holding a whole document in memory: this copies the AST once
+    per build (not once per override), then mutates the copy. BUILD_PLAN.md §3.7 calls
+    for structural sharing — "200 overrides on a 5000-node AST allocates ~200 paths,
+    not a copy" — which would make this O(depth) instead of O(n).
+
+    ponytail: whole-document copy, O(n) once per build. Upgrade to a path-copying fold
+    over `_apply_*` if a profiler shows this on the critical path, or when the 900-page
+    anthology case (D4) makes one full copy per build actually hurt. Not done
+    speculatively: the copy is a few ms on a novel, and a partial rewrite of the four
+    mutators is a correctness risk with no measured payoff.
     """
-    effective = json.loads(json.dumps(ast))  # deep copy
+    effective = json.loads(json.dumps(ast))  # deep copy — see ponytail note above
     
     for op in ops:
         if op.op == "reclassify":
