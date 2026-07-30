@@ -208,8 +208,14 @@ class TypescriptHTMLParser(HTMLParser):
     def _save_previous_block(self):
         """Save the accumulated tag/runs as a block."""
         if not self._current_tag:
-            # No open block to attach to (e.g. whitespace between sibling
-            # tags) — discard so it doesn't leak into the next block's text.
+            # No open block to attach to (e.g. between sibling tags).
+            # Discard pure whitespace. Preserve meaningful orphan text as paragraph.
+            if self._current_text and self._current_text.strip():
+                self.blocks.append(Block(
+                    type="paragraph",
+                    tag="p",
+                    runs=[TextRun(text=self._current_text)],
+                ))
             self._current_text = ""
             self._current_runs = []
             return
