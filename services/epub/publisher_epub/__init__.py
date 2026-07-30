@@ -8,11 +8,21 @@ Produces EPUB 3 + a11y, validated by EPUBCheck AND ACE by DAISY.
 from __future__ import annotations
 
 import json
+import os
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from typing import Optional
+
+
+def _reproducible_utc(explicit: str | None = None) -> datetime:
+    """Timestamp for embedding in a delivered artifact — never the wall clock."""
+    if explicit:
+        return datetime.fromisoformat(explicit.replace("Z", "+00:00"))
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    return datetime.fromtimestamp(int(epoch) if epoch else 0, tz=timezone.utc)
+
 
 
 class EPUB3Writer:
@@ -28,9 +38,11 @@ class EPUB3Writer:
     - OEBPS/sections/
     """
     
-    def __init__(self, ast: dict):
+    def __init__(self, ast: dict, modified: str | None = None):
         self.ast = ast
         self._section_counter = 0
+        # See module note: reproducible, not wall-clock.
+        self._modified = _reproducible_utc(modified)
     
     def write(self, output_path: str | Path) -> Path:
         """Generate an EPUB file."""
@@ -73,7 +85,7 @@ class EPUB3Writer:
             "xmlns:dc": "http://purl.org/dc/elements/1.1/",
         })
         meta = ET.SubElement(metadata, "meta", {"property": "dcterms:modified"})
-        meta.text = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        meta.text = self._modified.strftime("%Y-%m-%dT%H:%M:%SZ")
         
         # Manifest
         manifest = ET.SubElement(root, "manifest")

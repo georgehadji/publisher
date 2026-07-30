@@ -59,7 +59,14 @@ class PreflightReport:
             ],
             "summary": self.summary,
             "profileVersion": self.profileVersion,
-            "createdAt": self.createdAt or datetime.now(timezone.utc).isoformat(),
+            # No wall-clock fallback. This dict is serialized and written to the CAS by
+            # stages/prepress_stages.py, so a `datetime.now()` here gives a
+            # byte-identical PDF a DIFFERENT report hash on every run — defeating the
+            # cache and the nightly byte-equality rebuild (ARCHITECTURE.md §2.5, D5:
+            # "No wall-clock ... inside stage logic"). The caller supplies a timestamp
+            # derived from the cache key; absent that, the field is simply omitted
+            # rather than fabricated.
+            "createdAt": self.createdAt,
         }
 
 
@@ -307,7 +314,8 @@ def _fmt_bytes(n: int) -> str:
 
 # ── Runner ─────────────────────────────────────────────────────
 
-def run_preflight(pdf_path: str | Path, profile: dict) -> PreflightReport:
+def run_preflight(pdf_path: str | Path, profile: dict,
+                  created_at: str | None = None) -> PreflightReport:
     """
     Run all preflight checks against a PDF and vendor profile.
     
@@ -366,7 +374,10 @@ def run_preflight(pdf_path: str | Path, profile: dict) -> PreflightReport:
         checks=checks,
         summary=summary,
         profileVersion=profile.get("vendorProfileVersion"),
-        createdAt=datetime.now(timezone.utc).isoformat(),
+        # Caller-supplied and cache-key-derived, never wall-clock: this report is
+        # written to the CAS, so a `datetime.now()` here would change the artifact
+        # hash on every run over identical input (ARCHITECTURE.md §2.5 / D5).
+        createdAt=created_at,
     )
 
 

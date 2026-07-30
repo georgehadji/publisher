@@ -52,7 +52,7 @@ def acquire(ctx: StageCtx, manifest_path: str | None = None) -> StageResult:
     
     return StageResult(
         artifacts=[StageArtifactRef(
-            kind="source-blob",
+            kind="source",   # must exactly equal the declared output key "source"
             hash=str(ref.hash),
             media_type="application/json",
             size=ref.size,

@@ -2,7 +2,39 @@
   "schema": "fixture-manifest/1",
   "fixtureSet": "finish-gs/v1",
   "description": "Tracer bullet fixture for finish-gs/v1",
-  "inputs": [],
-  "expectedOutputs": [],
-  "fixtures": []
+  "inputs": [
+    {
+      "kind": "pdf",
+      "schema": "raw-pdf/1"
+    },
+    {
+      "kind": "profile",
+      "schema": "profile/1"
+    }
+  ],
+  "expectedOutputs": [
+    {
+      "kind": "pdf",
+      "schema": "pdfx/1"
+    },
+    {
+      "kind": "report",
+      "schema": "finish-report/1"
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "tracer-bullet",
+      "description": "Minimal finish-gs case exercising the declared contract",
+      "inputFiles": {
+        "pdf": "inputs/tracer-bullet.pdf",
+        "profile": "inputs/tracer-bullet.profile"
+      },
+      "expectedFiles": {
+        "pdf": "expected/tracer-bullet.pdf.json",
+        "report": "expected/tracer-bullet.report.json"
+      }
+    }
+  ],
+  "createdAt": "2026-07-30T00:00:00Z"
 }

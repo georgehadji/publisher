@@ -8,12 +8,16 @@ On re-ingest, rebase by exact sourceRef → content-hash match → fuzzy text ma
 
 from __future__ import annotations
 
-import difflib
 import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+from .rules import normalize_text
+
+# BUILD_PLAN.md §3.7: "fuzzy (token Jaccard >= 0.9)".
+FUZZY_CUTOFF = 0.9
 
 
 @dataclass
@@ -72,8 +76,9 @@ def rebase_overrides(
     Rebase strategy (ARCHITECTURE.md §2.6a):
     1. Exact sourceRef match (stable docx ID)
     2. Fall back to content-hash match
-    3. Fall back to fuzzy text match
-    4. Mark orphaned and surface to user
+    3. Fall back to normalized-text match
+    4. Fall back to fuzzy token-Jaccard match (>= 0.9)
+    5. Mark orphaned and surface to user
     
     Returns (successfully_rebased, orphaned).
     """
@@ -106,9 +111,21 @@ def rebase_overrides(
                 rebased.append(new_op)
                 continue
         
-        # Step 3: Fuzzy text match
+        # Step 3: Normalized-text match.
+        # BUILD_PLAN.md §3.7's ladder is
+        #   exact sourceRef -> content-hash -> NORMALIZED-TEXT -> fuzzy -> orphaned.
+        # This rung was missing entirely, so a node whose text was unchanged but whose
+        # whitespace/quotes/unicode form shifted (the common re-export case) skipped
+        # straight to fuzzy matching, or orphaned.
         if op.sourceFallbackText:
-            matches = _fuzzy_match(op.sourceFallbackText, new_map, cutoff=0.8)
+            matched = _find_by_normalized_text(op.sourceFallbackText, new_map)
+            if matched:
+                rebased.append(_relocate(op, matched))
+                continue
+
+        # Step 4: Fuzzy text match
+        if op.sourceFallbackText:
+            matches = _fuzzy_match(op.sourceFallbackText, new_map, cutoff=FUZZY_CUTOFF)
             if matches:
                 best = matches[0]
                 new_op = OverrideOp(
@@ -122,10 +139,19 @@ def rebase_overrides(
                 rebased.append(new_op)
                 continue
         
-        # Step 4: Orphaned
+        # Step 5: Orphaned
+        # Report WHY it orphaned. "content_mismatch" and "fuzzy_match_failed" were
+        # declared on OrphanedOp.reason and never emitted, so every orphan looked like
+        # a missing sourceRef regardless of which rung actually failed.
+        if op.sourceFallbackText:
+            reason = "fuzzy_match_failed"
+        elif op.sourceContentHash:
+            reason = "content_mismatch"
+        else:
+            reason = "no_source_ref"
         orphaned.append(OrphanedOp(
             op=op,
-            reason="no_source_ref",
+            reason=reason,
             fuzzy_suggestions=[m["sourceRef"] for m in _fuzzy_match(
                 op.sourceFallbackText or op.sourceRef, new_map, cutoff=0.5
             )[:3]],
@@ -198,11 +224,49 @@ def _find_by_content_hash(content_hash: str, source_map: dict) -> Optional[dict]
     return None
 
 
-def _fuzzy_match(text: str, source_map: dict, cutoff: float = 0.8) -> list[dict]:
-    """Fuzzy-match text against all entries in the source map."""
+def _token_jaccard(a: str, b: str) -> float:
+    """Token-set Jaccard similarity, the metric BUILD_PLAN.md §3.7 specifies."""
+    ta, tb = set(normalize_text(a).split()), set(normalize_text(b).split())
+    if not ta and not tb:
+        return 1.0
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _find_by_normalized_text(text: str, source_map: dict) -> Optional[dict]:
+    """Exact match after normalization — the ladder rung between content-hash and fuzzy."""
+    target = normalize_text(text)
+    for ref, entry in source_map.items():
+        if normalize_text(entry["text"]) == target:
+            return {"sourceRef": ref, **entry}
+    return None
+
+
+def _relocate(op: "OverrideOp", matched: dict) -> "OverrideOp":
+    """Copy `op` onto a new sourceRef/contentHash. Overrides are immutable."""
+    return OverrideOp(
+        id=op.id,
+        sourceRef=matched["sourceRef"],
+        sourceContentHash=matched["contentHash"],
+        op=op.op, from_value=op.from_value, to_value=op.to_value,
+        value=op.value, rationale=op.rationale,
+        actor=op.actor, created_at=op.created_at,
+    )
+
+
+def _fuzzy_match(text: str, source_map: dict, cutoff: float = FUZZY_CUTOFF) -> list[dict]:
+    """
+    Fuzzy-match text against the source map using token-set Jaccard.
+
+    Was `difflib.SequenceMatcher` at cutoff 0.8. Two deviations from §3.7, which
+    specifies "fuzzy (token Jaccard >= 0.9)" and "never silently reattached below
+    threshold": the wrong metric, and a threshold below the stated one — so overrides
+    WERE silently reattached below the documented bar.
+    """
     matches = []
     for ref, entry in source_map.items():
-        ratio = difflib.SequenceMatcher(None, text.lower(), entry["text"].lower()).ratio()
+        ratio = _token_jaccard(text, entry["text"])
         if ratio >= cutoff:
             matches.append({"sourceRef": ref, **entry, "similarity": ratio})
     return sorted(matches, key=lambda m: -m["similarity"])

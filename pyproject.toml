@@ -1,4 +1,7 @@
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-q --strict-markers"
-testpaths = ["platform", "services", "packages", "stages"]
+# `tests` carries the generated contract tests (§3.20) and the collection floor.
+# It was omitted, so a bare `pytest` never ran either of them and CI was the only
+# place they executed — under `continue-on-error`, which meant nowhere.
+testpaths = ["platform", "services", "packages", "stages", "tests"]

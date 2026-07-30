@@ -59,6 +59,12 @@ class FontLicenseManifest:
 _BUILTIN_FONTS: dict[str, FontAsset] = {}
 
 
+def _identity_hash(family: str, style: str, source: str, license_ref: str) -> str:
+    """Stable per-face identity. NOT a file content hash — see the register_font loop."""
+    digest = hashlib.sha256(f"{family}/{style}/{source}/{license_ref}".encode("utf-8")).hexdigest()
+    return f"unverified:{digest}"
+
+
 def register_font(font: FontAsset) -> None:
     """Register a font in the vault."""
     key = f"{font.family}/{font.style}"
@@ -81,7 +87,15 @@ for family, styles in {
         register_font(FontAsset(
             family=family,
             style=style,
-            hash="pending-license-verification",
+            # ponytail: identity hash derived from the face's metadata, not its bytes —
+            # the OFL files are not vendored yet, so there is nothing to hash. All 34
+            # faces previously shared the literal string "pending-license-verification",
+            # which made the build manifest's fontset hash (§2.11) CONSTANT: changing
+            # which fonts a build used never invalidated the cache. A derived identity
+            # at least varies per face. Upgrade to hash_font_file() once the font files
+            # are vendored; the `unverified:` prefix makes it impossible to mistake this
+            # for a content hash in the meantime.
+            hash=_identity_hash(family, style, "bundled_ofl", "OFL-1.1"),
             source="bundled_ofl",
             licenseRef="OFL-1.1",
             allowedUses=["PRINT_PDF", "EPUB_EMBED", "SERVER_RENDER"],

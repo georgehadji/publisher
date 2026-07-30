@@ -33,32 +33,92 @@ class DagExecutor:
     artifact references stored in the shared CAS.
     """
     
-    def __init__(self, registry: Optional[StageRegistry] = None):
+    def __init__(self, registry: Optional[StageRegistry] = None, allow_stub_engines: bool = False):
         self._registry = registry or get_registry()
-    
+        # Only the local dev/tracer harness sets this True. See StageCtx.allow_stub_engines.
+        self._allow_stub_engines = allow_stub_engines
+
+    def _reachable_stages(self, initial_inputs: dict[str, Any] | None) -> set[str]:
+        """
+        The subset of registered stages this build can actually run: every root
+        input it declares is supplied in `initial_inputs`, and every non-root input
+        is produced by another stage that is itself reachable (fixpoint).
+
+        WHY THIS EXISTS
+        `import stages` (F2.3) registers every stage module, including the whole
+        cover-art brief/generate/judge/compose pipeline (stages/cover_stages.py) and
+        the cover-preflight/finish-gs alternates -- none of which this tracer bullet
+        supplies root inputs for. Without this filter, `execute()` would attempt
+        EVERY registered stage regardless of whether its inputs are satisfiable, and
+        one unrelated, out-of-scope stage raising `bad_input` for a missing root
+        input would abort the entire interior-book build. A real orchestrator fans
+        out per output profile (BUILD_PLAN.md §3.13); this is the local-executor
+        equivalent -- run what's reachable from the supplied roots, not the entire
+        registry.
+        """
+        initial_inputs = initial_inputs or {}
+        producers: dict[str, list[str]] = {}
+        for decl in self._registry.all():
+            for schema_id in decl.outputs.values():
+                producers.setdefault(schema_id, []).append(decl.name)
+
+        reachable: set[str] = set()
+        changed = True
+        while changed:
+            changed = False
+            for decl in self._registry.all():
+                if decl.name in reachable:
+                    continue
+                root_set = set(decl.root_inputs or [])
+                supplied = set(initial_inputs.get(decl.name, {}).keys())
+                optional = set(decl.optional_root_inputs or [])
+                # A root input missing from initial_inputs blocks reachability
+                # UNLESS the stage explicitly declared it optional (`resolve`'s
+                # `overrides_path`, where absence legitimately means "zero
+                # overrides"). Deliberately NOT inferred from whether the Python
+                # parameter merely has a default -- `cover`'s `page_count=0` also
+                # has a default, but 0 is a placeholder the function rejects
+                # outright, not a valid empty state.
+                if root_set - supplied - optional:
+                    continue
+                non_root_ok = True
+                for param_name, schema_id in decl.inputs.items():
+                    if param_name in root_set:
+                        continue
+                    prods = producers.get(schema_id, [])
+                    if not any(p in reachable for p in prods):
+                        non_root_ok = False
+                        break
+                if non_root_ok:
+                    reachable.add(decl.name)
+                    changed = True
+        return reachable
+
     def execute(self, build_id: str, initial_inputs: dict[str, Any] | None = None) -> dict[str, StageResult]:
         """
-        Execute all stages in topological order.
-        
+        Execute the subset of registered stages reachable from `initial_inputs`, in
+        topological order.
+
         For each stage, resolves its declared input parameters:
         1. If an initial_input is provided for this stage, use it directly
-        2. Otherwise, look for matching output artifacts from already-executed 
+        2. Otherwise, look for matching output artifacts from already-executed
            upstream stages by matching the declared input schema ID
-        
+
         Args:
             build_id: Unique build identifier
             initial_inputs: Root inputs keyed by stage name -> keyword args.
                            Only provide inputs for stages whose inputs are not
                            produced by any other registered stage.
-            
+
         Returns:
             dict of stage_name -> StageResult
         """
-        order = self._registry.topological_sort()
+        reachable = self._reachable_stages(initial_inputs)
+        order = [s for s in self._registry.topological_sort() if s in reachable]
         if not order:
             print("[executor] No stages registered -- nothing to do.")
             return {}
-        
+
         print(f"[executor] Build {build_id}: {len(order)} stages to execute")
         print(f"[executor] Order: {' -> '.join(order)}")
         print()
@@ -88,6 +148,7 @@ class DagExecutor:
                     deadline=datetime.now(timezone.utc),
                     memory_budget_mb=decl.memory_budget_mb,
                     work_dir=str(work_dir_path),
+                    allow_stub_engines=self._allow_stub_engines,
                 )
                 
                 # Resolve inputs for this stage:
@@ -111,20 +172,31 @@ class DagExecutor:
                     # Store output CAS paths for downstream stages.
                     # Each artifact in the result has a hash; resolve it to a
                     # filesystem path in the shared CAS and map it by schema_id.
+                    #
+                    # Matching is EXACT (art.kind == out_key), never a fuzzy prefix guess
+                    # or a "first declared output" fallback. The prior fuzzy/fallback logic
+                    # was a D8-banned silent fallback in practice: `finish`'s "finished-pdf"
+                    # and "finish-report" kinds both matched neither exactly nor by prefix,
+                    # so BOTH fell through to "first declared output schema" — meaning
+                    # finish-report/1 was silently never stored under its own schema at
+                    # all (the pdf's fallback claimed the only free slot first). A stage
+                    # whose artifact `kind` doesn't match its declared output key is a bug
+                    # in that stage, not something the executor should paper over.
                     for art in result.artifacts:
-                        matched_schema = None
-                        for out_key, out_schema in decl.outputs.items():
-                            # Match artifact kind to output key (exact or prefix)
-                            if art.kind == out_key or art.kind.startswith(out_key.split('/')[0]):
-                                matched_schema = out_schema
-                                break
+                        matched_schema = decl.outputs.get(art.kind)
                         if matched_schema is None:
-                            # Fallback: use the first declared output schema
-                            for out_schema in decl.outputs.values():
-                                matched_schema = out_schema
-                                break
-                        
-                        if matched_schema and matched_schema not in artifact_paths:
+                            raise StageError(
+                                kind=ErrorKind.ENGINE_BUG,
+                                message=(
+                                    f"Stage '{stage_name}' emitted an artifact with kind "
+                                    f"'{art.kind}', which matches none of its declared "
+                                    f"output keys {sorted(decl.outputs.keys())}. Fix the "
+                                    f"stage's StageArtifactRef(kind=...) to exactly match "
+                                    f"a declared output key."
+                                ),
+                            )
+
+                        if matched_schema not in artifact_paths:
                             # Try to resolve the hash to a local CAS path
                             resolved = False
                             try:
@@ -174,35 +246,47 @@ class DagExecutor:
 
 def run_tracer_bullet():
     """Run the full tracer bullet pipeline."""
-    import stages.acquire_stage
-    import stages.extract_stage
-    import stages.structure_stage
-    import stages.design_compile_stage
-    import stages.paginate_stage
-    import stages.finish_stage
-    import stages.package_stage
-    
+    # A single `import stages` registers every stage (stages/__init__.py owns that
+    # list). Previously this function and platform/stages/integrity.py each hand-
+    # maintained their own import list, and the two had silently diverged: this list
+    # never imported stages.prepress_stages, so `preflight` — the pipeline's one hard
+    # gate — was never part of the executed DAG at all. The tracer bullet printed
+    # "PASSED" for a build that never reached its gate. One list, imported everywhere.
+    import stages  # noqa: F401 — import for its registration side effect
+
     registry = get_registry()
-    executor = DagExecutor(registry)
-    
+    executor = DagExecutor(registry, allow_stub_engines=True)
+
     print("=" * 60)
     print("  PUBLISHER -- TRACER BULLET")
     print("=" * 60)
     print()
-    
+
     # Only provide root inputs for stages whose declared inputs
     # are not produced by any other stage.
     initial_inputs = {
         "acquire": {"manifest_path": "corpus/manuscripts/minimal-novel.ast.json"},
         "design-compile": {"designspec_path": None},
+        "preflight": {"profile_name": "Generic 6x9"},
     }
-    
+
     try:
         results = executor.execute(
             build_id=f"tb-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}",
             initial_inputs=initial_inputs,
         )
-        print("OK TRACER BULLET PASSED")
+        # "Passed" must mean the gates ran, not merely that no stage in whatever
+        # subset happened to be wired raised an exception (BUILD_PLAN.md F2.3).
+        if "preflight" not in results:
+            print("\nFAILED: TRACER BULLET FAILED: 'preflight' never executed — "
+                  "a build without a preflight verdict is not a passed build.")
+            return 1
+        if "package" not in results:
+            print("\nFAILED: TRACER BULLET FAILED: 'package' never executed.")
+            return 1
+        print(f"OK TRACER BULLET PASSED -- preflight verdict: "
+              f"{results['preflight'].metrics.get('checks_failed', '?')} check(s) failed, "
+              f"gate held")
         return 0
     except StageError as e:
         print(f"\nFAILED: TRACER BULLET FAILED: [{e.kind}] {e.message}")

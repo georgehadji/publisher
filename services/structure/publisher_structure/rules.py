@@ -463,10 +463,22 @@ def _classify_other(block: Block, i: int, text: str, classifications: list[Class
         ))
         return
     
-    # Standard paragraph
+    # Standard paragraph.
+    #
+    # Confidence must sit ABOVE the 0.8 escalation threshold. A plain <p> that matched
+    # none of the preceding special-case rules is an unambiguous body paragraph — the
+    # structural signal is as strong as this classifier gets.
+    #
+    # This was 0.7, i.e. BELOW the threshold, so every body paragraph was flagged
+    # low-confidence and queued for the model. LLM_STRATEGY.md §5 budgets ~7% of nodes
+    # for escalation ("4,500 paragraphs -> rules -> ~93% high-confidence -> ~315
+    # low-confidence nodes"); 0.7 inverted that to ~93% escalated. It blew the
+    # <=$0.20/novel target by roughly an order of magnitude and put the author's entire
+    # prose into a model context for a task that needs ~5% of it — the exact
+    # procurement exposure §5 says to avoid.
     if block.type == "paragraph":
         classifications.append(Classification(
-            block_index=i, classification="paragraph", confidence=0.7,
+            block_index=i, classification="paragraph", confidence=0.95,
             source_text=text[:80], evidence=["<p> tag"],
         ))
         return
@@ -507,7 +519,18 @@ def build_ast_draft(html: str, source_ref: Optional[str] = None) -> dict:
     chapter_number = 0
     chapter_count = 0
     
-    for block, classification in zip(blocks, classifications):
+    # Pair by the classification's OWN block_index, never positionally.
+    #
+    # `classify_blocks` does not emit one classification per block — it skips structural
+    # containers (an empty <div class="verse"> wrapping its verse lines, for example).
+    # `zip(blocks, classifications)` therefore did two silent damages at once: every
+    # block after the first skip was paired with a LATER block's classification, and the
+    # trailing block was dropped entirely because zip stops at the shorter sequence. On
+    # the sample document that lost the final verse line from the AST outright — a
+    # text-integrity violation, i.e. the precise failure the §3.15 integrity gate exists
+    # to make impossible.
+    for classification in classifications:
+        block = blocks[classification.block_index]
         if classification.classification == "chapter-title":
             if current_chapter:
                 chapters.append(current_chapter)
@@ -582,32 +605,125 @@ def _alternatives(classification: str) -> list[str]:
     return alt_map.get(classification, ["paragraph", "chapter-title"])
 
 
+class _HtmlTextExtractor(HTMLParser):
+    """Concatenates every text data event OUTSIDE `<head>`/`<script>`/`<style>`.
+    Module-level (not a nested class per call) so both `extract_text_from_html` and
+    any stage-level caller use the exact same extraction logic — one implementation
+    to keep correct, not two that can silently drift apart.
+
+    Skipping `<head>` matters: `extract`'s HTML_TEMPLATE wraps the manuscript body
+    in a full document with a `<title>{book title}</title>` in `<head>`. Without
+    this skip, the page's metadata title text gets concatenated onto the front of
+    the extracted text and the integrity comparison fails on every document, not
+    just ones with a real mismatch -- the gate would reject every build. Mirrors
+    `TypescriptHTMLParser._skip_content`'s existing script/style/head skip."""
+
+    _SKIP_TAGS = {"head", "script", "style"}
+
+    def __init__(self):
+        super().__init__()
+        self.texts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs):
+        if tag in self._SKIP_TAGS:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str):
+        if tag in self._SKIP_TAGS and self._skip_depth > 0:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str):
+        if self._skip_depth:
+            return
+        self.texts.append(data)
+
+
+def extract_text_from_html(html: str) -> str:
+    """Concatenate all text content from an HTML document, in document order."""
+    extractor = _HtmlTextExtractor()
+    extractor.feed(html)
+    return "".join(extractor.texts)
+
+
+def extract_text_from_ast_draft(ast_draft: dict) -> str:
+    """Concatenate all text content from a `build_ast_draft()`-shaped draft AST.
+
+    The chapter title lives in `attrs.title`, not as a body text node — a
+    completeness gap in the original extractor, which only walked `content[].text`
+    and so silently dropped every chapter title from the integrity comparison.
+    """
+    parts: list[str] = []
+    for chapter in ast_draft.get("body", []):
+        title = (chapter.get("attrs") or {}).get("title")
+        if title:
+            parts.append(title)
+        for node in chapter.get("content", []):
+            text = node.get("text")
+            if text:
+                parts.append(text)
+    return " ".join(parts)
+
+
+# Smart-quote and dash variants folded to their straight/plain ASCII equivalents.
+# BUILD_PLAN.md §3.6: normalization = NFC + whitespace collapse + smart/straight
+# quote folding, and the normalizer itself must be property-tested — a normalizer
+# that only collapses whitespace (the previous implementation) treats an em-dash
+# vs hyphen or curly vs straight quote as a genuine content difference and fails
+# the integrity gate on formatting the HTML renderer introduced, not on lost text.
+_QUOTE_FOLD = str.maketrans({
+    "‘": "'", "’": "'",   # single curly quotes -> straight
+    "“": '"', "”": '"',   # double curly quotes -> straight
+    "–": "-", "—": "-",   # en/em dash -> hyphen
+})
+
+
+def normalize_text(text: str) -> str:
+    """Canonical text normalizer for the integrity gate: NFC, whitespace collapse,
+    smart/straight quote and dash folding. Single implementation — every caller
+    that needs to compare text across a rendering boundary must use this, not a
+    local reimplementation, or the two sides of a comparison can silently diverge
+    on which forms they treat as equal."""
+    import unicodedata
+    text = unicodedata.normalize("NFC", text)
+    text = text.translate(_QUOTE_FOLD)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def compute_text_integrity(html: str, ast_draft: dict) -> dict:
     """
-    Compute text integrity hash and compare with AST.
-    
+    Compare the AST draft's text against the HTML it was derived from and report
+    whether they match after normalization.
+
     From ARCHITECTURE.md §3.1:
     normalize(concat(text nodes of AST)) == normalize(text stream of source)
+
+    This used to compute a hash of the HTML alone, never touch `ast_draft`, and
+    unconditionally return `passed: True` — the function's own comment called it
+    "Dummy: in production this compares against AST" and nothing ever came back to
+    finish it. A caller trusting `passed` was trusting a value that could not be
+    False. There is no path through this function now that returns success without
+    an executed comparison.
     """
-    # Extract text from HTML source
-    from html.parser import HTMLParser
-    
-    class TextExtractor(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.texts: list[str] = []
-        def handle_data(self, data: str):
-            self.texts.append(data)
-    
-    extractor = TextExtractor()
-    extractor.feed(html)
-    source_text = "".join(extractor.texts)
-    
-    # Dummy: in production this compares against AST
-    h = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
-    
-    return {
-        "integrityHash": f"sha256:{h}",
+    source_text = normalize_text(extract_text_from_html(html))
+    ast_text = normalize_text(extract_text_from_ast_draft(ast_draft))
+
+    passed = ast_text == source_text
+    result = {
+        "integrityHash": f"sha256:{hashlib.sha256(source_text.encode('utf-8')).hexdigest()}",
         "sourceLength": len(source_text),
-        "passed": True,
+        "astLength": len(ast_text),
+        "passed": passed,
     }
+    if not passed:
+        # Report the first point of divergence, not just "hashes differ" — an
+        # unactionable message on a 300-page book (BUILD_PLAN.md §3.15: bad_input/
+        # engine_bug errors must carry an actionable message).
+        i = 0
+        limit = min(len(source_text), len(ast_text))
+        while i < limit and source_text[i] == ast_text[i]:
+            i += 1
+        result["firstDivergenceAt"] = i
+        result["sourceContext"] = source_text[max(0, i - 30):i + 30]
+        result["astContext"] = ast_text[max(0, i - 30):i + 30]
+    return result

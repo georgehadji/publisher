@@ -22,7 +22,27 @@ def test_get_missing_font():
 
 
 def test_validate_font_use_pass():
-    validate_font_use("EB Garamond", "regular", "PRINT_PDF")  # should not raise
+    """A vault font licensed for print must pass — and be licensed for the use asked."""
+    validate_font_use("EB Garamond", "regular", "PRINT_PDF")
+    font = get_font("EB Garamond", "regular")
+    assert font is not None
+    assert "PRINT_PDF" in font.allowedUses
+    assert font.source == "bundled_ofl"
+
+
+def test_validate_font_use_rejects_unlicensed_output():
+    """The gate must refuse a use the licence does not cover, not just a missing font."""
+    import dataclasses
+    from publisher_prepress import fontvault as fv
+    limited = dataclasses.replace(get_font("EB Garamond", "regular"),
+                                  family="Print Only Face", allowedUses=["PRINT_PDF"])
+    fv.register_font(limited)
+    validate_font_use("Print Only Face", "regular", "PRINT_PDF")   # covered
+    try:
+        validate_font_use("Print Only Face", "regular", "EPUB_EMBED")
+        assert False, "EPUB_EMBED is not in allowedUses; should have raised"
+    except FontLicenseViolation:
+        pass
 
 
 def test_validate_font_use_missing():

@@ -1,0 +1,24 @@
+{
+  "schema": "fixture-manifest/1",
+  "fixtureSet": "cover-brief/v1",
+  "description": "Cover brief fixture set v1 — title metadata + DesignSpec to ArtBrief (COVER_DESIGN.md §2)",
+  "createdAt": "2026-07-30T00:00:00Z",
+  "inputs": [
+    {"kind": "title_meta", "schema": "title-meta/1"},
+    {"kind": "designspec", "schema": "designspec/1"}
+  ],
+  "expectedOutputs": [
+    {"kind": "brief", "schema": "art-brief/1"}
+  ],
+  "fixtures": [
+    {
+      "name": "literary-thriller",
+      "description": "Literary thriller with no manuscript sample — metadata-only brief",
+      "inputFiles": {
+        "title_meta": "inputs/literary-thriller.title-meta.json",
+        "designspec": "inputs/literary-thriller.designspec.json"
+      },
+      "expectedFiles": {"brief": "expected/literary-thriller.art-brief.json"}
+    }
+  ]
+}

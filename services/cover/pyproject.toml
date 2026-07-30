@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "publisher-cover"
+version = "0.1.0"
+description = "Publisher cover design — brief, multi-model art generation, cross-vendor judging"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["publisher_cover*"]

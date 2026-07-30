@@ -1,0 +1,20 @@
+{
+  "schema": "fixture-manifest/1",
+  "fixtureSet": "manuscripts/v1",
+  "description": "Source manuscript fixture set v1 — inputs to the acquire stage",
+  "createdAt": "2026-07-30T00:00:00Z",
+  "inputs": [
+    {"kind": "manifest_path", "schema": "fixture-manifest/1"}
+  ],
+  "expectedOutputs": [
+    {"kind": "source", "schema": "raw-source/1"}
+  ],
+  "fixtures": [
+    {
+      "name": "plain-novel",
+      "description": "A plain literary novel .docx with no styles — the P0 gate case",
+      "inputFiles": {"manifest_path": "inputs/plain-novel.docx"},
+      "expectedFiles": {"source": "expected/plain-novel.source.json"}
+    }
+  ]
+}

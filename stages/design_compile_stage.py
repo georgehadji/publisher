@@ -11,6 +11,7 @@ from pathlib import Path
 
 from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
+from publisher_prepress.fontvault import FontLicenseViolation, validate_font_use
 
 
 def _emit_css(designspec: dict) -> str:
@@ -36,7 +37,7 @@ def _emit_css(designspec: dict) -> str:
     leading = typography.get("leading", 14.0)
     measure = typography.get("measure", 66)
     
-    body_font_family = (typography.get("bodyFont") or {}).get("family", "Georgia, serif")
+    body_font_family = (typography.get("bodyFont") or {}).get("family", "EB Garamond")
     heading_font_family = (typography.get("headingFont") or {}).get("family", "")
     if not heading_font_family:
         heading_font_family = body_font_family
@@ -309,6 +310,18 @@ def _emit_css(designspec: dict) -> str:
     return "\n".join(lines)
 
 
+
+def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
+    """(family, style) pairs referenced by a DesignSpec's typography block."""
+    typ = spec.get("typography") or {}
+    out = []
+    for key in ("bodyFont", "displayFont", "monoFont"):
+        fam = (typ.get(key) or {}).get("family")
+        if fam:
+            out.append((fam, (typ.get(key) or {}).get("style", "regular")))
+    return out
+
+
 @stage(
     name="design-compile",
     version=1,
@@ -325,14 +338,41 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None) -> StageRe
     """
     Emit CSS from a DesignSpec.
     Uses a built-in default DesignSpec for the tracer bullet.
+
+    Only `preferredEngine: "chrome-pagedjs"` is implemented (this stage's only
+    emitter is `_emit_css`). A DesignSpec naming an engine this stage cannot
+    actually emit for -- most notably "typst", declared by every packaged
+    template before the O1 renderer decision was run -- is `bad_input`, not a
+    silently ignored field (BUILD_PLAN.md D8, F4.1). §3.8's cross-emitter
+    agreement gate only stays meaningful if a declared engine is one that ran.
     """
+    IMPLEMENTED_ENGINES = {"chrome-pagedjs"}
+
     spec = _default_designspec()
-    
+
     if designspec_path:
         p = Path(designspec_path)
         if p.exists():
             spec = json.loads(p.read_bytes())
-    
+
+    engine = spec.get("preferredEngine")
+    if engine not in IMPLEMENTED_ENGINES:
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"DesignSpec declares preferredEngine={engine!r}, but only "
+                    f"{sorted(IMPLEMENTED_ENGINES)} {'is' if len(IMPLEMENTED_ENGINES) == 1 else 'are'} "
+                    f"implemented. Run the O1 renderer decision (BUILD_PLAN.md §5.1 "
+                    f"P0) before declaring an engine with no emitter.",
+        )
+
+    # §2.10: refuse to emit a spec naming a font that is not licensed for print.
+    # Enforced in the domain layer, not the UI.
+    for family, style in _fonts_in_spec(spec):
+        try:
+            validate_font_use(family, style, "PRINT_PDF")
+        except FontLicenseViolation as exc:
+            raise StageError(kind=ErrorKind.POLICY_VIOLATION, message=str(exc))
+
     css = _emit_css(spec)
     css_bytes = css.encode("utf-8")
     
@@ -344,7 +384,7 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None) -> StageRe
     
     return StageResult(
         artifacts=[StageArtifactRef(
-            kind="compiled-css",
+            kind="css",   # must exactly equal the declared output key "css"
             hash=str(ref.hash),
             media_type="text/css",
             size=len(css_bytes),
@@ -358,10 +398,14 @@ def _default_designspec() -> dict:
     return {
         "schema": "designspec/1",
         "name": "Tracer Bullet -- Literary 6x9",
-        "preferredEngine": "typst",
+        # "chrome-pagedjs", not "typst" -- see the comment on _emit_css's caller
+        # below (F4.1a). Only a CSS/Paged.js emitter exists; O1 (BUILD_PLAN.md
+        # §5.1 P0, §5.3) is the actual measured decision that would promote Typst
+        # to the default, and it has not been run yet.
+        "preferredEngine": "chrome-pagedjs",
         "trimSize": {"width": 152, "height": 229, "unit": "mm"},
         "typography": {
-            "bodyFont": {"family": "Georgia, serif"},
+            "bodyFont": {"family": "EB Garamond"},
             "bodySize": 10.5,
             "leading": 14.0,
             "scaleRatio": 1.25,
@@ -390,7 +434,7 @@ def _default_designspec() -> dict:
             "titleTreatment": "centered",
         },
         "fonts": [
-            {"family": "Georgia, serif", "source": "bundled_ofl"},
+            {"family": "EB Garamond", "source": "bundled_ofl"},
         ],
         "colors": {"text": "#000000", "paper": "#FFFFFF"},
     }

@@ -2,7 +2,29 @@
   "schema": "fixture-manifest/1",
   "fixtureSet": "extract/v1",
   "description": "Tracer bullet fixture for extract/v1",
-  "inputs": [],
-  "expectedOutputs": [],
-  "fixtures": []
+  "inputs": [
+    {
+      "kind": "source",
+      "schema": "raw-source/1"
+    }
+  ],
+  "expectedOutputs": [
+    {
+      "kind": "html",
+      "schema": "typescript-html/1"
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "tracer-bullet",
+      "description": "Minimal extract case exercising the declared contract",
+      "inputFiles": {
+        "source": "inputs/tracer-bullet.source"
+      },
+      "expectedFiles": {
+        "html": "expected/tracer-bullet.html.json"
+      }
+    }
+  ],
+  "createdAt": "2026-07-30T00:00:00Z"
 }

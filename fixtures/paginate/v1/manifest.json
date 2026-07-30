@@ -2,7 +2,39 @@
   "schema": "fixture-manifest/1",
   "fixtureSet": "paginate/v1",
   "description": "Tracer bullet fixture for paginate/v1",
-  "inputs": [],
-  "expectedOutputs": [],
-  "fixtures": []
+  "inputs": [
+    {
+      "kind": "css_path",
+      "schema": "text/css"
+    },
+    {
+      "kind": "doc_path",
+      "schema": "doc-effective/1"
+    }
+  ],
+  "expectedOutputs": [
+    {
+      "kind": "pagemap",
+      "schema": "pagemap/1"
+    },
+    {
+      "kind": "pdf",
+      "schema": "raw-pdf/1"
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "tracer-bullet",
+      "description": "Minimal paginate case exercising the declared contract",
+      "inputFiles": {
+        "css_path": "inputs/tracer-bullet.css_path",
+        "doc_path": "inputs/tracer-bullet.doc_path"
+      },
+      "expectedFiles": {
+        "pagemap": "expected/tracer-bullet.pagemap.json",
+        "pdf": "expected/tracer-bullet.pdf.json"
+      }
+    }
+  ],
+  "createdAt": "2026-07-30T00:00:00Z"
 }

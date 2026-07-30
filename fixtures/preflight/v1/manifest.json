@@ -1,27 +1,46 @@
 {
   "schema": "fixture-manifest/1",
   "fixtureSet": "preflight/v1",
-  "description": "Preflight fixture set v1 — vendor profile gates",
+  "description": "Preflight fixture set v1 \u2014 vendor profile gates",
   "createdAt": "2026-07-29T00:00:00Z",
   "inputs": [
-    {"kind": "pdf", "schema": "raw-pdf/1"},
-    {"kind": "profile", "schema": "profile/1"}
+    {
+      "kind": "pdf",
+      "schema": "pdfx/1"
+    },
+    {
+      "kind": "profile",
+      "schema": "profile/1"
+    }
   ],
   "expectedOutputs": [
-    {"kind": "preflight-report", "schema": "preflight/1"}
+    {
+      "kind": "preflight-report",
+      "schema": "preflight/1"
+    }
   ],
   "fixtures": [
     {
       "name": "kdp-green",
       "description": "A PDF that passes KDP preflight",
-      "inputFiles": {"pdf": "inputs/kdp-compliant.pdf", "profile": "inputs/kdp-profile.json"},
-      "expectedFiles": {"preflight-report": "expected/kdp-green.json"}
+      "inputFiles": {
+        "pdf": "inputs/kdp-compliant.pdf",
+        "profile": "inputs/kdp-profile.json"
+      },
+      "expectedFiles": {
+        "preflight-report": "expected/kdp-green.json"
+      }
     },
     {
       "name": "kdp-oversize",
       "description": "A PDF that exceeds KDP page limits",
-      "inputFiles": {"pdf": "inputs/kdp-oversize.pdf", "profile": "inputs/kdp-profile.json"},
-      "expectedFiles": {"preflight-report": "expected/kdp-oversize-fail.json"}
+      "inputFiles": {
+        "pdf": "inputs/kdp-oversize.pdf",
+        "profile": "inputs/kdp-profile.json"
+      },
+      "expectedFiles": {
+        "preflight-report": "expected/kdp-oversize-fail.json"
+      }
     }
   ]
 }

@@ -265,7 +265,7 @@ def extract(ctx: StageCtx, source: str | None = None) -> StageResult:
     
     return StageResult(
         artifacts=[StageArtifactRef(
-            kind="typescript-html",
+            kind="html",   # must exactly equal the declared output key "html"
             hash=str(ref.hash),
             media_type="text/html",
             size=len(html),

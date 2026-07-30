@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/cover/art-brief/1",
+  "title": "ArtBrief",
+  "description": "Semantic cover-art direction produced by cover-brief, consumed by cover-art's per-model prompt renderer. Closed enums everywhere except `concept`/`subject` — this describes cover IMAGERY, never the author's prose (LLM_STRATEGY.md §2 boundary). See COVER_DESIGN.md §2.",
+  "type": "object",
+  "properties": {
+    "schema": { "$ref": "#/$defs/schemaRef" },
+    "concept": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "One or two sentences describing the scene. Free text — the one deliberate exception in this schema."
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "description": "The focal subject of the image, framed for a model prompt (not a plot summary)."
+    },
+    "composition": { "$ref": "#/$defs/composition" },
+    "palette": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/paletteTone" },
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true
+    },
+    "lighting": { "$ref": "#/$defs/lighting" },
+    "medium": { "$ref": "#/$defs/medium" },
+    "mood": { "$ref": "#/$defs/mood" },
+    "genreSignals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/genreSignal" },
+      "minItems": 1,
+      "maxItems": 3,
+      "uniqueItems": true
+    },
+    "typeZone": {
+      "$ref": "#/$defs/typeZone",
+      "description": "Where cover-compose must find low-detail space for deterministic type placement. Every model dialect renders this as a negative-space instruction."
+    },
+    "negative": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/negativeTag" },
+      "minItems": 1,
+      "maxItems": 12,
+      "uniqueItems": true,
+      "description": "Always includes 'text' and 'readable-typography' — no image model renders title/author text (COVER_DESIGN.md §5)."
+    },
+    "sourceRef": { "$ref": "#/$defs/sourceRef" }
+  },
+  "required": [
+    "schema", "concept", "subject", "composition", "palette", "lighting",
+    "medium", "mood", "genreSignals", "typeZone", "negative", "sourceRef"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "schemaRef": {
+      "type": "string",
+      "enum": ["art-brief/1"]
+    },
+    "sourceRef": {
+      "type": "object",
+      "properties": {
+        "titleMetaHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "designSpecHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "manuscriptSampleUsed": {
+          "type": "boolean",
+          "description": "Whether an opt-in manuscript excerpt informed this brief. NEVER the excerpt text itself — see COVER_DESIGN.md §2 manuscript-sample constraints."
+        }
+      },
+      "required": ["titleMetaHash", "designSpecHash", "manuscriptSampleUsed"],
+      "additionalProperties": false
+    },
+    "composition": {
+      "type": "string",
+      "enum": [
+        "rule-of-thirds", "centered", "symmetrical", "diagonal",
+        "negative-space-dominant", "full-bleed-texture", "silhouette",
+        "close-crop", "wide-establishing"
+      ]
+    },
+    "paletteTone": {
+      "type": "string",
+      "enum": [
+        "desaturated-blue", "warm-amber", "bone-white", "charcoal", "blood-red",
+        "forest-green", "dusty-rose", "deep-violet", "muted-ochre", "stark-black",
+        "cool-teal", "burnt-sienna", "pale-gold", "slate-grey", "ivory"
+      ]
+    },
+    "lighting": {
+      "type": "string",
+      "enum": [
+        "low-key", "high-key", "backlit", "golden-hour", "overcast-flat",
+        "hard-noon", "candlelit", "moonlit", "studio-soft", "harsh-fluorescent"
+      ]
+    },
+    "medium": {
+      "type": "string",
+      "enum": [
+        "painterly-digital", "photographic", "watercolor", "linocut",
+        "collage", "flat-vector", "gouache", "ink-wash", "oil-painting",
+        "risograph", "3d-render"
+      ]
+    },
+    "mood": {
+      "type": "string",
+      "enum": [
+        "tense", "melancholic", "whimsical", "ominous", "hopeful",
+        "nostalgic", "clinical", "romantic", "cold", "urgent", "serene"
+      ]
+    },
+    "genreSignal": {
+      "type": "string",
+      "enum": [
+        "literary-thriller", "cozy-mystery", "epic-fantasy", "hard-scifi",
+        "romance", "literary-fiction", "memoir", "horror", "historical-fiction",
+        "ya-contemporary", "business-nonfiction", "self-help", "true-crime",
+        "poetry"
+      ]
+    },
+    "typeZone": {
+      "type": "string",
+      "enum": ["upper-third", "lower-third", "center-band", "none"]
+    },
+    "negativeTag": {
+      "type": "string",
+      "enum": [
+        "text", "readable-typography", "logo", "watermark",
+        "photorealistic-face", "real-person-likeness", "brand-marks",
+        "signature", "clutter", "low-contrast-center", "extra-limbs",
+        "distorted-anatomy"
+      ]
+    }
+  }
+}

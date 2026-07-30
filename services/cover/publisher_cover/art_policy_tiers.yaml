@@ -1,0 +1,86 @@
+# Product-tier -> generation panel mapping (COVER_DESIGN.md §3, your tier decision:
+# "panel width as product tier"). Every entry here is validated at load time by
+# art_policy.resolve_tier_panel() against publisher_cover/model_catalogue.yaml --
+# an entry naming a (model, provider) pair, resolution, or aspect_ratio the catalogue
+# doesn't support fails loudly at policy-load time, not mid-fan-out.
+#
+# aspect_ratio defaults to "2:3" (exactly 6x9in) when omitted from an entry.
+# resolution is OMITTED entirely for endpoints with no resolution parameter
+# (e.g. the FLUX.2 family) -- passing one there is itself a validation error.
+
+version: 1
+
+tiers:
+  basic:                              # 1 vendor x 3 seeds
+    est_usd: 0.12
+    panel:
+      - model: bytedance-seed/seedream-4.5
+        provider: seed
+        resolution: "4K"
+        aspect_ratio: "2:3"
+        n: 3
+        seeds: [11, 22, 33]
+
+  pro:                                # 4 vendors x ~3 -- cross-vendor diversity is the point
+    est_usd: 0.99
+    panel:
+      - model: bytedance-seed/seedream-4.5
+        provider: seed
+        resolution: "4K"
+        aspect_ratio: "2:3"
+        n: 3
+        seeds: [11, 22, 33]
+      - model: sourceful/riverflow-v2.5-pro
+        provider: sourceful
+        resolution: "4K"
+        aspect_ratio: "2:3"
+        n: 1
+      - model: google/gemini-3-pro-image
+        provider: google-ai-studio/global   # NOT google-vertex/global -- that provider
+                                             # caps at 2K for this model (COVER_DESIGN.md §3)
+        resolution: "4K"
+        aspect_ratio: "2:3"
+        n: 1
+      - model: black-forest-labs/flux.2-pro
+        provider: black-forest-labs
+        # no `resolution` key: this endpoint has no resolution parameter at all
+        aspect_ratio: "2:3"
+        n: 1
+        seeds: [11, 22, 33]
+
+  studio:                             # pro + vector ornaments (imprint marks, dinkus --
+                                       # never the cover front; see COVER_DESIGN.md §5)
+    est_usd: 1.31
+    panel:
+      - model: bytedance-seed/seedream-4.5
+        provider: seed
+        resolution: "4K"
+        aspect_ratio: "2:3"
+        n: 3
+        seeds: [11, 22, 33]
+      - model: sourceful/riverflow-v2.5-pro
+        provider: sourceful
+        resolution: "4K"
+        aspect_ratio: "2:3"
+        n: 1
+      - model: google/gemini-3-pro-image
+        provider: google-ai-studio/global
+        resolution: "4K"
+        aspect_ratio: "2:3"
+        n: 1
+      - model: black-forest-labs/flux.2-pro
+        provider: black-forest-labs
+        aspect_ratio: "2:3"
+        n: 1
+        seeds: [11, 22, 33]
+      - model: recraft/recraft-v4.1-vector
+        provider: recraft
+        aspect_ratio: "1:1"           # Recraft has no 2:3 -- ornament role only, never
+                                       # dispatched as a cover-front candidate
+        n: 4
+
+privacy:
+  zdr_only_tenants:
+    model_filter: "zdr=true"
+  no_external_llm:
+    fallback: type-only-template      # deterministic, $0, LLM_STRATEGY.md §4 dimension 3

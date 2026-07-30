@@ -14,13 +14,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
 
 STAGE_DIRS = ["stages", "services"]
 
 
 def get_stage_versions(file_path: Path) -> list[tuple[str, int]]:
     """Extract @stage(name=..., version=...) declarations from a file."""
-    text = file_path.read_text()
+    # Explicit UTF-8: the default locale codec (cp1253 on this dev box) raises
+    # UnicodeDecodeError on the em-dashes that appear throughout these sources.
+    text = file_path.read_text(encoding="utf-8")
     pattern = re.compile(
         r'@stage\s*\([^)]*?name\s*=\s*"([^"]+)"[^)]*?version\s*=\s*(\d+)',
         re.DOTALL,
@@ -32,7 +36,7 @@ def get_changed_stage_files(base_ref: str = "HEAD~1") -> list[Path]:
     """Get list of changed stage files vs base ref."""
     result = subprocess.run(
         ["git", "diff", "--name-only", base_ref],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=REPO_ROOT,
     )
     if result.returncode != 0:
         # Not a git repo or no base — skip
@@ -66,33 +70,47 @@ def main():
         if not versions:
             continue  # no @stage in this file
         
-        # Check version against git show for the base
+        # Compare each stage's version against the same file at the base revision.
+        #
+        # Two bugs used to make this check structurally incapable of reporting anything:
+        #   1. `get_stage_versions(Path("/dev/null"))` read a path unrelated to the file
+        #      being checked — on Windows it raises FileNotFoundError, on Linux it returns
+        #      []. Its result was then discarded anyway.
+        #   2. The whole block sat in `try: ... except Exception: pass`, so that error
+        #      (and any git failure, and the `relative_to(Path.cwd())` ValueError raised
+        #      whenever CWD is not the repo root) was swallowed silently and main() fell
+        #      through to printing "PASSED".
+        # A lint that cannot fail is worse than no lint. Errors are now reported.
         try:
-            result = subprocess.run(
-                ["git", "show", f"{base}:{fp.relative_to(Path.cwd())}"],
-                capture_output=True, text=True,
-            )
-            if result.returncode == 0 and result.stdout:
-                old_versions = get_stage_versions(Path("/dev/null"))
-                # Re-parse the old version
-                old_pattern = re.compile(
-                    r'@stage\s*\([^)]*?name\s*=\s*"([^"]+)"[^)]*?version\s*=\s*(\d+)',
-                    re.DOTALL,
+            rel = fp.resolve().relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            violations.append(f"{fp}: not inside the repo root {REPO_ROOT}")
+            continue
+
+        result = subprocess.run(
+            ["git", "show", f"{base}:{rel}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=REPO_ROOT,
+        )
+        if result.returncode != 0:
+            # File did not exist at the base revision — nothing to compare, not a violation.
+            continue
+
+        old_pattern = re.compile(
+            r'@stage\s*\([^)]*?name\s*=\s*"([^"]+)"[^)]*?version\s*=\s*(\d+)',
+            re.DOTALL,
+        )
+        old_parsed = {
+            m.group(1): int(m.group(2))
+            for m in old_pattern.finditer(result.stdout)
+        }
+
+        for name, new_ver in versions:
+            old_ver = old_parsed.get(name)
+            if old_ver is not None and new_ver <= old_ver:
+                violations.append(
+                    f"{rel}: stage '{name}' changed but version {new_ver} "
+                    f"was not bumped from {old_ver}"
                 )
-                old_parsed = {
-                    m.group(1): int(m.group(2))
-                    for m in old_pattern.finditer(result.stdout)
-                }
-                
-                for name, new_ver in versions:
-                    old_ver = old_parsed.get(name)
-                    if old_ver is not None and new_ver <= old_ver:
-                        violations.append(
-                            f"{fp.name}: stage '{name}' version {new_ver} "
-                            f"not bumped from {old_ver}"
-                        )
-        except Exception:
-            pass
     
     if violations:
         print(f"Stage version lint FAILED: {len(violations)} violation(s)")

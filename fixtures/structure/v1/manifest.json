@@ -2,7 +2,34 @@
   "schema": "fixture-manifest/1",
   "fixtureSet": "structure/v1",
   "description": "Tracer bullet fixture for structure/v1",
-  "inputs": [],
-  "expectedOutputs": [],
-  "fixtures": []
+  "inputs": [
+    {
+      "kind": "source",
+      "schema": "raw-source/1"
+    }
+  ],
+  "expectedOutputs": [
+    {
+      "kind": "ast",
+      "schema": "ast/1"
+    },
+    {
+      "kind": "integrity-report",
+      "schema": "integrity-report/1"
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "tracer-bullet",
+      "description": "Minimal structure case exercising the declared contract",
+      "inputFiles": {
+        "source": "inputs/tracer-bullet.source"
+      },
+      "expectedFiles": {
+        "ast": "expected/tracer-bullet.ast.json",
+        "integrity-report": "expected/tracer-bullet.integrity-report.json"
+      }
+    }
+  ],
+  "createdAt": "2026-07-30T00:00:00Z"
 }

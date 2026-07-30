@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/cover/cover-verdict/1",
+  "title": "CoverVerdict",
+  "description": "One judge's pairwise vote in cover-judge's vision panel. Closed enum, no rationale field — same discipline as classification/1 (LLM_STRATEGY.md §3). See COVER_DESIGN.md §8.",
+  "type": "object",
+  "properties": {
+    "schema": { "type": "string", "enum": ["cover-verdict/1"] },
+    "winner": { "type": "string", "enum": ["a", "b", "tie"] },
+    "modelInfo": {
+      "type": "object",
+      "properties": {
+        "modelId": { "type": "string", "maxLength": 128 },
+        "providerSlug": { "type": "string", "maxLength": 64 },
+        "promptVersion": { "type": "string", "maxLength": 32 },
+        "reasoningConfigSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "required": ["modelId", "providerSlug", "promptVersion"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema", "winner", "modelInfo"],
+  "additionalProperties": false
+}

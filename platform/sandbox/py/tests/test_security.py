@@ -72,21 +72,53 @@ class TestThreatMonitor:
 # ── Sandbox Tier Tests ──────────────────────────────────────────
 
 class TestSandboxCreation:
+    """
+    Tier isolation. These four previously asserted only `s is not None` — but
+    `create_sandbox` ends in `return Sandbox(config)` and cannot return None, so a
+    version handing back an EXTERNAL-tier config for every request passed all four.
+    Assert the properties that make a tier a tier.
+    """
+
     def test_create_light_sandbox(self):
-        s = create_sandbox(SandboxTier.LIGHT)
-        assert s is not None
+        c = create_sandbox(SandboxTier.LIGHT)._config
+        assert c.tier is SandboxTier.LIGHT
+        assert c.memory_max_mb == 256 and c.cpu_max == 1.0
+        assert c.network_enabled is False
 
     def test_create_standard_sandbox(self):
-        s = create_sandbox(SandboxTier.STANDARD)
-        assert s is not None
+        c = create_sandbox(SandboxTier.STANDARD)._config
+        assert c.tier is SandboxTier.STANDARD
+        assert c.memory_max_mb == 512 and c.cpu_max == 2.0
+        assert c.network_enabled is False
 
     def test_create_heavy_sandbox(self):
-        s = create_sandbox(SandboxTier.HEAVY)
-        assert s is not None
+        c = create_sandbox(SandboxTier.HEAVY)._config
+        assert c.tier is SandboxTier.HEAVY
+        assert c.memory_max_mb == 2048 and c.cpu_max == 4.0
+        assert c.network_enabled is False
 
     def test_create_external_sandbox(self):
-        s = create_sandbox(SandboxTier.EXTERNAL)
-        assert s is not None
+        c = create_sandbox(SandboxTier.EXTERNAL)._config
+        assert c.tier is SandboxTier.EXTERNAL
+        # The only tier permitted network access — and therefore the tightest caps.
+        assert c.network_enabled is True
+        assert c.pids_max == 16 and c.wall_clock_timeout_s == 60
+
+    def test_only_external_tier_has_network(self):
+        """The isolation property that actually matters: network is opt-in per tier."""
+        networked = {t for t in SandboxTier if create_sandbox(t)._config.network_enabled}
+        assert networked == {SandboxTier.EXTERNAL}
+
+    def test_memory_caps_are_distinct_per_tier(self):
+        """A tier that silently reused another's caps would defeat admission control."""
+        caps = [create_sandbox(t)._config.memory_max_mb for t in
+                (SandboxTier.LIGHT, SandboxTier.STANDARD, SandboxTier.HEAVY)]
+        assert caps == sorted(caps) and len(set(caps)) == 3
+
+    def test_every_tier_drops_dangerous_capabilities(self):
+        for t in SandboxTier:
+            dropped = set(create_sandbox(t)._config.capabilities_to_drop)
+            assert {"CAP_SYS_ADMIN", "CAP_SYS_PTRACE", "CAP_NET_RAW"} <= dropped, t
 
     def test_sandbox_context_manager(self):
         with Sandbox() as s:

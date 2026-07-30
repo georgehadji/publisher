@@ -1,11 +1,31 @@
 # Publisher CI — matches BUILD_PLAN.md declared gates.
-# On push / pull_request to main.
+#
+# ARCHITECTURE.md §2.15 lists Schema lint, Stage contract, DAG integrity and contract
+# tests as "CI blocking". They previously all carried `continue-on-error: true`, so every
+# doctrine gate was advisory and the pipeline stayed green regardless of what they found.
+# Two of them could not have failed anyway: DAG integrity was invoked as
+# `python -m platform.stages.integrity`, which cannot work because the repo's top-level
+# `platform/` directory shadows the stdlib `platform` module, and the version-bump lint
+# swallowed all of its own errors. Both are fixed; the gates are now enforced.
 name: ci
 on:
   push:
-    branches: [main]
+    # `master` is this repo's default branch. The workflow previously listed only
+    # `main`, so it never ran on any push.
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
+
+env:
+  # Every editable install the suite needs. services/cover, services/idml,
+  # services/epub and services/onix were missing, so any test importing them
+  # would fail to collect in CI while passing locally.
+  PUBLISHER_PKGS: >-
+    -e platform/cas/py -e platform/stages/py -e platform/cache/py
+    -e platform/sandbox/py -e platform/reproducibility -e platform/supply-chain
+    -e services/prepress -e services/structure -e services/agents
+    -e services/learning -e services/cover -e services/idml
+    -e services/epub -e services/onix
 
 jobs:
   python:
@@ -15,12 +35,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e platform/cas/py -e platform/stages/py -e platform/cache/py -e platform/sandbox/py -e platform/reproducibility -e platform/supply-chain -e services/prepress -e services/structure -e services/agents -e services/learning
-      - name: Full test suite with collection floor
+      - run: pip install ${{ env.PUBLISHER_PKGS }}
+      - name: Full test suite
         run: python -m pytest --tb=short
       - name: Lint schemas (no free-text in structure routes)
         run: python tools/lint_schemas.py
-        continue-on-error: true  # Will hard-fail after F3.1
 
   rust:
     runs-on: ubuntu-latest
@@ -36,38 +55,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The version-bump lint diffs against a base revision, so it needs history.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e platform/cas/py -e platform/stages/py -e platform/cache/py -e platform/sandbox/py -e platform/reproducibility -e platform/supply-chain -e services/prepress -e services/structure -e services/agents -e services/learning
+      - run: pip install ${{ env.PUBLISHER_PKGS }}
       - name: Codegen in sync (§3.1 Done)
         run: |
           cd schemas && node codegen/generate.mjs && cd ..
           git diff --exit-code
+      - name: Generated types are valid (§3.1)
+        run: cd schemas && node codegen/test.mjs
       - name: DAG integrity (§3.20)
-        run: python -m platform.stages.integrity
-        continue-on-error: true  # Will hard-fail after F2.1
+        # NOT `python -m platform.stages.integrity` — see the header note.
+        run: python platform/stages/integrity.py
       - name: Generated contract tests (§3.20)
         run: python -m pytest tests/contracts -v
-        continue-on-error: true  # Will hard-fail after F1.2
       - name: Version-bump rule (§3.3, §7)
-        run: python tools/lint_stage_versions.py
-        continue-on-error: true  # Will hard-fail with cache backend
-
-  doctrine:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -e platform/cas/py -e platform/stages/py -e platform/cache/py -e platform/sandbox/py -e platform/reproducibility -e platform/supply-chain -e services/prepress -e services/structure -e services/agents -e services/learning
-      - name: Lint schemas (no free-text)
-        run: python tools/lint_schemas.py
-        continue-on-error: true
-      - name: Stage version bump check
-        run: python tools/lint_stage_versions.py
-        continue-on-error: true
+        run: python tools/lint_stage_versions.py "${{ github.event.pull_request.base.sha || 'HEAD~1' }}"

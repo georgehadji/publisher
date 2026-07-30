@@ -15,6 +15,7 @@
  *
  * Gate: A third party integrates from the OpenAPI spec with no support contact.
  */
+import { randomBytes } from 'node:crypto';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
@@ -25,7 +26,19 @@ const server = Fastify({
 
 // ── Plugins ────────────────────────────────────────────────────
 
-await server.register(cors, { origin: true });
+// BUILD_PLAN.md §3.12 requires **strict CORS**. `origin: true` reflects whatever Origin
+// the caller sent, i.e. allow-any — which, combined with credentialed requests, lets any
+// site drive this API as the logged-in user. Allow-list from config instead, and fail
+// closed to same-origin-only when nothing is configured.
+const allowedOrigins = (process.env.PUBLISHER_CORS_ORIGINS ?? '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+await server.register(cors, {
+  origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+  credentials: true,
+});
 await server.register(rateLimit, {
   max: 100,
   timeWindow: '1 minute',
@@ -258,7 +271,11 @@ server.post<{ Body: { url: string; events: string[] } }>(
       id: `wh-${Date.now()}`,
       url,
       events,
-      secret: `sec-${Math.random().toString(36).slice(2)}`,
+      // Webhook signing secret — MUST be cryptographically random. `Math.random()` is
+      // not a CSPRNG: it is a seeded PRNG with ~52 bits of guessable state, so an
+      // attacker who observes a few issued secrets can predict later ones and forge
+      // signed webhook deliveries. randomBytes draws from the OS CSPRNG.
+      secret: `sec-${randomBytes(32).toString('base64url')}`,
       createdAt: new Date().toISOString(),
     };
     webhooks.push(hook);

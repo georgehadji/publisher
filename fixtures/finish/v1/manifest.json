@@ -2,7 +2,39 @@
   "schema": "fixture-manifest/1",
   "fixtureSet": "finish/v1",
   "description": "Tracer bullet fixture for finish/v1",
-  "inputs": [],
-  "expectedOutputs": [],
-  "fixtures": []
+  "inputs": [
+    {
+      "kind": "pdf_path",
+      "schema": "raw-pdf/1"
+    }
+  ],
+  "expectedOutputs": [
+    {
+      "kind": "pdf",
+      "schema": "pdfx/1"
+    },
+    {
+      "kind": "proof",
+      "schema": "proof-pdf/1"
+    },
+    {
+      "kind": "report",
+      "schema": "finish-report/1"
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "tracer-bullet",
+      "description": "Minimal finish case exercising the declared contract",
+      "inputFiles": {
+        "pdf_path": "inputs/tracer-bullet.pdf_path"
+      },
+      "expectedFiles": {
+        "pdf": "expected/tracer-bullet.pdf.json",
+        "proof": "expected/tracer-bullet.proof.json",
+        "report": "expected/tracer-bullet.report.json"
+      }
+    }
+  ],
+  "createdAt": "2026-07-30T00:00:00Z"
 }

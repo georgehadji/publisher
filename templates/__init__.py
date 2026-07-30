@@ -14,7 +14,10 @@ From ARCHITECTURE.md §2.7 and BUILD_PLAN.md §3.7:
 LITERARY = {
     "schema": "designspec/1",
     "name": "Literary Novel",
-    "preferredEngine": "typst",
+    # "chrome-pagedjs": only a CSS/Paged.js emitter exists today. The O1 renderer
+    # decision (BUILD_PLAN.md §5.1 P0) has not been run; declaring "typst" here
+    # would fail design-compile's engine-implemented check (F4.1).
+    "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 139.7, "height": 215.9, "unit": "mm"},
     "typography": {
         "bodyFont": {"family": "EB Garamond"},
@@ -60,7 +63,10 @@ LITERARY = {
 THRILLER = {
     "schema": "designspec/1",
     "name": "Thriller",
-    "preferredEngine": "typst",
+    # "chrome-pagedjs": only a CSS/Paged.js emitter exists today. The O1 renderer
+    # decision (BUILD_PLAN.md §5.1 P0) has not been run; declaring "typst" here
+    # would fail design-compile's engine-implemented check (F4.1).
+    "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 152.4, "height": 228.6, "unit": "mm"},
     "typography": {
         "bodyFont": {"family": "Source Serif Pro"},
@@ -105,7 +111,10 @@ THRILLER = {
 MEMOIR = {
     "schema": "designspec/1",
     "name": "Memoir",
-    "preferredEngine": "typst",
+    # "chrome-pagedjs": only a CSS/Paged.js emitter exists today. The O1 renderer
+    # decision (BUILD_PLAN.md §5.1 P0) has not been run; declaring "typst" here
+    # would fail design-compile's engine-implemented check (F4.1).
+    "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 139.7, "height": 215.9, "unit": "mm"},
     "typography": {
         "bodyFont": {"family": "Libertinus Serif"},
@@ -155,7 +164,10 @@ MEMOIR = {
 ACADEMIC = {
     "schema": "designspec/1",
     "name": "Academic",
-    "preferredEngine": "typst",
+    # "chrome-pagedjs": only a CSS/Paged.js emitter exists today. The O1 renderer
+    # decision (BUILD_PLAN.md §5.1 P0) has not been run; declaring "typst" here
+    # would fail design-compile's engine-implemented check (F4.1).
+    "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 152.4, "height": 228.6, "unit": "mm"},
     "typography": {
         "bodyFont": {"family": "Noto Serif"},
@@ -200,7 +212,10 @@ ACADEMIC = {
 POETRY = {
     "schema": "designspec/1",
     "name": "Poetry",
-    "preferredEngine": "typst",
+    # "chrome-pagedjs": only a CSS/Paged.js emitter exists today. The O1 renderer
+    # decision (BUILD_PLAN.md §5.1 P0) has not been run; declaring "typst" here
+    # would fail design-compile's engine-implemented check (F4.1).
+    "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 139.7, "height": 215.9, "unit": "mm"},
     "typography": {
         "bodyFont": {"family": "EB Garamond"},
@@ -243,7 +258,10 @@ POETRY = {
 SCIFI = {
     "schema": "designspec/1",
     "name": "Science Fiction",
-    "preferredEngine": "typst",
+    # "chrome-pagedjs": only a CSS/Paged.js emitter exists today. The O1 renderer
+    # decision (BUILD_PLAN.md §5.1 P0) has not been run; declaring "typst" here
+    # would fail design-compile's engine-implemented check (F4.1).
+    "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 152.4, "height": 228.6, "unit": "mm"},
     "typography": {
         "bodyFont": {"family": "Merriweather"},
@@ -288,7 +306,10 @@ SCIFI = {
 CHILDRENS = {
     "schema": "designspec/1",
     "name": "Children's",
-    "preferredEngine": "typst",
+    # "chrome-pagedjs": only a CSS/Paged.js emitter exists today. The O1 renderer
+    # decision (BUILD_PLAN.md §5.1 P0) has not been run; declaring "typst" here
+    # would fail design-compile's engine-implemented check (F4.1).
+    "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 177.8, "height": 254.0, "unit": "mm"},
     "typography": {
         "bodyFont": {"family": "Source Serif Pro"},
@@ -334,7 +355,10 @@ CHILDRENS = {
 REFERENCE = {
     "schema": "designspec/1",
     "name": "Reference",
-    "preferredEngine": "typst",
+    # "chrome-pagedjs": only a CSS/Paged.js emitter exists today. The O1 renderer
+    # decision (BUILD_PLAN.md §5.1 P0) has not been run; declaring "typst" here
+    # would fail design-compile's engine-implemented check (F4.1).
+    "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 190.5, "height": 235.0, "unit": "mm"},
     "typography": {
         "bodyFont": {"family": "Noto Serif"},

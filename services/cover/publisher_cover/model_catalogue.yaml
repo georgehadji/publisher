@@ -1,0 +1,856 @@
+# GENERATED -- do not hand-edit. Regenerate: python -m services.cover.art_policy.sync_catalogue
+# Source: GET /api/v1/models?output_modalities=image
+#       + GET /api/v1/images/models[/{id}/endpoints]
+#
+# `billing_unit` is the field that decides model choice at PRINT resolution:
+#   image      flat per image, resolution-independent   -- cheapest at 4K
+#   megapixel  scales with pixel count                  -- 3-10x worse at print res
+#   token      scales with resolution/quality           -- read usage.cost back
+#
+# A 6x9in cover at 300dpi is 4.86 MP front-only, 10.82 MP full wrap. At that size a
+# megapixel-billed model can cost 19x a flat-rate one for indistinguishable output.
+#
+# `providers[]` is the unit of dispatch, NOT `id`: capability varies by provider within
+# one model id. Validate resolution/aspect_ratio against the chosen provider before
+# dispatch, and always send provider.allow_fallbacks=false.
+catalogue_version: 1
+probed_at: 2026-07-29
+total_count: 40
+models:
+  - id: black-forest-labs/flux.2-flex
+    name: "Black Forest Labs: FLUX.2 Flex"
+    role: cover_art
+    native_2_3: true
+    seed: true
+    n_max: 1
+    input_references_max: 8
+    streaming: false
+    design_arena_elo:
+      graphicdesign: 1215
+      image: 1224
+      logo: 1224
+    aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
+    providers:
+      - slug: black-forest-labs/us-3
+        billing_unit: megapixel
+        rate_usd: 0.06
+        resolutions: []
+        n_max: 1
+        input_references_max: 8
+        seed: true
+        streaming: false
+        passthrough: [steps, guidance, safety_tolerance]
+  - id: black-forest-labs/flux.2-klein-4b
+    name: "Black Forest Labs: FLUX.2 Klein 4B"
+    role: cover_art
+    native_2_3: true
+    seed: true
+    n_max: 1
+    input_references_max: 4
+    streaming: false
+    design_arena_elo:
+      graphicdesign: 1029
+      image: 1085
+      logo: 1071
+      imageediting: 1070
+    aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
+    providers:
+      - slug: black-forest-labs
+        billing_unit: megapixel
+        rate_usd: 0.014
+        resolutions: []
+        n_max: 1
+        input_references_max: 4
+        seed: true
+        streaming: false
+        passthrough: [steps, guidance, safety_tolerance]
+  - id: black-forest-labs/flux.2-max
+    name: "Black Forest Labs: FLUX.2 Max"
+    role: cover_art
+    native_2_3: true
+    seed: true
+    n_max: 1
+    input_references_max: 8
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
+    providers:
+      - slug: black-forest-labs/us-3
+        billing_unit: megapixel
+        rate_usd: 0.07
+        resolutions: []
+        n_max: 1
+        input_references_max: 8
+        seed: true
+        streaming: false
+        passthrough: [steps, guidance, safety_tolerance]
+  - id: black-forest-labs/flux.2-pro
+    name: "Black Forest Labs: FLUX.2 Pro"
+    role: cover_art
+    native_2_3: true
+    seed: true
+    n_max: 1
+    input_references_max: 8
+    streaming: false
+    design_arena_elo:
+      graphicdesign: 1199
+      image: 1218
+      logo: 1208
+      imageediting: 1149
+    aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
+    providers:
+      - slug: black-forest-labs
+        billing_unit: megapixel
+        rate_usd: 0.03
+        resolutions: []
+        n_max: 1
+        input_references_max: 8
+        seed: true
+        streaming: false
+        passthrough: [steps, guidance, safety_tolerance]
+  - id: bytedance-seed/seedream-4.5
+    name: "ByteDance Seed: Seedream 4.5"
+    role: cover_art
+    native_2_3: true
+    seed: true
+    n_max: 10
+    input_references_max: 14
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "1:2", "2:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "9:19.5", "19.5:9", "9:20", "20:9", "9:21", "21:9", auto]
+    providers:
+      - slug: seed
+        billing_unit: image
+        rate_usd: 0.04
+        resolutions: [1K, 2K, 4K]
+        n_max: 10
+        input_references_max: 14
+        seed: true
+        streaming: false
+        passthrough: []
+  - id: google/gemini-2.5-flash-image
+    name: "Google: Nano Banana (Gemini 2.5 Flash Image)"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 3
+    streaming: false
+    design_arena_elo:
+      graphicdesign: 1194
+      image: 1209
+      logo: 1182
+    aspect_ratios: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+    providers:
+      - slug: google-ai-studio
+        billing_unit: token
+        rate_usd: 3e-05
+        resolutions: []
+        n_max: 1
+        input_references_max: 3
+        seed: false
+        streaming: false
+        passthrough: [cachedContent]
+      - slug: google-vertex/global
+        billing_unit: token
+        rate_usd: 3e-05
+        resolutions: []
+        n_max: 1
+        input_references_max: 3
+        seed: false
+        streaming: false
+        passthrough: [cachedContent]
+  - id: google/gemini-3-pro-image
+    name: "Google: Nano Banana Pro (Gemini 3 Pro Image)"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 14
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+    providers:
+      - slug: google-vertex/global
+        billing_unit: token
+        rate_usd: 0.00012
+        resolutions: [1K, 2K]
+        n_max: 1
+        input_references_max: 14
+        seed: false
+        streaming: false
+        passthrough: [cachedContent]
+      - slug: google-ai-studio/global
+        billing_unit: token
+        rate_usd: 0.00012
+        resolutions: [1K, 2K, 4K]
+        n_max: 1
+        input_references_max: 14
+        seed: false
+        streaming: false
+        passthrough: [cachedContent]
+  - id: google/gemini-3-pro-image-preview
+    name: "Google: Nano Banana Pro (Gemini 3 Pro Image Preview)"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 14
+    streaming: false
+    design_arena_elo:
+      graphicdesign: 1277
+      image: 1266
+      logo: 1254
+      imageediting: 1269
+    aspect_ratios: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+    providers:
+      - slug: google-ai-studio/global
+        billing_unit: token
+        rate_usd: 0.00012
+        resolutions: [1K, 2K, 4K]
+        n_max: 1
+        input_references_max: 14
+        seed: false
+        streaming: false
+        passthrough: [cachedContent]
+  - id: google/gemini-3.1-flash-image
+    name: "Google: Nano Banana 2 (Gemini 3.1 Flash Image)"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 14
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"]
+    providers:
+      - slug: google-vertex/global
+        billing_unit: token
+        rate_usd: 6e-05
+        resolutions: [512, 1K, 2K, 4K]
+        n_max: 1
+        input_references_max: 14
+        seed: false
+        streaming: false
+        passthrough: [cachedContent]
+      - slug: google-ai-studio
+        billing_unit: token
+        rate_usd: 6e-05
+        resolutions: [512, 1K, 2K, 4K]
+        n_max: 1
+        input_references_max: 14
+        seed: false
+        streaming: false
+        passthrough: [cachedContent]
+  - id: google/gemini-3.1-flash-image-preview
+    name: "Google: Nano Banana 2 (Gemini 3.1 Flash Image Preview)"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 14
+    streaming: false
+    design_arena_elo:
+      graphicdesign: 1287
+      image: 1299
+      logo: 1276
+    aspect_ratios: ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"]
+    providers:
+      - slug: google-ai-studio
+        billing_unit: token
+        rate_usd: 6e-05
+        resolutions: [512, 1K, 2K, 4K]
+        n_max: 1
+        input_references_max: 14
+        seed: false
+        streaming: false
+        passthrough: [cachedContent]
+  - id: google/gemini-3.1-flash-lite-image
+    name: "Google: Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 14
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"]
+    providers:
+      - slug: google-vertex/global
+        billing_unit: token
+        rate_usd: 3e-05
+        resolutions: [1K]
+        n_max: 1
+        input_references_max: 14
+        seed: false
+        streaming: false
+        passthrough: [cachedContent]
+      - slug: google-ai-studio
+        billing_unit: token
+        rate_usd: 3e-05
+        resolutions: [1K]
+        n_max: 1
+        input_references_max: 14
+        seed: false
+        streaming: false
+        passthrough: [cachedContent]
+  - id: krea/krea-2-large
+    name: "Krea: Krea 2 Large"
+    role: cover_art
+    native_2_3: true
+    seed: true
+    n_max: 1
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:2", "16:9", "4:5", "2:3", "9:16"]
+    providers:
+      - slug: krea
+        billing_unit: UNPRICED
+        rate_usd: null
+        resolutions: [1K]
+        n_max: 1
+        input_references_max: 1
+        seed: true
+        streaming: false
+        passthrough: [image_style_references, moodboards, styles, creativity, intensity, complexity, movement, strength]
+  - id: krea/krea-2-medium
+    name: "Krea: Krea 2 Medium"
+    role: cover_art
+    native_2_3: true
+    seed: true
+    n_max: 1
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:2", "16:9", "4:5", "2:3", "9:16"]
+    providers:
+      - slug: krea
+        billing_unit: UNPRICED
+        rate_usd: null
+        resolutions: [1K]
+        n_max: 1
+        input_references_max: 1
+        seed: true
+        streaming: false
+        passthrough: [image_style_references, moodboards, styles, creativity, intensity, complexity, movement, strength]
+  - id: krea/krea-2-medium-turbo
+    name: "Krea: Krea 2 Medium Turbo"
+    role: cover_art
+    native_2_3: true
+    seed: true
+    n_max: 1
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:2", "16:9", "4:5", "2:3", "9:16"]
+    providers:
+      - slug: krea
+        billing_unit: UNPRICED
+        rate_usd: null
+        resolutions: [1K]
+        n_max: 1
+        input_references_max: 1
+        seed: true
+        streaming: false
+        passthrough: [image_style_references, moodboards, styles, creativity, intensity, complexity, movement, strength]
+  - id: microsoft/mai-image-2.5
+    name: "Microsoft: MAI-Image-2.5"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 1
+    streaming: false
+    design_arena_elo:
+      graphicdesign: 1227
+      image: 1236
+      imageediting: 1256
+      logo: 1250
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", auto]
+    providers:
+      - slug: azure
+        billing_unit: token
+        rate_usd: 4.7e-05
+        resolutions: []
+        n_max: 1
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: []
+  - id: microsoft/mai-image-2.5-pro
+    name: "Microsoft: MAI-Image-2.5 Pro"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", auto]
+    providers:
+      - slug: azure
+        billing_unit: token
+        rate_usd: 0.000108
+        resolutions: []
+        n_max: 1
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: []
+  - id: openai/gpt-5-image
+    name: "OpenAI: GPT-5 Image"
+    role: unsuitable_no_native_2_3
+    native_2_3: false
+    seed: false
+    n_max: 10
+    input_references_max: 16
+    streaming: true
+    design_arena_elo:
+      graphicdesign: 1199
+      image: 1214
+      logo: 1216
+    aspect_ratios: []
+    providers:
+      - slug: openai
+        billing_unit: token
+        rate_usd: 4e-05
+        resolutions: []
+        n_max: 10
+        input_references_max: 16
+        seed: false
+        streaming: true
+        passthrough: [moderation]
+  - id: openai/gpt-5-image-mini
+    name: "OpenAI: GPT-5 Image Mini"
+    role: unsuitable_no_native_2_3
+    native_2_3: false
+    seed: false
+    n_max: 10
+    input_references_max: 16
+    streaming: true
+    design_arena_elo:
+      graphicdesign: 1193
+      image: 1206
+      logo: 1222
+    aspect_ratios: []
+    providers:
+      - slug: openai
+        billing_unit: token
+        rate_usd: 8e-06
+        resolutions: []
+        n_max: 10
+        input_references_max: 16
+        seed: false
+        streaming: true
+        passthrough: [moderation]
+  - id: openai/gpt-5.4-image-2
+    name: "OpenAI: GPT-5.4 Image 2"
+    role: unsuitable_no_native_2_3
+    native_2_3: false
+    seed: false
+    n_max: 10
+    input_references_max: 16
+    streaming: true
+    design_arena_elo: null
+    aspect_ratios: []
+    providers:
+      - slug: openai
+        billing_unit: token
+        rate_usd: 3e-05
+        resolutions: []
+        n_max: 10
+        input_references_max: 16
+        seed: false
+        streaming: true
+        passthrough: [moderation]
+  - id: openai/gpt-image-1
+    name: "OpenAI: GPT Image 1"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 10
+    input_references_max: 16
+    streaming: true
+    design_arena_elo:
+      imageediting: 1122
+    aspect_ratios: ["1:1", "3:2", "2:3", auto]
+    providers:
+      - slug: openai
+        billing_unit: token
+        rate_usd: 4e-05
+        resolutions: []
+        n_max: 10
+        input_references_max: 16
+        seed: false
+        streaming: true
+        passthrough: [moderation]
+  - id: openai/gpt-image-1-mini
+    name: "OpenAI: GPT Image 1 Mini"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 10
+    input_references_max: 16
+    streaming: true
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "3:2", "2:3", auto]
+    providers:
+      - slug: openai
+        billing_unit: token
+        rate_usd: 8e-06
+        resolutions: []
+        n_max: 10
+        input_references_max: 16
+        seed: false
+        streaming: true
+        passthrough: [moderation]
+  - id: openai/gpt-image-2
+    name: "OpenAI: GPT Image 2"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 10
+    input_references_max: 16
+    streaming: true
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9", auto]
+    providers:
+      - slug: openai
+        billing_unit: token
+        rate_usd: 3e-05
+        resolutions: []
+        n_max: 10
+        input_references_max: 16
+        seed: false
+        streaming: true
+        passthrough: [moderation]
+  - id: recraft/recraft-v3
+    name: "Recraft: Recraft V3"
+    role: ornament_raster
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.04
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: recraft/recraft-v4
+    name: "Recraft: Recraft V4"
+    role: ornament_raster
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.04
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: recraft/recraft-v4-pro
+    name: "Recraft: Recraft V4 Pro"
+    role: ornament_raster
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.25
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: recraft/recraft-v4-pro-vector
+    name: "Recraft: Recraft V4 Pro Vector"
+    role: ornament_vector_svg
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.3
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: recraft/recraft-v4-vector
+    name: "Recraft: Recraft V4 Vector"
+    role: ornament_vector_svg
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.08
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: recraft/recraft-v4.1
+    name: "Recraft: Recraft V4.1"
+    role: ornament_raster
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.035
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: recraft/recraft-v4.1-pro
+    name: "Recraft: Recraft V4.1 Pro"
+    role: ornament_raster
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.21
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: recraft/recraft-v4.1-pro-vector
+    name: "Recraft: Recraft V4.1 Pro Vector"
+    role: ornament_vector_svg
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.3
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: recraft/recraft-v4.1-utility
+    name: "Recraft: Recraft V4.1 Utility"
+    role: ornament_raster
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.035
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: recraft/recraft-v4.1-utility-pro
+    name: "Recraft: Recraft V4.1 Utility Pro"
+    role: ornament_raster
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.21
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: recraft/recraft-v4.1-vector
+    name: "Recraft: Recraft V4.1 Vector"
+    role: ornament_vector_svg
+    native_2_3: false
+    seed: false
+    n_max: 6
+    input_references_max: 1
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", auto]
+    providers:
+      - slug: recraft
+        billing_unit: image
+        rate_usd: 0.08
+        resolutions: []
+        n_max: 6
+        input_references_max: 1
+        seed: false
+        streaming: false
+        passthrough: [style, controls, text_layout]
+  - id: sourceful/riverflow-v2-fast
+    name: "Sourceful: Riverflow V2 Fast"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 4
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
+    providers:
+      - slug: sourceful
+        billing_unit: image
+        rate_usd: 0.02
+        resolutions: [1K, 2K, 4K]
+        n_max: 1
+        input_references_max: 4
+        seed: false
+        streaming: false
+        passthrough: [font_inputs]
+  - id: sourceful/riverflow-v2-pro
+    name: "Sourceful: Riverflow V2 Pro"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 10
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
+    providers:
+      - slug: sourceful
+        billing_unit: image
+        rate_usd: 0.15
+        resolutions: [1K, 2K, 4K]
+        n_max: 1
+        input_references_max: 10
+        seed: false
+        streaming: false
+        passthrough: [font_inputs]
+  - id: sourceful/riverflow-v2.5-fast
+    name: "Sourceful: Riverflow V2.5 Fast"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 4
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
+    providers:
+      - slug: sourceful
+        billing_unit: image
+        rate_usd: 0.019
+        resolutions: [1K, 2K]
+        n_max: 1
+        input_references_max: 4
+        seed: false
+        streaming: false
+        passthrough: [font_inputs]
+  - id: sourceful/riverflow-v2.5-pro
+    name: "Sourceful: Riverflow V2.5 Pro"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 10
+    streaming: false
+    design_arena_elo:
+      graphicdesign: 1468
+      image: 1406
+      logo: 1306
+      imageediting: 1373
+    aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
+    providers:
+      - slug: sourceful
+        billing_unit: image
+        rate_usd: 0.13
+        resolutions: [1K, 2K, 4K]
+        n_max: 1
+        input_references_max: 10
+        seed: false
+        streaming: false
+        passthrough: [font_inputs]
+  - id: x-ai/grok-imagine-image-quality
+    name: "xAI: Grok Imagine Image Quality"
+    role: cover_art
+    native_2_3: true
+    seed: false
+    n_max: 1
+    input_references_max: 3
+    streaming: false
+    design_arena_elo: null
+    aspect_ratios: ["1:1", "3:4", "4:3", "9:16", "16:9", "2:3", "3:2", "9:19.5", "19.5:9", "9:20", "20:9", "1:2", "2:1", auto]
+    providers:
+      - slug: xai
+        billing_unit: image
+        rate_usd: 0.05
+        resolutions: [1K, 2K]
+        n_max: 1
+        input_references_max: 3
+        seed: false
+        streaming: false
+        passthrough: []
+exclude:
+  - id: openrouter/auto
+    reason: "pricing -1, model chosen at request time -- cache-key poison"
+  - id: openrouter/auto-beta
+    reason: "pricing -1, model chosen at request time -- cache-key poison"

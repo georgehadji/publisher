@@ -9,12 +9,13 @@ From AGENT_DESIGN.md §0 and §1:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 
 # ── Core types ──────────────────────────────────────────────────
@@ -74,37 +75,82 @@ class AgentResult:
     accepted: bool = False
     accepted_by: Optional[str] = None  # "user" or "auto"
     rejected_reason: Optional[str] = None
+    # Explicit failure flag. `execute()` catches exceptions and returns a result either
+    # way; without this the caller cannot distinguish "the agent ran and proposed
+    # nothing" from "the agent crashed", because both surface as an empty
+    # `output.get("proposals", [])`. D3 requires errors to be carried, not swallowed.
+    failed: bool = False
+
+    @property
+    def error(self) -> Optional[str]:
+        """The failure message, if this invocation failed."""
+        return self.call.error
 
 
 # ── Tool registry ───────────────────────────────────────────────
 
 class ToolRegistry:
-    """Registry of tools available to agents."""
-    
+    """
+    Registry of tools available to agents.
+
+    BUILD_PLAN.md §3.17 specifies "Seven narrow agents, **each with its own tool
+    surface**", and D7 requires that a module receive capabilities explicitly rather
+    than having ambient access. `list_tools(role=...)` previously accepted a role and
+    then returned `list(self._specs.values())` unconditionally, and `call()` performed
+    no role check at all — so every agent could reach every tool and the narrow surfaces
+    existed only in the documentation.
+    """
+
     def __init__(self):
         self._tools: dict[str, Callable] = {}
         self._specs: dict[str, ToolSpec] = {}
-    
-    def register(self, spec: ToolSpec, fn: Callable):
-        """Register a tool."""
+        self._roles: dict[str, frozenset[AgentRole]] = {}
+
+    def register(self, spec: ToolSpec, fn: Callable,
+                 roles: Optional[Iterable[AgentRole]] = None):
+        """
+        Register a tool, optionally scoping it to specific agent roles.
+
+        `roles=None` means unscoped — available to any role. Scoping is opt-in so
+        existing registrations keep working, but a tool that changes the build should
+        always name its roles.
+        """
         self._tools[spec.name] = fn
         self._specs[spec.name] = spec
-    
+        self._roles[spec.name] = frozenset(roles) if roles else frozenset()
+
     def get(self, name: str) -> Optional[Callable]:
         return self._tools.get(name)
-    
+
     def spec(self, name: str) -> Optional[ToolSpec]:
         return self._specs.get(name)
-    
+
+    def allowed_for(self, name: str, role: AgentRole) -> bool:
+        """True if `role` may call `name`. An unscoped tool is allowed for every role."""
+        scoped = self._roles.get(name) or frozenset()
+        return not scoped or role in scoped
+
     def list_tools(self, role: Optional[AgentRole] = None) -> list[ToolSpec]:
-        """List available tools, optionally filtered by role."""
-        return list(self._specs.values())
-    
-    def call(self, name: str, **kwargs) -> Any:
-        """Call a tool by name."""
+        """List available tools. With `role`, returns only that role's tool surface."""
+        if role is None:
+            return list(self._specs.values())
+        return [s for n, s in self._specs.items() if self.allowed_for(n, role)]
+
+    def call(self, name: str, role: Optional[AgentRole] = None, **kwargs) -> Any:
+        """
+        Call a tool by name.
+
+        When `role` is supplied it is ENFORCED, not merely recorded — a role outside the
+        tool's surface raises rather than silently succeeding.
+        """
         fn = self._tools.get(name)
         if fn is None:
             raise ValueError(f"Unknown tool: {name}")
+        if role is not None and not self.allowed_for(name, role):
+            raise PermissionError(
+                f"agent role '{role.value}' may not call tool '{name}'; "
+                f"its surface is {sorted(r.value for r in self._roles[name])}"
+            )
         return fn(**kwargs)
 
 
@@ -154,36 +200,71 @@ class AgentRuntime:
         agent_version: str,
         inputs: dict[str, Any],
         tools: list[str],
+        subagent_requests: int = 0,
     ) -> AgentResult:
         """
         Execute an agent task.
-        
+
         In production, this calls the LLM with tools.
         In the tracer bullet, runs the rule-based fallback.
+
+        Enforces the two hard caps BUILD_PLAN.md §3.17 requires and that AGENT_DESIGN.md
+        §1.5 names but which nothing previously checked: a task budget that "paces and
+        wraps up gracefully" and an "explicit subagent cap (current Opus delegates
+        readily; an uncapped Compositor spawns one per spread)". `TaskBudget` existed as
+        a dataclass with `max_turns`/`max_subagents` fields that were recorded on
+        `AgentCall` and never compared against anything -- an agent could exceed either
+        with no error, no flag, nothing.
         """
+        budget = self.get_budget(role)
         call = AgentCall(
             role=role,
             agent_version=agent_version,
             inputs=inputs,
             tools_used=tools,
         )
-        
+
         start = time.monotonic()
-        
+        failed = False
+
+        if len(tools) > budget.max_turns:
+            call.error = (
+                f"AgentBudgetExceeded: {len(tools)} tool calls requested exceeds "
+                f"max_turns={budget.max_turns} for role '{role.value}'"
+            )
+            call.latency_ms = int((time.monotonic() - start) * 1000)
+            self._active_calls[call.started_at] = call
+            return AgentResult(role=role, call=call, output={"error": call.error, "proposals": []}, failed=True)
+
+        if subagent_requests > budget.max_subagents:
+            call.error = (
+                f"AgentBudgetExceeded: {subagent_requests} subagent(s) requested exceeds "
+                f"max_subagents={budget.max_subagents} for role '{role.value}'"
+            )
+            call.latency_ms = int((time.monotonic() - start) * 1000)
+            self._active_calls[call.started_at] = call
+            return AgentResult(role=role, call=call, output={"error": call.error, "proposals": []}, failed=True)
+
         try:
             output = self._run_agent_logic(role, inputs, tools)
             call.latency_ms = int((time.monotonic() - start) * 1000)
             call.tokens_used = len(json.dumps(output))
         except Exception as e:
-            call.error = str(e)
-            output = {"error": str(e)}
-        
+            # Record the failure and FLAG it. Returning an error dict alone made a crash
+            # indistinguishable from an empty-but-successful run at every call site that
+            # reads `result.output.get("proposals", [])` — see compositor.evaluate.
+            call.error = f"{type(e).__name__}: {e}"
+            call.latency_ms = int((time.monotonic() - start) * 1000)
+            output = {"error": call.error, "proposals": []}
+            failed = True
+
         self._active_calls[call.started_at] = call
-        
+
         return AgentResult(
             role=role,
             call=call,
             output=output,
+            failed=failed,
         )
     
     def _run_agent_logic(
@@ -318,7 +399,12 @@ def _init_default_tools():
     def propose_override(source_ref: str, op: str, from_val: str = "", to_val: str = "", rationale: str = "") -> dict:
         """Propose an override op."""
         return {
-            "id": f"ov-auto-{hash(source_ref)}",
+            # Stable across processes. Python's builtin hash() is salted by
+            # PYTHONHASHSEED, so the same proposal for the same sourceRef produced a
+            # DIFFERENT id on every interpreter run. That id flows into the append-only
+            # override log, which is exactly where a stable identity is required for
+            # audit and undo (D5: no nondeterminism inside stage logic).
+            "id": f"ov-auto-{hashlib.sha256(source_ref.encode('utf-8')).hexdigest()[:16]}",
             "sourceRef": source_ref,
             "op": op,
             "from": from_val,

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/cover/art-provenance/1",
+  "title": "ArtProvenance",
+  "description": "Compliance and reproducibility record for one generated cover-art artifact. Ships in the delivery package (COVER_DESIGN.md §9) — retailers require AI-content disclosure, and this is the answer.",
+  "type": "object",
+  "properties": {
+    "schema": { "type": "string", "enum": ["art-provenance/1"] },
+    "modelId": { "type": "string", "maxLength": 128, "description": "model_slug_requested — verbatim, suffix included" },
+    "canonicalSlug": { "type": "string", "maxLength": 128 },
+    "providerSlug": { "type": "string", "maxLength": 64, "description": "The RESOLVED serving provider — required because allow_fallbacks is always false, so this is exact, never a guess" },
+    "billingUnit": { "type": "string", "enum": ["image", "megapixel", "token"] },
+    "costUsd": { "type": "number", "minimum": 0 },
+    "artBriefHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Hash of the ArtBrief that produced this image — the provenance chain's link back to the brief. Distinct from imageHash."
+    },
+    "imageHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "CAS hash of the generated image itself."
+    },
+    "seed": { "type": ["integer", "null"] },
+    "replayClass": { "type": "string", "enum": ["seeded", "artifact-only"] },
+    "resolution": { "type": "string", "maxLength": 16 },
+    "aspectRatio": { "type": "string", "maxLength": 16 },
+    "sampleUsed": {
+      "type": "boolean",
+      "description": "Whether cover-brief consumed an opt-in manuscript excerpt. Never the excerpt itself."
+    },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "required": [
+    "schema", "modelId", "canonicalSlug", "providerSlug", "billingUnit",
+    "costUsd", "artBriefHash", "imageHash", "replayClass", "resolution",
+    "aspectRatio", "sampleUsed", "createdAt"
+  ],
+  "additionalProperties": false
+}

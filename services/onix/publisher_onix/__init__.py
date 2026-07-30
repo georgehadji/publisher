@@ -7,17 +7,29 @@ Produces ONIX 3.0 metadata for distribution to vendors, retailers, and libraries
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 
+def _reproducible_utc(explicit: str | None = None) -> datetime:
+    """Timestamp for embedding in a delivered artifact — never the wall clock."""
+    if explicit:
+        return datetime.fromisoformat(explicit.replace("Z", "+00:00"))
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    return datetime.fromtimestamp(int(epoch) if epoch else 0, tz=timezone.utc)
+
+
+
 class ONIXWriter:
     """Generates ONIX 3.0 metadata from a Book AST."""
     
-    def __init__(self, ast: dict):
+    def __init__(self, ast: dict, sent_at: str | None = None):
         self.ast = ast
         self.metadata = ast.get("metadata", {})
+        # See module note: reproducible, not wall-clock.
+        self._sent_at = _reproducible_utc(sent_at)
     
     def write(self, output_path: str | Path) -> Path:
         """Generate an ONIX 3.0 XML file."""
@@ -34,7 +46,7 @@ class ONIXWriter:
         
         header = ET.SubElement(root, "Header")
         ET.SubElement(header, "Sender").text = "Publisher"
-        ET.SubElement(header, "SentDateTime").text = datetime.now(timezone.utc).isoformat()
+        ET.SubElement(header, "SentDateTime").text = self._sent_at.isoformat()
         
         product = ET.SubElement(root, "Product")
         ET.SubElement(product, "RecordReference").text = self.metadata.get("isbn", "unknown")

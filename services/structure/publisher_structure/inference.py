@@ -75,7 +75,7 @@ class RouteConfig:
     route: str
     prompt_version: str
     schema_version: str
-    model_id: str  # e.g. "claude-3-5-haiku-latest"
+    model_id: str  # concrete slug, e.g. "anthropic/claude-haiku-4-5" — never a `-latest` alias
     tier: ModelTier
     max_retries: int = 2
     timeout_s: int = 30
@@ -152,6 +152,84 @@ class CostTracker:
         return self.total_cost <= ceiling
 
 
+# ── Routing policy loading (LLM_STRATEGY.md §4 — data, not code) ─
+
+# Repo-root-relative location of the versioned routing policy.
+DEFAULT_POLICY_PATH = (
+    Path(__file__).resolve().parents[3] / "platform" / "routing" / "policy.yaml"
+)
+
+_TIER_BY_NAME = {
+    "rules": ModelTier.RULES,
+    "fast": ModelTier.FAST,
+    "good": ModelTier.GOOD,
+    "best": ModelTier.BEST,
+}
+
+
+def load_routes_from_policy(
+    policy_path: Optional[str] = None,
+    service: Optional[str] = None,
+) -> dict[str, RouteConfig]:
+    """
+    Load inference routes from `platform/routing/policy.yaml`.
+
+    `service` filters to routes owned by one gateway. The structure classification
+    gateway passes "structure" so it never serves the alt-text route — LLM_STRATEGY.md
+    §3.16 keeps alt-text in its own service precisely so the no-free-text invariant
+    stays absolute on the classification surface.
+
+    Returns an empty dict if the policy file is absent, so the gateway degrades to
+    whatever routes the caller supplied rather than crashing — but a route that is
+    genuinely missing still fails loudly at `classify()` with "Unknown route".
+
+    Routes carrying no `model` (the cover-art panel, for example) are skipped: they are
+    not chat/completions routes and have no RouteConfig representation.
+    """
+    path = Path(policy_path) if policy_path else DEFAULT_POLICY_PATH
+    if not path.exists():
+        return {}
+
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - pyyaml is a declared dependency
+        return {}
+
+    with open(path, encoding="utf-8") as f:
+        policy = yaml.safe_load(f) or {}
+
+    routes: dict[str, RouteConfig] = {}
+    for name, spec in (policy.get("routes") or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        model_id = spec.get("model")
+        if not model_id:
+            continue
+        if service is not None and spec.get("service") != service:
+            continue
+
+        # A moving alias inside a cache key silently changes which concrete model
+        # produced a frozen artifact. policy.yaml documents this rule; enforce it here
+        # so a bad edit fails at load time rather than at the 2029 rebuild.
+        if model_id.endswith("-latest") or model_id.startswith("~"):
+            raise ValueError(
+                f"route {name!r} pins a moving model alias {model_id!r}. "
+                f"Cache keys embed model_id, so an alias silently swaps the model "
+                f"under a frozen artifact. Use a concrete slug."
+            )
+
+        routes[name] = RouteConfig(
+            route=name,
+            prompt_version=str(spec.get("prompt_version", "1.0")),
+            schema_version=str(spec.get("schema_version", "classification/1")),
+            model_id=model_id,
+            tier=_TIER_BY_NAME.get(str(spec.get("tier", "fast")).lower(), ModelTier.FAST),
+            cost_per_call=float(spec.get("cost_per_call", 0.0)),
+            fallback_route=spec.get("fallback_route"),
+        )
+    return routes
+
+
 # ── Inference gateway ───────────────────────────────────────────
 
 class InferenceGateway:
@@ -169,53 +247,22 @@ class InferenceGateway:
     - No prose output — only closed-enum classifications
     """
     
-    def __init__(self, config: Optional[InferenceGatewayConfig] = None):
+    def __init__(self, config: Optional[InferenceGatewayConfig] = None,
+                 policy_path: Optional[str] = None):
         self._config = config or InferenceGatewayConfig()
         self._prompt_cache = PromptCacheManager()
         self._cost_trackers: dict[str, CostTracker] = {}
-        
-        # Register default routes
-        self._register_default_routes()
-    
-    def _register_default_routes(self):
-        """Register the standard inference routes."""
-        routes = {
-            "structure-classify": RouteConfig(
-                route="structure-classify",
-                prompt_version="1.0",
-                schema_version="classification/1",
-                model_id="claude-3-5-haiku-latest",
-                tier=ModelTier.FAST,
-                cost_per_call=0.003,
-                fallback_route="structure-classify-deep",
-            ),
-            "structure-classify-deep": RouteConfig(
-                route="structure-classify-deep",
-                prompt_version="1.0",
-                schema_version="classification/1",
-                model_id="claude-3-5-sonnet-latest",
-                tier=ModelTier.GOOD,
-                cost_per_call=0.015,
-                fallback_route=None,
-            ),
-            "genre-suggest": RouteConfig(
-                route="genre-suggest",
-                prompt_version="1.0",
-                schema_version="classification/1",
-                model_id="claude-3-5-haiku-latest",
-                tier=ModelTier.FAST,
-                cost_per_call=0.002,
-            ),
-            "alttext": RouteConfig(
-                route="alttext",
-                prompt_version="1.0",
-                schema_version="classification/1",
-                model_id="claude-3-5-sonnet-latest",
-                tier=ModelTier.GOOD,
-                cost_per_call=0.01,
-            ),
-        }
-        self._config.routes.update(routes)
+
+        # Routes come from versioned YAML, not code (LLM_STRATEGY.md §4: "Routing
+        # policy is data, not code. A table the ops team can change without a deploy.")
+        #
+        # `setdefault` so caller-supplied routes WIN. The previous version called
+        # _register_default_routes() unconditionally at the end of __init__, which
+        # silently discarded any routes passed in via InferenceGatewayConfig.
+        for route_name, route_config in load_routes_from_policy(
+            policy_path, service="structure"
+        ).items():
+            self._config.routes.setdefault(route_name, route_config)
     
     def classify(self, request: InferenceRequest) -> InferenceResult:
         """
@@ -241,14 +288,11 @@ class InferenceGateway:
         # Check cost ceiling
         tracker = self._get_cost_tracker(request)
         if not tracker.is_within_budget(self._config.cost_ceiling_usd):
-            return InferenceResult(
-                request_id=request.request_id,
-                route=request.route,
-                tier_used=ModelTier.RULES,
-                output={"error": "Cost ceiling exceeded", "fallback": "rules-only"},
-                confidence=0.0,
-                refusal="cost_ceiling",
-            )
+            # LLM_STRATEGY.md §5: "at the ceiling, drop to rules-only and *tell the
+            # user*". Previously this returned only an error dict and no
+            # classifications, which is a silent downgrade rather than a degraded-but-
+            # working result.
+            return self._run_deterministic(request, refusal="cost_ceiling")
         
         # Determine starting tier
         start_tier = request.force_tier or route_config.tier
@@ -281,17 +325,66 @@ class InferenceGateway:
         
         return result
     
-    def _run_deterministic(self, request: InferenceRequest) -> InferenceResult:
-        """Run without any external LLM call (tenant opt-out)."""
+    def _run_deterministic(self, request: InferenceRequest,
+                           refusal: Optional[str] = None) -> InferenceResult:
+        """
+        Rules-only classification — no external LLM call.
+
+        Used for the `no_external_llm` privacy tier (LLM_STRATEGY.md §4.3) and for the
+        spend-ceiling path (§5). Both are documented as routing to *rules-only*, not to
+        nothing: "a `no_external_llm` tenant flag that routes to rules-only (with an
+        honest confidence banner in the UI)".
+
+        This used to return a hardcoded `{"status": "rules_only", "confidence": 0.5}`
+        without calling the rules engine at all, so a privacy-tier tenant received no
+        classifications whatsoever — labelled as a 0.5-confidence success. That is a
+        silent quality downgrade, which D8 bans outright.
+
+        Every result carries `degraded: True` and a human-readable `banner` so the UI
+        cannot present rules-only output as if it were the full cascade.
+        """
+        nodes = request.inputs.get("nodes", []) or []
+        classified = [
+            {
+                "sourceRef": n.get("sourceRef", f"node-{i}"),
+                # The rules engine's own verdict, carried through verbatim. Falling back
+                # to "uncertain" is honest: it marks the node for human review rather
+                # than inventing a label.
+                "classification": n.get("classification") or n.get("suggested") or "uncertain",
+                "confidence": float(n.get("confidence", 0.0)),
+            }
+            for i, n in enumerate(nodes)
+        ]
+        mean_confidence = (
+            sum(c["confidence"] for c in classified) / len(classified) if classified else 0.0
+        )
+
         return InferenceResult(
             request_id=request.request_id,
             route=request.route,
             tier_used=ModelTier.RULES,
-            output={"status": "rules_only", "confidence": 0.5},
-            confidence=0.5,
+            output={
+                "schema": "classification/1",
+                "nodes": classified,
+                "degraded": True,
+                "banner": (
+                    "Structure confidence lowered — classified by rules only, with no "
+                    "model escalation. Please review chapter detection."
+                ),
+                "reason": refusal or "no_external_llm",
+                "modelInfo": {
+                    "modelId": self._config.no_external_model_id,
+                    "promptVersion": "0.0",
+                    "schemaVersion": "classification/1",
+                    "cacheHit": False,
+                    "costUsd": 0.0,
+                },
+            },
+            confidence=mean_confidence,
             model_id=self._config.no_external_model_id,
             prompt_version="0.0",
             cost_usd=0.0,
+            refusal=refusal,
         )
     
     def _call_model(self, request: InferenceRequest, config: RouteConfig,

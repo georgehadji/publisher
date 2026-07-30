@@ -177,3 +177,77 @@ def test_evaluate_compositor():
 def test_proposal_requires_human_gate():
     spec = ToolSpec(name="propose_override", description="Test", requires_human_gate=True)
     assert spec.requires_human_gate is True
+
+
+# ── Adversarial tests -- BUILD_PLAN.md §3.17, §7 DoD ───────────────────────
+
+def test_zero_ast_write_tool_exists():
+    """
+    The agent action space is override ops and DesignSpec patches only -- NEVER
+    the AST, PDF, or preflight verdict (AGENT_DESIGN.md §0, BUILD_PLAN.md D8's
+    explicitly banned "an agent that writes to the AST instead of proposing
+    override ops"). Provable as a structural absence: no tool in the default
+    registry mutates an AST at all, so there is nothing an agent could call to do
+    so even if it tried.
+    """
+    from publisher_agents.runtime import get_tool_registry
+    registry = get_tool_registry()
+    for spec in registry.list_tools():
+        name = spec.name.lower()
+        assert "write_ast" not in name and "set_ast" not in name and "mutate_ast" not in name, (
+            f"tool '{spec.name}' looks like it could write the AST directly; "
+            f"the agent action space must be override ops only"
+        )
+    # The one tool that changes build state is explicitly gated for human approval.
+    propose = registry.spec("propose_override")
+    assert propose is not None and propose.requires_human_gate is True
+
+
+def test_agent_execute_halts_at_task_budget():
+    """
+    A task budget must "pace and wrap up gracefully" (AGENT_DESIGN.md §1.5), not
+    be a dataclass nobody reads. Requesting more tool calls than max_turns must
+    fail the call rather than run anyway.
+    """
+    runtime = AgentRuntime()
+    runtime.set_budget(AgentRole.COMPOSITOR, TaskBudget(max_turns=2))
+    result = runtime.execute(
+        role=AgentRole.COMPOSITOR,
+        agent_version="1.0",
+        inputs={},
+        tools=["scan_pagemap", "crop", "propose_override", "render_range"],  # 4 > 2
+    )
+    assert result.failed is True
+    assert "max_turns" in result.call.error
+
+
+def test_agent_execute_respects_subagent_cap():
+    """
+    AGENT_DESIGN.md §1.5: "explicit subagent cap (current Opus delegates readily;
+    an uncapped Compositor spawns one per spread)". Requesting more subagents than
+    the budget allows must fail the call, not silently proceed.
+    """
+    runtime = AgentRuntime()
+    runtime.set_budget(AgentRole.COMPOSITOR, TaskBudget(max_subagents=3))
+    result = runtime.execute(
+        role=AgentRole.COMPOSITOR,
+        agent_version="1.0",
+        inputs={},
+        tools=["scan_pagemap"],
+        subagent_requests=5,  # 5 > 3
+    )
+    assert result.failed is True
+    assert "max_subagents" in result.call.error
+
+
+def test_agent_execute_within_budget_still_succeeds():
+    """The caps above must not fire on a normal, within-budget call."""
+    runtime = AgentRuntime()
+    result = runtime.execute(
+        role=AgentRole.PREFLIGHT_EXPLAINER,
+        agent_version="1.0",
+        inputs={"checks": []},
+        tools=["read_preflight"],
+        subagent_requests=0,
+    )
+    assert result.failed is False

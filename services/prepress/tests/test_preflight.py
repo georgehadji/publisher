@@ -161,10 +161,15 @@ def test_run_preflight_on_real_pdf():
         }
         
         report = run_preflight(pdf_path, profile)
-        assert report.status in ("pass", "warn", "fail")
         assert report.profileId == "Generic 6x9"
-        # Should be pass or warn (no errors for a basic file)
-        assert report.summary["passed"] >= 0
+        # `status in (pass, warn, fail)` is the field's whole domain and
+        # `summary["passed"] >= 0` is a non-negative counter — neither can fail.
+        # run_preflight also converts a crashed check into a fail entry, so a run where
+        # every check threw satisfied both. Assert real outcomes instead.
+        assert report.checks, "no checks ran at all"
+        assert report.summary["passed"] + report.summary["failed"] +                report.summary["warnings"] <= len(report.checks)
+        assert report.status == ("fail" if report.summary["failed"] else
+                                 "warn" if report.summary["warnings"] else "pass")
 
 
 def test_preflight_report_serialization():

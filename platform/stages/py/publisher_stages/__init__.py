@@ -79,6 +79,13 @@ class StageCtx:
     deadline: datetime
     memory_budget_mb: int
     work_dir: str
+    # A stub render/finish path may run instead of the real engine ONLY when this is
+    # True. Default False so a real build (any executor other than the local tracer
+    # bullet) fails loudly on a missing engine rather than silently certifying stub
+    # output as "passed" (BUILD_PLAN.md D8: no silent quality downgrades). Only
+    # tracer_bullet.py's own DagExecutor sets this — the API-triggered production
+    # executor never does.
+    allow_stub_engines: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,7 +102,21 @@ class StageDeclaration:
     toolchain: list[str] = field(default_factory=list)  # names of required toolchain components
     fixtures: Optional[str] = None  # fixture set path or version
     root_inputs: Optional[list[str]] = None  # param names that are root (no producer)
+    # Root inputs whose absence is a genuinely valid state, not a missing value --
+    # e.g. `resolve`'s `overrides_path=None` legitimately means "zero overrides", vs
+    # `cover`'s `page_count=0`, whose default is a placeholder the function rejects
+    # outright (`if not page_count: raise BAD_INPUT`). A local executor building a
+    # reachable-stage subset (tracer_bullet.py DagExecutor._reachable_stages) needs
+    # this distinction explicitly declared -- inferring it from whether the Python
+    # parameter merely HAS a default conflates the two cases.
+    optional_root_inputs: Optional[list[str]] = None
     terminal: bool = False  # True if outputs are not expected to be consumed
+    # Logical pipeline step this stage implements. Two stages may declare the same
+    # outputs ONLY when they are alternative implementations of one step (e.g. the
+    # Ghostscript vs pass-through finish path, or the two render engines of O1) and
+    # both name that step here. Without it, two producers of one schema make the
+    # derived DAG (§2.8.1) pick whichever ran first — a silent, nondeterministic edge.
+    implements: Optional[str] = None
     placement: str = "on-demand"  # "arm-spot" | "on-demand" | "external" (F4.3)
     memory_budget_mb: int = 256
     queue: str = "q.default"
@@ -247,15 +268,31 @@ class StageRegistry:
                         "severity": "warning",
                     })
         
-        # Check 3: ambiguous producers (schema_id with >1 producer)
+        # Check 3: ambiguous producers (schema_id with >1 producer).
+        #
+        # This is an ERROR, not a warning, unless every producer declares the same
+        # `implements` step. A schema with two undeclared producers makes derive_dag()
+        # bind consumers to both, and the executor takes whichever ran first — a
+        # nondeterministic edge in a DAG whose entire purpose is reproducibility
+        # (ARCHITECTURE.md §2.15 lists DAG integrity as CI-blocking).
         for schema_id, prods in producers.items():
-            if len(prods) > 1:
-                violations.append({
-                    "kind": "ambiguous_producer",
-                    "stage": ",".join(prods),
-                    "message": f"Schema '{schema_id}' has {len(prods)} producers: {prods}",
-                    "severity": "warning",
-                })
+            if len(prods) <= 1:
+                continue
+            steps = {self._stages[p].implements for p in prods}
+            declared_alternatives = len(steps) == 1 and None not in steps
+            if declared_alternatives:
+                continue
+            violations.append({
+                "kind": "ambiguous_producer",
+                "stage": ",".join(prods),
+                "message": (
+                    f"Schema '{schema_id}' has {len(prods)} producers: {prods}. "
+                    f"If these are alternative implementations of one step, declare the "
+                    f"same implements=\"<step>\" on each; otherwise give them distinct "
+                    f"output schema IDs."
+                ),
+                "severity": "error",
+            })
         
         # Check 4: cycles (proper DFS with recursion stack)
         dag = self.derive_dag()
@@ -321,7 +358,9 @@ def stage(
     toolchain: Optional[list[str]] = None,
     fixtures: Optional[str] = None,
     root_inputs: Optional[list[str]] = None,
+    optional_root_inputs: Optional[list[str]] = None,
     terminal: bool = False,
+    implements: Optional[str] = None,
     placement: str = "on-demand",
     memory_budget_mb: int = 256,
     queue: str = "q.default",
@@ -350,7 +389,9 @@ def stage(
             toolchain=toolchain or [],
             fixtures=fixtures,
             root_inputs=root_inputs,
+            optional_root_inputs=optional_root_inputs,
             terminal=terminal,
+            implements=implements,
             placement=placement,
             memory_budget_mb=memory_budget_mb,
             queue=queue,

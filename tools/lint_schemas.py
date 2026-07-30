@@ -32,36 +32,59 @@ ALLOWLIST = {
 
 
 def find_string_fields(schema: dict, path: str = "#") -> list[str]:
-    """Find all string-typed properties in a JSON Schema (recursive).
-    
-    Excludes enums (closed values, not free-text) and $ref references.
     """
+    Find all string-typed properties in a JSON Schema (recursive).
+
+    Excludes enums (closed values, not free-text) and $ref references.
+
+    Recursion previously covered only `properties`, `$defs` and `oneOf`, so a free-text
+    field hidden in an inline array `items`, under `anyOf`/`allOf`, or in
+    `additionalProperties`/`patternProperties` passed the lint silently. It also only
+    recursed into a nested object when that object had `properties`, missing composed
+    subschemas entirely.
+    """
+    if not isinstance(schema, dict):
+        return []
+
     fields: list[str] = []
-    
-    # Check properties
-    if "properties" in schema:
+
+    if isinstance(schema.get("properties"), dict):
         for prop_name, prop_schema in schema["properties"].items():
             prop_path = f"{path}.properties.{prop_name}"
-            if isinstance(prop_schema, dict):
-                # Skip enums — closed values are not free-text
-                if prop_schema.get("type") == "string" and "enum" not in prop_schema:
-                    if prop_name not in ALLOWLIST:
-                        fields.append(f"{prop_path} (type=string)")
-                # Recurse into nested objects and oneOf/anyOf/allOf
-                if "properties" in prop_schema:
-                    fields.extend(find_string_fields(prop_schema, prop_path))
-    
-    # Check $defs
-    if "$defs" in schema:
+            if not isinstance(prop_schema, dict):
+                continue
+            # Skip enums — closed values are not free-text. `const` is equally closed.
+            is_open_string = (
+                prop_schema.get("type") == "string"
+                and "enum" not in prop_schema
+                and "const" not in prop_schema
+            )
+            if is_open_string and prop_name not in ALLOWLIST:
+                fields.append(f"{prop_path} (type=string)")
+            fields.extend(find_string_fields(prop_schema, prop_path))
+
+    if isinstance(schema.get("$defs"), dict):
         for def_name, def_schema in schema["$defs"].items():
-            def_path = f"{path}.$defs.{def_name}"
-            fields.extend(find_string_fields(def_schema, def_path))
-    
-    # Check oneOf
-    if "oneOf" in schema:
-        for i, variant in enumerate(schema["oneOf"]):
-            fields.extend(find_string_fields(variant, f"{path}.oneOf[{i}]"))
-    
+            fields.extend(find_string_fields(def_schema, f"{path}.$defs.{def_name}"))
+
+    # Composition keywords: a subschema under any of these is just as reachable.
+    for keyword in ("oneOf", "anyOf", "allOf", "prefixItems"):
+        for i, variant in enumerate(schema.get(keyword) or []):
+            fields.extend(find_string_fields(variant, f"{path}.{keyword}[{i}]"))
+
+    # Single-subschema keywords, including inline array item schemas.
+    for keyword in ("items", "contains", "additionalProperties", "not",
+                    "if", "then", "else", "propertyNames"):
+        sub = schema.get(keyword)
+        if isinstance(sub, dict):
+            if sub.get("type") == "string" and "enum" not in sub and "const" not in sub:
+                fields.append(f"{path}.{keyword} (type=string)")
+            fields.extend(find_string_fields(sub, f"{path}.{keyword}"))
+
+    if isinstance(schema.get("patternProperties"), dict):
+        for pattern, sub in schema["patternProperties"].items():
+            fields.extend(find_string_fields(sub, f"{path}.patternProperties[{pattern}]"))
+
     return fields
 
 

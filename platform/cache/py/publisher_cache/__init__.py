@@ -30,15 +30,55 @@ class CacheEntry:
 
 
 # Canonical JSON encoding for cache key computation.
-# Rules: sorted keys, fixed float formatting, drop nulls.
+# Rules (ARCHITECTURE.md §2.5): sorted keys, fixed float formatting, drop nulls.
+# "Params must be canonical... Otherwise you get cache misses that look like
+# nondeterminism."
+#
+# The previous implementation claimed all three rules in this comment and implemented
+# only sorted keys. Worse, it passed `default=str`, which silently stringifies any
+# non-JSON object: for a class without __str__ that yields "<Obj at 0x7f...>" — a memory
+# ADDRESS inside the cache key, so the same params produced a different key on every
+# process. For a datetime it embedded a wall-clock instant, with the same effect.
+
+
+def _canonicalize(obj):
+    """Recursively apply the three canonicalisation rules."""
+    if obj is None or isinstance(obj, (str, bool, int)):
+        return obj
+
+    if isinstance(obj, float):
+        # Fixed formatting: 1.0, 1, and 1.00 must not produce three different keys.
+        # repr() round-trips exactly; normalise integral floats to int.
+        if obj != obj or obj in (float("inf"), float("-inf")):
+            raise ValueError(f"non-finite float in cache params: {obj!r}")
+        return int(obj) if obj.is_integer() else float(repr(obj))
+
+    if isinstance(obj, dict):
+        # Drop nulls: an absent key and an explicit null are the same input.
+        return {k: _canonicalize(v) for k, v in sorted(obj.items()) if v is not None}
+
+    if isinstance(obj, (list, tuple)):
+        return [_canonicalize(v) for v in obj]
+
+    if isinstance(obj, (set, frozenset)):
+        return [_canonicalize(v) for v in sorted(obj)]
+
+    # Refuse rather than stringify. An object with no JSON representation in the cache
+    # key is a bug at the call site; silently encoding its repr() is how a memory
+    # address ends up deciding cache identity.
+    raise TypeError(
+        f"cannot canonicalise {type(obj).__name__} for a cache key: {obj!r}. "
+        f"Convert it to a JSON-native value at the call site."
+    )
+
+
 def canonical_json(obj) -> str:
     """Serialize a Python object to canonical JSON for cache key computation."""
     return json.dumps(
-        obj,
+        _canonicalize(obj),
         sort_keys=True,
         ensure_ascii=False,
         separators=(",", ":"),
-        default=str,
     )
 
 

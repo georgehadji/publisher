@@ -1,0 +1,349 @@
+# Publisher — inference routing policy (versioned data, not code)
+#
+# From LLM_STRATEGY.md §4: "Routing policy is data, not code. A table the ops team can
+# change without a deploy." This file is that table for OpenRouter-routed calls.
+#
+# This file IS the live route table. `InferenceGateway` loads it via
+# `load_routes_from_policy()` in services/structure/publisher_structure/inference.py;
+# the hardcoded `_register_default_routes()` that used to be the only route table has
+# been removed. Routes are selected per gateway by the `service:` key, so the structure
+# classification gateway never serves the alt-text route — LLM_STRATEGY.md §3.16:
+# "Alt-text lives in a separate service (§3.18) so this invariant stays absolute here."
+#
+# `model:` MUST be a concrete slug. `load_routes_from_policy()` raises on any `-latest`
+# suffix or `~` alias prefix, because cache keys embed model_id and a moving alias
+# silently changes which model produced a frozen artifact.
+#
+# Naming fix carried into every route below (COVER_DESIGN.md §11.1): the bare `effort:`
+# key used in LLM_STRATEGY.md's routing sketch is Anthropic's native `output_config.effort`.
+# On an OpenRouter-routed path that key would be misread as `reasoning.effort` -- a
+# DIFFERENT parameter -- by the next person touching the request builder. Two distinct
+# keys, always:
+#   output_effort:   Anthropic-native output_config.effort (direct-SDK routes only)
+#   reasoning:        OpenRouter `reasoning` object -- one of: omit | {effort: ...} | {max_tokens: ...}
+#
+# Cache-key discipline (COVER_DESIGN.md §11): every route below must resolve to the ten
+# fields listed there. `cache_key_adds` on each route is the checklist, not decoration --
+# a route missing a field here is a route that can silently poison its own cache.
+
+policy_version: 3          # bump on ANY edit to this file. Enters art-provenance /
+                            # inference-result records for provenance, but is
+                            # deliberately NOT itself part of any individual route's
+                            # cache key -- keying on it would invalidate every route on
+                            # an edit unrelated to that route.
+
+# ── Shared guard: applies to every route with `reasoning: omit` ────────────────────
+#
+# Server-side per-model reasoning defaults (`default_enabled`, `mandatory`,
+# `default_effort` on GET /api/v1/models) are runtime data that can change with NO
+# change to this file -- provider migration guides (Claude 4.6/4.7/Opus 5, GPT-5.6)
+# each alter reasoning defaults on release. `reasoning: omit` is a deliberate choice on
+# a route, not a default to fall into by leaving the field unset elsewhere.
+reasoning_guard:
+  authoring_check: >
+    Before pinning any (model, provider) pair, read
+    GET /api/v1/models -> reasoning.{mandatory, default_enabled, supported_efforts}.
+  if_mandatory_true: >
+    Do NOT send effort "none". Pin the lowest value in supported_efforts as an
+    explicit `reasoning: {effort: <level>}` in THIS file so it lands in the cache
+    key deterministically instead of being decided server-side.
+  assert_per_call: usage.completion_tokens_details.reasoning_tokens == 0
+  on_violation: fail the gate; do NOT write the CAS artifact; alert
+  also_assert: stop_reason != "refusal" before reading content   # existing rule, LLM_STRATEGY.md §4
+
+routes:
+
+  # ── Structure classification routes ──────────────────────────────────────────────
+  #
+  # These are the routes InferenceGateway actually serves. They were previously
+  # hardcoded as Python literals in `_register_default_routes()`, which violated
+  # "routing policy is data, not code" AND pinned two-generation-stale models behind
+  # `-latest` aliases -- a moving alias inside a cache key, the exact failure this
+  # file's header warns about. The gateway now loads them from here.
+
+  structure-classify:
+    service: structure   # which gateway owns this route (LLM_STRATEGY.md §3.16)
+    model: anthropic/claude-haiku-4-5      # concrete slug, never `-latest`/`~latest`:
+                                            # an alias resolves to a different concrete
+                                            # model over time while the cache-key string
+                                            # stays constant, silently changing what a
+                                            # frozen artifact was actually produced by
+    tier: fast
+    prompt_version: "1.0"
+    schema_version: classification/1
+    cost_per_call: 0.003
+    fallback_route: structure-classify-deep
+    reasoning:
+      effort: none                          # closed-enum classification; reasoning buys
+                                            # nothing and bills as output tokens
+    provider:
+      only: [anthropic]
+      allow_fallbacks: false
+      require_parameters: true
+      data_collection: deny
+      zdr: true
+
+  structure-classify-deep:
+    service: structure   # which gateway owns this route (LLM_STRATEGY.md §3.16)
+    model: anthropic/claude-sonnet-5
+    tier: good
+    prompt_version: "1.0"
+    schema_version: classification/1
+    cost_per_call: 0.015
+    fallback_route: null
+    reasoning:
+      effort: none
+    provider:
+      only: [anthropic]
+      allow_fallbacks: false
+      require_parameters: true
+      data_collection: deny
+      zdr: true
+
+  genre-suggest:
+    service: structure   # which gateway owns this route (LLM_STRATEGY.md §3.16)
+    model: anthropic/claude-haiku-4-5
+    tier: fast
+    prompt_version: "1.0"
+    schema_version: classification/1
+    cost_per_call: 0.002
+    reasoning:
+      effort: none
+    provider:
+      only: [anthropic]
+      allow_fallbacks: false
+      require_parameters: true
+      data_collection: deny
+      zdr: true
+
+  # ── Cover design routes (new) ────────────────────────────────────────────────────
+
+  cover-brief:
+    service: cover   # which gateway owns this route (LLM_STRATEGY.md §3.16)
+    provider_surface: openrouter                # POST /api/v1/chat/completions
+    model: anthropic/claude-sonnet-5             # concrete slug: no variant suffix,
+                                                  # no ~latest tilde alias (that resolves
+                                                  # to "newest concrete model in the
+                                                  # family" -- a silent swap under a
+                                                  # frozen key)
+    variant: none
+    latency_class: interactive                   # gates the whole cover-art fan-out;
+                                                  # not worth a 24h batch window for
+                                                  # ~$0.01 of savings on one call
+    max_tokens: 4096                             # MUST stay strictly > reasoning.max_tokens
+    reasoning:
+      max_tokens: 2048                           # exact integer -- `effort` is silently
+                                                  # remapped to the nearest supported
+                                                  # level, so it is unhashable
+      exclude: true                              # trace stays out of the response body,
+                                                  # so it cannot enter the CAS artifact
+                                                  # (contamination control, NOT a cost
+                                                  # control -- reasoning tokens bill as
+                                                  # output tokens either way)
+    provider:
+      only: [anthropic]
+      allow_fallbacks: false                     # default is TRUE -- a silent failover
+                                                  # forges the cache key
+      require_parameters: true                   # refuse endpoints that would silently
+                                                  # ignore response_format
+      data_collection: deny
+      zdr: true                                  # unverified per-route coverage --
+                                                  # see COVER_DESIGN.md §14 open item
+    response_format:
+      type: json_schema
+      json_schema:
+        name: art_brief
+        strict: true
+        schema_ref: schemas/cover/art-brief.schema.json
+    manuscript_sample:
+      enabled: opt_in                            # per-tenant toggle, default off
+      max_tokens: 2000
+      source: opening_chapter_only
+      model_filter: "zdr=true"                   # only ZDR-covered models may see it
+    prompt_version: 1
+    schema_version: 1
+    cache_key_adds:
+      - model_slug_requested
+      - model_canonical_slug
+      - model_variant
+      - reasoning_config_sha256
+      - reasoning_effort_effective
+      - request_max_tokens
+      - provider_pin_hash
+      - json_schema_sha256
+      - response_format_strict
+      - routing_policy_version
+      - sampling_params
+
+  cover-judge:
+    service: cover   # which gateway owns this route (LLM_STRATEGY.md §3.16)
+    modality: vision
+    latency_class: batch                         # POST /api/beta/batches,
+                                                  # endpoint "/v1/chat/completions" --
+                                                  # serialize `endpoint` + `model` BEFORE
+                                                  # `requests` in the body (stream-parsed)
+    variant: none                                 # no :thinking/:nitro/:floor/:exacto/
+                                                  # :free/:extended/:batch on this route
+    schema_version: cover-verdict/1                # closed enum {a, b, tie}; no rationale field
+    prompt_version: 1
+    quorum: 3                                     # verdict invalid below this many
+                                                  # voters -- never proceed short
+    pairing_seed: 7                               # A/B position assignment is pinned
+                                                  # data, not a runtime shuffle
+    raster:
+      long_edge_px: 768
+      format: png
+    provider_defaults:
+      require_parameters: true
+      allow_fallbacks: false
+      data_collection: deny
+    reasoning_default: >
+      OFF unless a panel member is reported reasoning.mandatory=true, in which case pin
+      the floor of supported_efforts with exclude:true. No documentary support exists
+      that reasoning improves pairwise image judging (COVER_DESIGN.md §7) -- treat
+      enabling it as an A/B hypothesis with an explicit toggle, never a silent default.
+    panel:                                        # ordered; each entry pins an ENDPOINT.
+                                                  # Placeholders below -- resolve once
+                                                  # against GET /api/v1/models and paste
+                                                  # the literal slugs back in before ship.
+      - model_id: anthropic/claude-sonnet-5
+        provider: { only: [anthropic] }
+        reasoning: { effort: none }
+      - model_id: google/gemini-3.1-pro-preview
+        provider: { only: [google-ai-studio] }
+        reasoning: { max_tokens: 1024, exclude: true }   # mandatory-on family -> pin floor
+        max_tokens: 4096                                  # MUST be strictly > reasoning budget
+      - model_id: openai/gpt-5.2
+        provider: { only: [openai] }
+        reasoning: { effort: minimal, exclude: true }     # effort silently coerced --
+                                                          # reconcile against usage on return
+    cache_key_adds:
+      - model_slug_requested       # per panel member
+      - model_canonical_slug
+      - model_variant
+      - reasoning_config_sha256
+      - reasoning_effort_effective
+      - provider_pin_hash
+      - json_schema_sha256
+      - routing_policy_version
+      - pairing_seed
+      - raster_profile_version
+
+  # ── Existing routes, corrected (worked examples of the naming fix + cache-key
+  #    extension -- LLM_STRATEGY.md §4's sketch predates both) ────────────────────
+
+  structure.bulk:
+    service: structure   # which gateway owns this route (LLM_STRATEGY.md §3.16)
+    tiers: [anthropic/claude-haiku-4.5, anthropic/claude-sonnet-5]   # cascade, unchanged
+    escalate_when: confidence < 0.75
+    latency_class: interactive
+    variant: none
+    reasoning:
+      effort: none                 # explicit. Omitting inherits the model's
+                                    # server-side default_effort/default_enabled --
+                                    # see reasoning_guard above.
+    provider:
+      require_parameters: true
+      only: [anthropic]
+      allow_fallbacks: false
+      data_collection: deny
+      zdr: true
+    response_format:
+      type: json_schema
+      json_schema:
+        name: classification
+        strict: true
+        schema_ref: schemas/classification/classification.schema.json
+    pin_preflight:
+      require_reasoning_disableable: true    # assert GET /api/v1/models reasoning.mandatory == false
+      require_supported_parameter: structured_outputs
+    telemetry_tripwire:
+      assert_zero: usage.completion_tokens_details.reasoning_tokens
+    cache_key_adds:
+      - model_slug_requested
+      - reasoning_config_sha256
+      - provider_pin_hash
+      - json_schema_sha256
+      - routing_policy_version
+
+  structure.whole_book:
+    service: structure   # which gateway owns this route (LLM_STRATEGY.md §3.16)
+    tiers: [anthropic/claude-opus-5]
+    latency_class: interactive             # ~1 call/book -- :batch not worth it
+    max_tokens: 32000
+    reasoning:
+      max_tokens: 16000                    # == old `effort: medium` at a 32K cap
+                                            # (0.5 x 32000), stated literally instead
+                                            # of derived, so the budget is a hashable
+                                            # integer rather than a formula result
+      exclude: true                        # Opus 5 defaults reasoning ON and OpenRouter
+                                            # defaults Anthropic thinking.display to
+                                            # 'summarized' -- without exclude:true a
+                                            # model-authored reasoning trace lands in
+                                            # `message.reasoning`, a field the closed-enum
+                                            # response schema does not police
+    provider:
+      only: [anthropic]
+      allow_fallbacks: false
+      require_parameters: true
+      data_collection: deny
+      zdr: true
+    cache_key_adds:
+      - model_slug_requested
+      - reasoning_config_sha256
+      - request_max_tokens
+      - provider_pin_hash
+      - routing_policy_version
+
+  alttext:
+    service: alttext   # which gateway owns this route (LLM_STRATEGY.md §3.16)
+    model: anthropic/claude-sonnet-5:batch   # pinned literally, suffix included.
+                                              # NOT resolved from GET /api/v1/models at
+                                              # request time -- a slug that resolves
+                                              # differently between two runs produces
+                                              # two cache keys for the same manuscript.
+    modality: vision
+    latency_class: batch
+    endpoint: /v1/chat/completions            # submitted via POST /api/beta/batches
+    variant: batch                            # the only suffix used anywhere in this policy
+    reasoning: omit
+    output_effort: low                        # was bare `effort: low` -- renamed, see header
+    provider:
+      only: [anthropic]
+      require_parameters: true
+      data_collection: deny
+      zdr: true                               # NB: does NOT cover the Batch API's
+                                                # 30-day GCS retention of inputs/results
+    input:
+      downsample_profile: alttext-raster/1
+    cache_key_adds:
+      - model_slug_requested   # == effective_model_slug; includes :batch
+      - reasoning_config_sha256
+      - provider_pin_hash
+      - json_schema_sha256
+      - routing_policy_version
+      - input_raster_cas_hash
+      - downsample_profile_version
+
+  diagnostics_prose:
+    service: prepress   # which gateway owns this route (LLM_STRATEGY.md §3.16)
+    model: anthropic/claude-haiku-4-5   # no suffix -- sync path, no batch slug.
+                                          # Batch's only completion window is 24h;
+                                          # the user is reading the preflight report now.
+    modality: text
+    latency_class: interactive
+    endpoint: /v1/chat/completions
+    variant: none
+    reasoning: omit
+    output_effort: low
+    provider:
+      only: [anthropic]
+      require_parameters: true
+      data_collection: deny
+      zdr: true
+    cache_key_adds:
+      - model_slug_requested
+      - reasoning_config_sha256
+      - provider_pin_hash
+      - json_schema_sha256
+      - routing_policy_version
