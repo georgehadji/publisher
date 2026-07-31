@@ -150,9 +150,14 @@ server.get('/v1/health', async () => {
 
 interface Title { id: string; tenantId: string; title: string; author?: string; createdAt: string }
 interface Build { id: string; tenantId: string; documentId: string; status: string; createdAt: string }
+// A "document" is a structured manuscript — there is no separate creation endpoint, so
+// /v1/documents/:id/overrides addresses the same record as /v1/manuscripts/:id/structure
+// by the same id. One store, both routes' tenant check against it.
+interface Manuscript { id: string; tenantId: string; titleId: string; status: string; createdAt: string }
 
 const titles = new Map<string, Title>();
 const builds = new Map<string, Build>();
+const manuscripts = new Map<string, Manuscript>();
 
 // ── Titles ─────────────────────────────────────────────────────
 
@@ -205,7 +210,20 @@ server.post<{ Params: { id: string } }>(
   '/v1/titles/:id/manuscripts',
   async (request, reply) => {
     const { id } = request.params;
-    const manuscriptId = `ms-${Date.now()}`;
+    // The title must belong to the caller before a manuscript can be created under
+    // it — this check was absent, so any tenant could attach a manuscript to any
+    // title id.
+    if (!assertTenant(titles.get(id), request.tenantId)) {
+      return reply.code(404).send({ error: 'not found' });
+    }
+    const manuscriptId = `ms-${randomBytes(9).toString('base64url')}`;
+    manuscripts.set(manuscriptId, {
+      id: manuscriptId,
+      tenantId: request.tenantId,
+      titleId: id,
+      status: 'uploaded',
+      createdAt: new Date().toISOString(),
+    });
     reply.code(201);
     return {
       manuscriptId,
@@ -218,8 +236,11 @@ server.post<{ Params: { id: string } }>(
 
 server.get<{ Params: { id: string } }>(
   '/v1/manuscripts/:id/structure',
-  async (request) => {
+  async (request, reply) => {
     const { id } = request.params;
+    if (!assertTenant(manuscripts.get(id), request.tenantId)) {
+      return reply.code(404).send({ error: 'not found' });
+    }
     return {
       manuscriptId: id,
       status: 'ready',
@@ -237,8 +258,13 @@ server.get<{ Params: { id: string } }>(
 
 server.patch<{ Params: { id: string }; Body: { ops: unknown[] } }>(
   '/v1/documents/:id/overrides',
-  async (request) => {
+  async (request, reply) => {
     const { id } = request.params;
+    // A "document" is a structured manuscript (see the Manuscript interface note) —
+    // same store, same ownership check as /v1/manuscripts/:id/structure.
+    if (!assertTenant(manuscripts.get(id), request.tenantId)) {
+      return reply.code(404).send({ error: 'not found' });
+    }
     const { ops } = request.body;
     return {
       documentId: id,
@@ -253,6 +279,12 @@ server.patch<{ Params: { id: string }; Body: { ops: unknown[] } }>(
 server.post<{ Body: { documentId: string; designId: string; profileIds: string[]; mode?: string } }>(
   '/v1/builds',
   async (request, reply) => {
+    // The document (structured manuscript) being built must belong to the caller —
+    // otherwise a tenant could queue a build against another tenant's document id
+    // and read the result back through GET /v1/builds/:id (their own build's tenantId).
+    if (!assertTenant(manuscripts.get(request.body.documentId), request.tenantId)) {
+      return reply.code(404).send({ error: 'not found' });
+    }
     const buildRecord: Build = {
       id: `build-${randomBytes(9).toString('base64url')}`,
       tenantId: request.tenantId,
