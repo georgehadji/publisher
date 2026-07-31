@@ -300,6 +300,11 @@ server.get<{ Params: { id: string } }>(
 server.get<{ Params: { id: string } }>(
   '/v1/builds/:id/events',
   async (request, reply) => {
+    // Same tenant check as GET /v1/builds/:id — this route was missing it, so any
+    // authenticated tenant could stream another tenant's build progress by ID.
+    if (!assertTenant(builds.get(request.params.id), request.tenantId)) {
+      return reply.code(404).send({ error: 'not found' });
+    }
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -322,8 +327,11 @@ server.get<{ Params: { id: string } }>(
 
 server.get<{ Params: { id: string } }>(
   '/v1/builds/:id/preflight',
-  async (request) => {
+  async (request, reply) => {
     const { id } = request.params;
+    if (!assertTenant(builds.get(id), request.tenantId)) {
+      return reply.code(404).send({ error: 'not found' });
+    }
     return {
       buildId: id,
       status: 'pass',
@@ -339,8 +347,11 @@ server.get<{ Params: { id: string } }>(
 
 server.get<{ Params: { id: string; kind: string } }>(
   '/v1/builds/:id/artifacts/:kind',
-  async (request) => {
+  async (request, reply) => {
     const { id, kind } = request.params;
+    if (!assertTenant(builds.get(id), request.tenantId)) {
+      return reply.code(404).send({ error: 'not found' });
+    }
     return {
       buildId: id,
       artifactKind: kind,
