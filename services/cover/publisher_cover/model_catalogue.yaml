@@ -14,7 +14,7 @@
 # one model id. Validate resolution/aspect_ratio against the chosen provider before
 # dispatch, and always send provider.allow_fallbacks=false.
 catalogue_version: 1
-probed_at: 2026-07-29
+probed_at: 2026-08-01
 total_count: 40
 models:
   - id: black-forest-labs/flux.2-flex
@@ -26,9 +26,9 @@ models:
     input_references_max: 8
     streaming: false
     design_arena_elo:
-      graphicdesign: 1215
-      image: 1224
-      logo: 1224
+      graphicdesign: 1219
+      image: 1225
+      logo: 1227
     aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
     providers:
       - slug: black-forest-labs/us-3
@@ -49,9 +49,9 @@ models:
     input_references_max: 4
     streaming: false
     design_arena_elo:
-      graphicdesign: 1029
-      image: 1085
-      logo: 1071
+      graphicdesign: 1033
+      image: 1086
+      logo: 1073
       imageediting: 1070
     aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
     providers:
@@ -93,9 +93,9 @@ models:
     input_references_max: 8
     streaming: false
     design_arena_elo:
-      graphicdesign: 1199
-      image: 1218
-      logo: 1208
+      graphicdesign: 1203
+      image: 1219
+      logo: 1210
       imageediting: 1149
     aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
     providers:
@@ -137,9 +137,9 @@ models:
     input_references_max: 3
     streaming: false
     design_arena_elo:
-      graphicdesign: 1194
-      image: 1209
-      logo: 1182
+      graphicdesign: 1197
+      image: 1210
+      logo: 1185
     aspect_ratios: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
     providers:
       - slug: google-ai-studio
@@ -198,9 +198,9 @@ models:
     input_references_max: 14
     streaming: false
     design_arena_elo:
-      graphicdesign: 1277
-      image: 1266
-      logo: 1254
+      graphicdesign: 1280
+      image: 1267
+      logo: 1256
       imageediting: 1269
     aspect_ratios: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
     providers:
@@ -251,9 +251,9 @@ models:
     input_references_max: 14
     streaming: false
     design_arena_elo:
-      graphicdesign: 1287
-      image: 1299
-      logo: 1276
+      graphicdesign: 1291
+      image: 1300
+      logo: 1278
     aspect_ratios: ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"]
     providers:
       - slug: google-ai-studio
@@ -363,10 +363,10 @@ models:
     input_references_max: 1
     streaming: false
     design_arena_elo:
-      graphicdesign: 1227
-      image: 1236
+      graphicdesign: 1231
+      image: 1237
       imageediting: 1256
-      logo: 1250
+      logo: 1254
     aspect_ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", auto]
     providers:
       - slug: azure
@@ -407,9 +407,9 @@ models:
     input_references_max: 16
     streaming: true
     design_arena_elo:
-      graphicdesign: 1199
-      image: 1214
-      logo: 1216
+      graphicdesign: 1202
+      image: 1215
+      logo: 1218
     aspect_ratios: []
     providers:
       - slug: openai
@@ -430,9 +430,9 @@ models:
     input_references_max: 16
     streaming: true
     design_arena_elo:
-      graphicdesign: 1193
-      image: 1206
-      logo: 1222
+      graphicdesign: 1196
+      image: 1207
+      logo: 1224
     aspect_ratios: []
     providers:
       - slug: openai
@@ -814,9 +814,9 @@ models:
     input_references_max: 10
     streaming: false
     design_arena_elo:
-      graphicdesign: 1468
-      image: 1406
-      logo: 1306
+      graphicdesign: 1471
+      image: 1407
+      logo: 1308
       imageediting: 1373
     aspect_ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9", auto]
     providers:

@@ -63,7 +63,15 @@ routes:
 
   structure-classify:
     service: structure   # which gateway owns this route (LLM_STRATEGY.md §3.16)
-    model: anthropic/claude-haiku-4-5      # concrete slug, never `-latest`/`~latest`:
+    model: anthropic/claude-haiku-4.5      # DOT, not hyphen -- verified against live
+                                            # GET /api/v1/models 2026-08-01. OpenRouter's
+                                            # slug is "claude-haiku-4.5" (canonical_slug
+                                            # "anthropic/claude-4.5-haiku-20251001");
+                                            # Anthropic's own native API uses the hyphen
+                                            # form instead. The hyphen form does not
+                                            # exist as an OpenRouter model id at all --
+                                            # this route would 404 at request time.
+                                            # concrete slug, never `-latest`/`~latest`:
                                             # an alias resolves to a different concrete
                                             # model over time while the cache-key string
                                             # stays constant, silently changing what a
@@ -102,7 +110,7 @@ routes:
 
   genre-suggest:
     service: structure   # which gateway owns this route (LLM_STRATEGY.md §3.16)
-    model: anthropic/claude-haiku-4-5
+    model: anthropic/claude-haiku-4.5   # DOT -- see structure-classify's note above
     tier: fast
     prompt_version: "1.0"
     schema_version: classification/1
@@ -203,9 +211,14 @@ routes:
       that reasoning improves pairwise image judging (COVER_DESIGN.md §7) -- treat
       enabling it as an A/B hypothesis with an explicit toggle, never a silent default.
     panel:                                        # ordered; each entry pins an ENDPOINT.
-                                                  # Placeholders below -- resolve once
-                                                  # against GET /api/v1/models and paste
-                                                  # the literal slugs back in before ship.
+                                                  # Verified against live GET
+                                                  # /api/v1/models/{slug}/endpoints
+                                                  # 2026-08-01: all three slugs exist and
+                                                  # the pinned provider serves each one
+                                                  # (google-ai-studio serves
+                                                  # gemini-3.1-pro-preview; openai serves
+                                                  # gpt-5.2; anthropic serves sonnet-5).
+                                                  # Re-verify on any provider/model change.
       - model_id: anthropic/claude-sonnet-5
         provider: { only: [anthropic] }
         reasoning: { effort: none }
@@ -327,7 +340,8 @@ routes:
 
   diagnostics_prose:
     service: prepress   # which gateway owns this route (LLM_STRATEGY.md §3.16)
-    model: anthropic/claude-haiku-4-5   # no suffix -- sync path, no batch slug.
+    model: anthropic/claude-haiku-4.5   # DOT (see structure-classify's note above);
+                                          # no suffix -- sync path, no batch slug.
                                           # Batch's only completion window is 24h;
                                           # the user is reading the preflight report now.
     modality: text
