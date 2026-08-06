@@ -34,7 +34,11 @@ from publisher_prepress.ghostscript import (
 
 @stage(
     name="finish",
-    version=4,
+    # v5: to_pdfx now verifies its own output (gs's "reverting to normal PDF
+    # output" notice, and the presence of an OutputIntent in the bytes). v4
+    # could return a non-PDF/X file reported as pdfx-1a, so every v4 press
+    # artifact in the cache is suspect and must not be replayed.
+    version=5,
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     inputs={"pdf_path": "raw-pdf/1"},
     outputs={"pdf": "pdfx/1", "proof": "proof-pdf/1", "report": "finish-report/1"},
