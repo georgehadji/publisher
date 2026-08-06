@@ -106,10 +106,36 @@ S1 is first because it is the instrument every other claim is measured with. Ver
 
 ## 5. Definition of done
 
-- [ ] `scripts/test.*` writes Publisher-only results to `.publisher/test-output.txt`; suite green
-- [ ] Collection ≥ 338, zero errors, under ~30 s
-- [ ] `.publisher/`, `.test-cas-cache/` gitignored
-- [ ] A build reaches `completed`; downloaded artifact begins `%PDF`
-- [ ] Working tree committed in coherent commits
-- [ ] `rules/zh`, `rules/web`, `rules/README.md` moved; workspace `CLAUDE.md` removed
-- [ ] `Publisher/CLAUDE.md` exists
+- [x] `scripts/test.*` writes Publisher-only results to `.publisher/test-output.txt`; suite green — **332 passed, 5 skipped, 0 failed**
+- [x] Collection ≥ 338, zero errors, under ~30 s — 338 in 13.8 s
+- [x] `.publisher/`, `.test-cas-cache/` gitignored
+- [ ] **A build reaches `completed`; downloaded artifact begins `%PDF`** — see below
+- [x] Working tree committed in coherent commits — 4 commits on `fix/durable-state-and-ghostscript`
+- [x] `rules/zh`, `rules/web`, `rules/README.md` moved; workspace `CLAUDE.md` disabled
+- [x] `Publisher/CLAUDE.md` exists
+
+### S3 is BLOCKED, not done — 2026-08-06
+
+The Ghostscript work is **written and committed but never proven**. It is unit-covered
+only; no build has been driven through `finish` to a downloaded PDF/X artifact.
+
+Blocker is environmental. Docker Desktop died three times during this work and now hangs:
+the process runs, but `npipe:////./pipe/dockerDesktopLinuxEngine` does not exist, so the
+engine accepts no connections. Not fixable from inside the repo.
+
+**To close S3**, once the engine is healthy:
+
+```bash
+docker compose build worker && docker compose up -d
+python -m pytest tests/integration/test_api_drives_pipeline.py -k artifact
+```
+
+`test_build_request_produces_a_real_artifact` is the detector. It has **never passed** —
+first because the API was not wired (fixed, A2), then because `finish` refused without
+Ghostscript (fixed here, unverified). Treat green on that test as the actual completion
+of both A2 and this plan.
+
+Specific risks still unexercised, all inside `to_pdfx()`:
+the `PDFX_def.ps` prologue, ICC profile discovery under `/usr/share/ghostscript/*/`,
+and whether `--permit-file-read` is sufficient with SAFER on. Any of the three can fail
+on first real contact.
