@@ -28,8 +28,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 API_DIR = REPO_ROOT / "packages" / "api"
 TOKEN = "detector-token"
 TENANT = "detector-tenant"
+# Port 55432 is the compose stack's published port -- see docker-compose.yml.
+# It is deliberately NOT 5432: a locally-installed PostgreSQL owns that port on
+# many dev machines, and these tests would then assert against a database the
+# worker never writes to, which is precisely the kind of result that looks like
+# a pass and means nothing.
 DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://publisher:publisher@localhost:5432/publisher"
+    "DATABASE_URL", "postgresql://publisher:publisher@localhost:55432/publisher"
 )
 # Idempotency-Key is scoped (tenant, key) and rows persist in Postgres across
 # test runs -- a literal key reused run-to-run would replay a PREVIOUS run's
@@ -108,7 +113,21 @@ def worker_process():
     A real worker.py, so a queued build actually runs. Without this, detector 1
     would wait for a completion that nothing produces -- the same fabrication
     problem from a different angle.
+
+    The worker runs with allow_stub_engines=False, so it needs the real
+    toolchain. On a host without Ghostscript (Windows dev boxes, typically)
+    a locally-spawned worker would fail every build in `finish` -- so there,
+    the compose worker is expected to be servicing the queue instead, and this
+    fixture yields None rather than starting a second worker that could claim
+    the build and fail it. The test still asserts a real artifact either way:
+    nothing here is softened, the work just happens in the container.
     """
+    import shutil
+
+    if shutil.which("gs") is None:
+        yield None
+        return
+
     env = {
         **os.environ,
         "DATABASE_URL": DATABASE_URL,
@@ -164,11 +183,20 @@ def test_build_request_produces_a_real_artifact(api_server, worker_process):
     build_id = build["buildId"]
 
     status = {}
-    for _ in range(60):
-        status = requests.get(f"{api_server}/v1/builds/{build_id}", headers=_headers("s1")).json()
+    for i in range(200):
+        status = requests.get(
+            f"{api_server}/v1/builds/{build_id}", headers=_headers(f"s1-{i}")
+        ).json()
         if status.get("status") in ("completed", "failed"):
             break
-        time.sleep(0.3)
+        time.sleep(0.5)
+
+    assert status.get("status") != "queued", (
+        "the build never left 'queued' -- no worker is servicing the queue. "
+        "Start one (`docker compose up -d worker`) or install Ghostscript "
+        f"locally so this test can spawn its own: {status}"
+    )
+    assert status.get("status") == "completed", f"build did not complete: {status}"
 
     artifact = requests.get(
         f"{api_server}/v1/builds/{build_id}/artifacts/pdf", headers=_headers("a1")
@@ -177,6 +205,12 @@ def test_build_request_produces_a_real_artifact(api_server, worker_process):
     assert "sha256" in artifact, (
         "artifact response carries no content hash -- it cannot be verified "
         f"against anything the pipeline produced, because nothing produced it: {artifact}"
+    )
+    # `pdf` must resolve to the CONVERTED press file, not paginate's raw render.
+    # Both stages emit kind='pdf'; keying artifacts on `kind` served the raw one.
+    assert artifact["schemaId"] == "pdfx/1", (
+        "GET artifacts/pdf did not return the PDF/X press artifact -- it is "
+        f"serving some other stage's output as press-ready: {artifact}"
     )
 
 
@@ -210,6 +244,48 @@ def test_build_status_is_not_a_hardcoded_literal(api_server):
     assert status.get("stages", []) == [], (
         f"build reported stage results with no worker having run: {status}"
     )
+
+
+def test_api_deliverable_schemas_all_exist_in_the_stage_registry():
+    """
+    The API resolves a public artifact name ('pdf') to a schema ID ('pdfx/1'),
+    because `kind` is unique only within one stage: paginate and finish BOTH
+    emit kind='pdf', and selecting on kind served paginate's unconverted
+    weasyprint render as the press-ready file.
+
+    That map is hand-written in TypeScript, so it can drift from the stage
+    declarations it points at. This asserts every schema it names is really
+    some registered stage's declared output -- a rename in a @stage(...) breaks
+    here instead of 404ing in production.
+    """
+    import re
+
+    sys.path.insert(0, str(REPO_ROOT))
+    import stages  # noqa: F401 -- registration side effect
+    from publisher_stages import get_registry
+
+    source = (API_DIR / "src" / "index.ts").read_text(encoding="utf-8")
+    block = re.search(
+        r"DELIVERABLE_SCHEMAS[^=]*=\s*Object\.freeze\(\{(.*?)\}\)", source, re.S
+    )
+    assert block, "DELIVERABLE_SCHEMAS not found in packages/api/src/index.ts"
+    mapped = dict(re.findall(r"'?([\w-]+)'?\s*:\s*'([^']+)'", block.group(1)))
+    assert mapped, "DELIVERABLE_SCHEMAS parsed as empty"
+
+    declared = {
+        schema_id
+        for decl in get_registry().all()
+        for schema_id in decl.outputs.values()
+    }
+    unknown = {name: sid for name, sid in mapped.items() if sid not in declared}
+    assert not unknown, (
+        f"API offers artifact kinds whose schema no stage produces: {unknown}. "
+        f"Declared output schemas: {sorted(declared)}"
+    )
+
+    # The two that matter most: the press file must be the converted one.
+    assert mapped["pdf"] == "pdfx/1"
+    assert mapped["raw-pdf"] == "raw-pdf/1"
 
 
 def test_second_build_of_same_input_hits_cache():

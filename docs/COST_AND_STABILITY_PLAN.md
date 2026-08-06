@@ -64,6 +64,8 @@ Root cause of P3 is reading results out of a **global, cross-project** log direc
 
 Bring the stack up, run one build to `completed`, download the artifact, assert the bytes are a real PDF. This is A0.2 detector 1 — the one that has never passed. **Until it does, the Ghostscript work is written, not proven.**
 
+**Closed 2026-08-07** — the detector passes, and the first real run found five defects that unit tests and review had both missed. See "S3 is CLOSED" below.
+
 ### S4 — Commit *(P1)*
 
 Coherent commits, not one 30-file blob: Ghostscript/finish; durable state + worker + API; test infrastructure; docs.
@@ -109,33 +111,44 @@ S1 is first because it is the instrument every other claim is measured with. Ver
 - [x] `scripts/test.*` writes Publisher-only results to `.publisher/test-output.txt`; suite green — **332 passed, 5 skipped, 0 failed**
 - [x] Collection ≥ 338, zero errors, under ~30 s — 338 in 13.8 s
 - [x] `.publisher/`, `.test-cas-cache/` gitignored
-- [ ] **A build reaches `completed`; downloaded artifact begins `%PDF`** — see below
+- [x] **A build reaches `completed`; downloaded artifact begins `%PDF`** — closed 2026-08-07, see below
 - [x] Working tree committed in coherent commits — 4 commits on `fix/durable-state-and-ghostscript`
 - [x] `rules/zh`, `rules/web`, `rules/README.md` moved; workspace `CLAUDE.md` disabled
 - [x] `Publisher/CLAUDE.md` exists
 
-### S3 is BLOCKED, not done — 2026-08-06
+### S3 is CLOSED — 2026-08-07
 
-The Ghostscript work is **written and committed but never proven**. It is unit-covered
-only; no build has been driven through `finish` to a downloaded PDF/X artifact.
+`test_build_request_produces_a_real_artifact` passes. A build posted to the API is
+claimed by the containerised worker, runs all nine stages with `allow_stub_engines=False`,
+and `GET /v1/builds/:id/artifacts/pdf/download` returns 154,889 bytes beginning `%PDF-1.3`
+and carrying `/GTS_PDFX`, `/OutputIntent` and `/DeviceCMYK`. Suite: **350 passed, 5 skipped.**
 
-Blocker is environmental. Docker Desktop died three times during this work and now hangs:
-the process runs, but `npipe:////./pipe/dockerDesktopLinuxEngine` does not exist, so the
-engine accepts no connections. Not fixable from inside the repo.
+Of the three risks flagged as unexercised, the prologue and the ICC discovery worked on
+first contact and `--permit-file-read` was sufficient with SAFER on. First contact did,
+however, expose five defects that only a real run could have surfaced — every one of them
+a case of something reporting success it had not earned:
 
-**To close S3**, once the engine is healthy:
+1. **Ghostscript declined PDF/X and exited 0.** It printed `TrimBox does not fit inside
+   BleedBox … reverting to normal PDF output`, wrote an ordinary PDF, and returned 0.
+   `_run` discarded its output on success and `_assert_pdf` checked only the `%PDF` magic,
+   so `finish` reported `"profileApplied": "pdfx-1a"` over a file that was not PDF/X.
+   `to_pdfx` now reads gs's output for downgrade notices and asserts an OutputIntent is
+   really in the bytes. `finish`/`finish-gs` went to v5 so no v4 artifact is replayed.
+2. **The boxes were identical and gs rejected them anyway** — its own comparison of
+   `0 0 430.866142 649.133858` against itself. `-dUseTrimBox` (applied only when there is
+   no bleed allowance, where it is lossless) makes the page exactly the TrimBox.
+3. **The API served the unconverted render as the press file.** `artifacts` was keyed
+   `(build_id, kind)`, but `kind` is stage-local: paginate emits `kind='pdf'` (`raw-pdf/1`)
+   and finish emits `kind='pdf'` (`pdfx/1`); with `ON CONFLICT DO NOTHING` the first writer
+   won. Artifacts are now keyed by `schema_id`, and the API maps a public name to a schema
+   (`pdf` → `pdfx/1`). Preflight's report had been losing to finish's the same way, so
+   `GET /v1/builds/:id/preflight` was returning the wrong document entirely.
+4. **The API could not read the CAS at all** — no volume mount, so every download 500'd
+   with an ENOENT quoting the server's filesystem path back to the caller.
+5. **Host-side tests were talking to a different database.** A locally-installed
+   PostgreSQL owns port 5432, so `DATABASE_URL=localhost:5432` never reached the compose
+   stack. Published on 55432 now. Separately, the worker exited for good whenever Postgres
+   restarted; it reconnects, and has `restart: unless-stopped`.
 
-```bash
-docker compose build worker && docker compose up -d
-python -m pytest tests/integration/test_api_drives_pipeline.py -k artifact
-```
-
-`test_build_request_produces_a_real_artifact` is the detector. It has **never passed** —
-first because the API was not wired (fixed, A2), then because `finish` refused without
-Ghostscript (fixed here, unverified). Treat green on that test as the actual completion
-of both A2 and this plan.
-
-Specific risks still unexercised, all inside `to_pdfx()`:
-the `PDFX_def.ps` prologue, ICC profile discovery under `/usr/share/ghostscript/*/`,
-and whether `--permit-file-read` is sufficient with SAFER on. Any of the three can fail
-on first real contact.
+The lesson generalises: every one of these passed unit tests and code review. What caught
+them was one real build, inspected byte by byte at the end.

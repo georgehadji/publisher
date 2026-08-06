@@ -9,7 +9,12 @@ services:
       # deployments get credentials from a secrets manager, not this file.
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
-      - "5432:5432"
+      # 55432, not 5432: a locally-installed PostgreSQL service commonly owns
+      # 5432, and when it does, everything host-side (notably the integration
+      # tests) silently connects to THAT database instead of this one -- the
+      # tests then assert against a store the worker never writes to. Services
+      # inside the compose network still reach postgres:5432 as normal.
+      - "55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./platform/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
@@ -26,8 +31,15 @@ services:
     environment:
       DATABASE_URL: postgresql://publisher:publisher@postgres:5432/publisher
       PUBLISHER_CAS_ROOT: /data/cas
+      # Without this, Python buffers stdout when it is a pipe, so `docker compose
+      # logs worker` stayed empty for the whole of a build -- the per-stage prints
+      # only appeared if the process exited.
+      PYTHONUNBUFFERED: "1"
     volumes:
       - cas-data:/data/cas
+    # Postgres restarting used to leave the queue permanently undrained: the
+    # worker exited and nothing brought it back.
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,8 +54,16 @@ services:
       HOST: "0.0.0.0"
       PUBLISHER_API_TOKENS: "dev-token:dev-tenant"
       PUBLISHER_CORS_ORIGINS: "http://localhost:3000"
+      # The API serves artifact bytes out of the CAS the worker wrote them to.
+      # Without this mount it resolved the default relative ./.publisher/cas
+      # inside its own container, and every download 500'd with ENOENT.
+      # Read-only: the API reads blobs, it never produces them.
+      PUBLISHER_CAS_ROOT: /data/cas
+    volumes:
+      - cas-data:/data/cas:ro
     ports:
       - "4000:4000"
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
