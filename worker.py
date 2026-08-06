@@ -112,12 +112,28 @@ def _record_stage(conn, build_id: str, stage_name: str, decl_version: int,
 
 def _record_artifact(conn, build_id: str, kind: str, schema_id: str, sha256: str,
                       media_type: str, size: int) -> None:
+    """
+    Upsert keyed on schema_id -- see the comment on the artifacts table.
+
+    `kind` is unique only within one stage, so keying on it made two stages'
+    artifacts collide; DO NOTHING then kept whichever finished first, which
+    meant the press PDF/X from `finish` lost to paginate's raw PDF. DO UPDATE
+    (not DO NOTHING) so a re-run of a build refreshes its artifact rows rather
+    than leaving a previous run's hashes in place.
+    """
+    if not schema_id:
+        raise RuntimeError(
+            f"stage emitted artifact kind '{kind}' that its declaration does not "
+            f"list in outputs={{}} -- it has no schema ID to be identified by"
+        )
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO artifacts (build_id, kind, schema_id, sha256, media_type, size)
             VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (build_id, kind) DO NOTHING
+            ON CONFLICT (build_id, schema_id) DO UPDATE SET
+                kind = EXCLUDED.kind, sha256 = EXCLUDED.sha256,
+                media_type = EXCLUDED.media_type, size = EXCLUDED.size
             """,
             (build_id, kind, schema_id, sha256, media_type, size),
         )
@@ -178,12 +194,26 @@ def main() -> int:
     dsn = _dsn()
     print(f"[worker] starting, polling every {POLL_INTERVAL_S}s")
     while True:
-        conn = psycopg2.connect(dsn)
+        # A worker that dies on a transient database blip is a worker that
+        # silently stops draining the queue. Restarting Postgres killed this
+        # process outright ("the database system is shutting down") and every
+        # build after that sat in 'queued' forever with nothing reporting why.
+        # Connection loss is an expected condition for a long-lived poller, not
+        # a reason to exit; a genuinely bad DSN still surfaces, as a repeated
+        # and visible error rather than a swallowed one.
+        try:
+            conn = psycopg2.connect(dsn)
+        except psycopg2.OperationalError as e:
+            print(f"[worker] database unavailable, retrying in {POLL_INTERVAL_S}s: {e}")
+            time.sleep(POLL_INTERVAL_S)
+            continue
         try:
             build = _claim_build(conn)
             if build is not None:
                 run_build(conn, build)
                 continue
+        except psycopg2.OperationalError as e:
+            print(f"[worker] lost the database mid-poll, reconnecting: {e}")
         finally:
             conn.close()
         time.sleep(POLL_INTERVAL_S)

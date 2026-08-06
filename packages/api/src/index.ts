@@ -50,6 +50,34 @@ function casPath(sha256: string): string {
   return path.join(CAS_ROOT, sha256.slice(0, 2), sha256.slice(2, 4), sha256);
 }
 
+// The public artifact vocabulary, mapped to the schema ID that actually
+// identifies the bytes.
+//
+// A stage's `kind` is unique only inside that stage's own outputs={} dict:
+// paginate emits kind='pdf' (raw-pdf/1) and finish emits kind='pdf' (pdfx/1);
+// paginate, finish and preflight all emit kind='report'. Selecting on `kind`
+// therefore returned whichever row happened to be there -- GET .../artifacts/pdf
+// served paginate's UNCONVERTED weasyprint PDF as the press file, and
+// GET .../preflight returned finish's report instead of the preflight verdict.
+//
+// This map is the API's delivery contract: `pdf` means the press-ready PDF/X,
+// never the raw render. Every schema below is asserted against the real stage
+// registry by tests/integration/test_api_drives_pipeline.py, so a rename in a
+// stage declaration fails a test rather than silently 404ing in production.
+const DELIVERABLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze({
+  pdf: 'pdfx/1',
+  proof: 'proof-pdf/1',
+  'raw-pdf': 'raw-pdf/1',
+  preflight: 'preflight/1',
+  pagemap: 'pagemap/1',
+  ast: 'ast/1',
+  doc: 'doc-effective/1',
+  html: 'typescript-html/1',
+  css: 'text/css',
+  'build-report': 'build-report/1',
+  'integrity-report': 'integrity-report/1',
+});
+
 // ── Auth, tenancy, idempotency (BUILD_PLAN.md §3.12) ───────────
 //
 // §3.12 specifies "OIDC + short-lived tenant-scoped tokens · Idempotency-Key on every
@@ -251,7 +279,7 @@ server.get<{ Params: { id: string } }>(
       await pool.query(
         `SELECT a.sha256 FROM artifacts a
          JOIN builds b ON b.id = a.build_id
-         WHERE b.document_id = $1 AND a.kind = 'ast'
+         WHERE b.document_id = $1 AND a.schema_id = 'ast/1'
          ORDER BY a.created_at DESC LIMIT 1`,
         [id]
       )
@@ -422,7 +450,12 @@ server.get<{ Params: { id: string } }>(
       return reply.code(404).send({ error: 'not found' });
     }
     const artifact = (
-      await pool.query("SELECT sha256 FROM artifacts WHERE build_id = $1 AND kind = 'report'", [id])
+      // preflight/1, not kind='report' -- three stages emit kind='report', and
+      // this route was returning finish's report as the preflight verdict.
+      await pool.query(
+        "SELECT sha256 FROM artifacts WHERE build_id = $1 AND schema_id = 'preflight/1'",
+        [id]
+      )
     ).rows[0];
     if (!artifact) {
       return { buildId: id, status: 'pending' };
@@ -440,8 +473,18 @@ server.get<{ Params: { id: string; kind: string } }>(
     if (!build) {
       return reply.code(404).send({ error: 'not found' });
     }
+    const schemaId = DELIVERABLE_SCHEMAS[kind];
+    if (!schemaId) {
+      return reply.code(404).send({
+        error: `unknown artifact kind '${kind}'`,
+        available: Object.keys(DELIVERABLE_SCHEMAS),
+      });
+    }
     const artifact = (
-      await pool.query('SELECT * FROM artifacts WHERE build_id = $1 AND kind = $2', [id, kind])
+      await pool.query('SELECT * FROM artifacts WHERE build_id = $1 AND schema_id = $2', [
+        id,
+        schemaId,
+      ])
     ).rows[0];
     if (!artifact) {
       return reply.code(404).send({ error: 'artifact not found -- this stage has not produced output yet' });
@@ -449,6 +492,7 @@ server.get<{ Params: { id: string; kind: string } }>(
     return {
       buildId: id,
       artifactKind: kind,
+      schemaId: artifact.schema_id,
       sha256: artifact.sha256,
       mediaType: artifact.media_type,
       size: Number(artifact.size),
@@ -465,14 +509,39 @@ server.get<{ Params: { id: string; kind: string } }>(
     if (!build) {
       return reply.code(404).send({ error: 'not found' });
     }
+    const schemaId = DELIVERABLE_SCHEMAS[kind];
+    if (!schemaId) {
+      return reply.code(404).send({
+        error: `unknown artifact kind '${kind}'`,
+        available: Object.keys(DELIVERABLE_SCHEMAS),
+      });
+    }
     const artifact = (
-      await pool.query('SELECT * FROM artifacts WHERE build_id = $1 AND kind = $2', [id, kind])
+      await pool.query('SELECT * FROM artifacts WHERE build_id = $1 AND schema_id = $2', [
+        id,
+        schemaId,
+      ])
     ).rows[0];
     if (!artifact) {
       return reply.code(404).send({ error: 'artifact not found' });
     }
+    // A recorded artifact whose blob is absent means the API and the worker are
+    // not looking at the same CAS. Streaming it raised a raw ENOENT, which
+    // Fastify turned into a 500 quoting the server's filesystem path back to the
+    // caller. Report the condition without leaking where the store lives.
+    const blob = casPath(artifact.sha256);
+    const { access } = await import('node:fs/promises');
+    try {
+      await access(blob);
+    } catch {
+      request.log.error({ sha256: artifact.sha256, blob }, 'artifact blob missing from CAS');
+      return reply.code(404).send({
+        error: 'artifact bytes are not available in this deployment’s content store',
+        sha256: artifact.sha256,
+      });
+    }
     reply.type(artifact.media_type);
-    return reply.send(createReadStream(casPath(artifact.sha256)));
+    return reply.send(createReadStream(blob));
   }
 );
 

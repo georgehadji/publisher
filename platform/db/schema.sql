@@ -99,6 +99,20 @@ CREATE TABLE IF NOT EXISTS webhooks (
 );
 CREATE INDEX IF NOT EXISTS webhooks_tenant_idx ON webhooks (tenant_id);
 
+-- An artifact is identified by its SCHEMA ID, not by `kind`.
+--
+-- `kind` is stage-LOCAL: it is the key inside one stage's `outputs={}` dict, so
+-- it is only unique within that stage. Two stages legitimately both emit
+-- kind='pdf' (paginate -> raw-pdf/1, finish -> pdfx/1) and three emit
+-- kind='report'. With PRIMARY KEY (build_id, kind) plus the worker's
+-- ON CONFLICT DO NOTHING, the FIRST stage to finish won and every later
+-- artifact of the same kind was silently dropped -- so `pdf` resolved to
+-- paginate's unconverted weasyprint output and the API served it as the
+-- press-ready file, while the real PDF/X-1a from `finish` was discarded.
+-- Preflight's report lost to finish's report the same way.
+--
+-- schema_id is the identity the DAG itself already runs on (one stage's output
+-- schema matched to another's input schema), and it is globally unique.
 CREATE TABLE IF NOT EXISTS artifacts (
     build_id   TEXT NOT NULL REFERENCES builds(id),
     kind       TEXT NOT NULL,
@@ -107,5 +121,6 @@ CREATE TABLE IF NOT EXISTS artifacts (
     media_type TEXT NOT NULL,
     size       BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (build_id, kind)
+    PRIMARY KEY (build_id, schema_id)
 );
+CREATE INDEX IF NOT EXISTS artifacts_kind_idx ON artifacts (build_id, kind);
