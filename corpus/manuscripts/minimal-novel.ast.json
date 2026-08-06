@@ -6,7 +6,7 @@
   },
   "frontMatter": [
     {
-      "type": "half_title",
+      "type": "halfTitle",
       "content": [
         {
           "type": "paragraph",
@@ -20,7 +20,7 @@
       ]
     },
     {
-      "type": "title_page",
+      "type": "titlePage",
       "content": [
         {
           "type": "paragraph",
@@ -34,7 +34,7 @@
       ]
     },
     {
-      "type": "copyright",
+      "type": "copyrightPage",
       "content": [
         {
           "type": "paragraph",
@@ -391,7 +391,7 @@
   ],
   "backMatter": [
     {
-      "type": "about_author",
+      "type": "aboutTheAuthor",
       "content": [
         {
           "type": "paragraph",

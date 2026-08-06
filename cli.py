@@ -16,6 +16,26 @@ import json
 import sys
 from pathlib import Path
 
+SCHEMAS_ROOT = Path(__file__).resolve().parent / "schemas"
+SCHEMA_ID_PREFIX = "https://publisher.internal/schemas/"
+
+
+def _find_schema_by_id(schema_id: str) -> Path | None:
+    """
+    Resolve e.g. "agent-proposal/1" or "cover/art-brief/1" to the schema file
+    whose "$id" ends with that path. $id is always
+    f"{SCHEMA_ID_PREFIX}{directory-relative-path-without-.schema.json}"
+    (verified across every schemas/**/*.schema.json as of this writing).
+    """
+    for schema_file in SCHEMAS_ROOT.glob("**/*.schema.json"):
+        try:
+            declared_id = json.loads(schema_file.read_text()).get("$id", "")
+        except json.JSONDecodeError:
+            continue
+        if declared_id == f"{SCHEMA_ID_PREFIX}{schema_id}":
+            return schema_file
+    return None
+
 
 def main():
     parser = argparse.ArgumentParser(description="Publisher CLI")
@@ -136,7 +156,6 @@ def _cmd_schema(args: argparse.Namespace):
     """Schema operations."""
     if args.schema_command == "gen":
         import subprocess
-        import sys
         result = subprocess.run(
             [sys.executable, "-c", """
 import subprocess, sys
@@ -147,13 +166,34 @@ subprocess.run(['node', 'codegen/generate.mjs'], cwd='schemas', check=True)
         print("Types regenerated.")
 
     elif args.schema_command == "validate":
+        import jsonschema
+
         path = Path(args.file)
         if not path.exists():
             print(f"File not found: {args.file}")
             sys.exit(1)
+
         data = json.loads(path.read_text())
-        print(f"Valid JSON: {args.file}")
-        print(f"Schema:     {data.get('schema', 'not specified')}")
+        schema_id = data.get("schema")
+        if not schema_id:
+            print(f"No 'schema' field in {args.file} -- nothing to validate against.")
+            sys.exit(1)
+
+        schema_file = _find_schema_by_id(schema_id)
+        if schema_file is None:
+            print(f"Unknown schema: '{schema_id}' -- no schemas/**/*.schema.json declares that $id.")
+            sys.exit(1)
+
+        schema = json.loads(schema_file.read_text())
+        try:
+            jsonschema.validate(instance=data, schema=schema)
+        except jsonschema.ValidationError as e:
+            at = "/".join(str(p) for p in e.absolute_path) or "<root>"
+            print(f"INVALID: {args.file} does not conform to schema '{schema_id}'")
+            print(f"  {e.message}  (at {at})")
+            sys.exit(1)
+
+        print(f"Valid: {args.file} conforms to schema '{schema_id}' ({schema_file})")
 
     else:
         print("Usage: pub schema {gen|validate} ...")

@@ -5,3 +5,12 @@ addopts = "-q --strict-markers"
 # It was omitted, so a bare `pytest` never ran either of them and CI was the only
 # place they executed — under `continue-on-error`, which meant nowhere.
 testpaths = ["platform", "services", "packages", "stages", "tests"]
+# Collection must never wander into generated or vendored trees. `packages/`
+# contains packages/api/node_modules, and `.publisher/`/`.test-cas-cache/` are
+# sharded CAS directories (thousands of dirs). pytest's defaults already cover
+# most of these; they are named explicitly so a future default change cannot
+# silently make collection minutes-long again.
+norecursedirs = [
+    ".*", "node_modules", "dist", "target", "build", "*.egg-info",
+    "__pycache__", ".venv", "venv",
+]

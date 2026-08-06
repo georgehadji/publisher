@@ -27,3 +27,10 @@ Thumbs.db
 
 # Generated code (checked in but must be regenerated with gen:check)
 *.gen.*
+
+# Build state -- durable CAS blobs + sqlite cache index (PUBLISHER_CAS_ROOT),
+# and the test harness's own CAS. Content-addressed build output, not source;
+# regenerates on the next build.
+.publisher/
+.test-cas-cache/
+.cas-cache/

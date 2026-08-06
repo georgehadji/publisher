@@ -1,5 +1,6 @@
 """Verify the full test suite is collected — a collection regression must fail loudly."""
 
+import os
 import re
 import subprocess
 import sys
@@ -11,6 +12,18 @@ import pytest
 FLOOR = 290
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Third-party pytest plugin autoload costs ~100s of wall time per interpreter
+# start on some dev machines (entry-point metadata scanning across site-packages,
+# which on Windows is subject to real-time AV scanning). Both tests below spawn a
+# subprocess, so they paid it twice and intermittently blew their own timeout --
+# reporting a "collection regression" that was really just machine latency.
+#
+# Neither test needs third-party plugins: they assert that pytest core can import
+# and collect this repo's modules. Disabling autoload cuts collection from ~160s
+# to ~14s and makes the signal honest. Verified to still collect all 338 tests
+# with no ERROR section.
+_SUBPROCESS_ENV = {**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
 
 
 def test_suite_collection_floor():
@@ -38,6 +51,7 @@ def test_suite_collection_floor():
         encoding="utf-8",
         errors="replace",
         cwd=REPO_ROOT,
+        env=_SUBPROCESS_ENV,
         timeout=300,
     )
 
@@ -87,6 +101,7 @@ def test_collection_reports_no_errors():
         encoding="utf-8",
         errors="replace",
         cwd=REPO_ROOT,
+        env=_SUBPROCESS_ENV,
         timeout=300,
     )
     # Use the exit code, not a substring scan: `--collect-only` prints every collected
