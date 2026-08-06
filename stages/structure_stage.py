@@ -145,7 +145,7 @@ def ast_assemble(ctx: StageCtx, html: str | None = None, source: str | None = No
     print(f"  [ast-assemble] Text integrity verified: {integrity_hash[:16]}... "
           f"({len(source_side)} normalized chars)")
 
-    cas_root = Path(ctx.work_dir) / ".cas"
+    cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))
 
     # The canonical AST for this build. Since the comparison above proved the

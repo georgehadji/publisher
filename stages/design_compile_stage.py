@@ -376,7 +376,7 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None) -> StageRe
     css = _emit_css(spec)
     css_bytes = css.encode("utf-8")
     
-    cas_root = Path(ctx.work_dir) / ".cas"
+    cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))
     ref = cas.put(css_bytes, media_type=MediaType("text/css"))
     

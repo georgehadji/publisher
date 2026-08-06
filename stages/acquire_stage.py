@@ -32,7 +32,7 @@ def acquire(ctx: StageCtx, manifest_path: str | None = None) -> StageResult:
     In the tracer bullet, this takes a fixture path and loads it.
     """
     # Use a local CAS
-    cas_root = Path(ctx.work_dir) / ".cas"
+    cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))
     
     # Determine fixture path

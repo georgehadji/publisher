@@ -60,7 +60,7 @@ def resolve(ctx: StageCtx, ast: str | None = None, overrides_path: str | None = 
 
     effective = apply_overrides(ast_doc, ops)
 
-    cas_root = Path(ctx.work_dir) / ".cas"
+    cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))
     doc_bytes = json.dumps(effective, indent=2).encode("utf-8")
     ref = cas.put(doc_bytes, media_type=MediaType("application/json"))

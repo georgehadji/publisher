@@ -83,7 +83,7 @@ def package(ctx: StageCtx, preflight_report: str | None = None, **kwargs) -> Sta
 
     manifest_bytes = json.dumps(manifest, indent=2).encode("utf-8")
 
-    cas_root = Path(ctx.work_dir) / ".cas"
+    cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))
     ref = cas.put(manifest_bytes, media_type=MediaType("application/json"))
 

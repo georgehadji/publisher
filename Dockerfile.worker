@@ -1,0 +1,35 @@
+# Publisher worker -- ARCHITECTURE_REMEDIATION.md A1.4/A1.5.
+FROM python:3.12-slim
+
+# weasyprint's real runtime deps (Cairo/Pango stack). The worker runs with
+# allow_stub_engines=False (worker.py) -- a missing render engine must fail
+# a real build loudly, not silently certify stub output as passed. These
+# packages are why it fails loudly for the right reason (a genuine render
+# error) instead of the wrong one (ImportError).
+# ghostscript is what turns paginate's raw PDF into a real PDF/X-1a press file
+# (publisher_prepress.ghostscript). Without it the finish stage refuses to run
+# rather than certify an unconverted PDF -- so this package is load-bearing for
+# any build reaching completion, not an optional extra.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 \
+    libffi-dev shared-mime-info fonts-liberation \
+    ghostscript \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY platform/ platform/
+COPY services/ services/
+COPY stages/ stages/
+COPY schemas/ schemas/
+COPY profiles/ profiles/
+COPY templates/ templates/
+COPY corpus/ corpus/
+COPY tracer_bullet.py worker.py cli.py ./
+
+ENV PYTHONPATH=/app/platform/stages/py:/app/platform/cas/py:/app/platform/cache/py:/app/platform/reproducibility/src:/app/platform/supply-chain/src:/app/services/structure:/app/services/agents:/app/services/cover:/app/services/epub:/app/services/idml:/app/services/onix:/app/services/prepress:/app/services/alttext:/app/services/learning
+
+CMD ["python", "worker.py"]

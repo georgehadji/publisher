@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: publisher
+      POSTGRES_USER: publisher
+      POSTGRES_PASSWORD: publisher
+      # Local dev/test only -- trust auth over the compose network. Real
+      # deployments get credentials from a secrets manager, not this file.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./platform/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U publisher"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      DATABASE_URL: postgresql://publisher:publisher@postgres:5432/publisher
+      PUBLISHER_CAS_ROOT: /data/cas
+    volumes:
+      - cas-data:/data/cas
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql://publisher:publisher@postgres:5432/publisher
+      PORT: "4000"
+      HOST: "0.0.0.0"
+      PUBLISHER_API_TOKENS: "dev-token:dev-tenant"
+      PUBLISHER_CORS_ORIGINS: "http://localhost:3000"
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  cas-data:

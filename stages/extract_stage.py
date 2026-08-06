@@ -257,7 +257,7 @@ def extract(ctx: StageCtx, source: str | None = None) -> StageResult:
     html = _ast_to_html(ast)
     
     # Store in CAS
-    cas_root = Path(ctx.work_dir) / ".cas"
+    cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))
     ref = cas.put(html.encode("utf-8"), media_type=MediaType("text/html"))
     

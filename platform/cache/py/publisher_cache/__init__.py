@@ -142,3 +142,118 @@ def compute_toolchain_digest(
     payload.update(extra)
 
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+# ── CacheStore -- ARCHITECTURE_REMEDIATION.md A1.2 ──────────────────
+#
+# This module had key derivation and no storage (finding 2): the previous
+# implementation computed correct cache keys and threw them away. Two
+# backends share one interface (get/put), same cache_index shape:
+#
+#   SqliteCacheStore  -- stdlib, colocated with a CAS root. What a single
+#                        Python process (the executor, tracer_bullet.py's
+#                        local dev harness) uses for itself.
+#   PostgresCacheStore -- the shared index the worker uses, because the
+#                        worker is the process other processes (the API)
+#                        need to observe cache state through.
+#
+# Neither is a stand-in for the other. The worker always uses Postgres --
+# that is the durable, cross-process index BUILD_PLAN.md and A1.3 specify.
+
+
+class CacheStore:
+    """Common interface. Do not instantiate directly."""
+
+    def get(self, cache_key: str) -> Optional[dict]:
+        """Return {"output_refs": {...}} on hit, None on miss."""
+        raise NotImplementedError
+
+    def put(self, cache_key: str, stage: str, version: int, output_refs: dict) -> None:
+        raise NotImplementedError
+
+
+_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS cache_index (
+    cache_key   TEXT PRIMARY KEY,
+    stage       TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    output_refs TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    hit_count   INTEGER NOT NULL DEFAULT 0
+)
+"""
+
+
+class SqliteCacheStore(CacheStore):
+    """Local, single-process cache index. stdlib sqlite3, no new dependency."""
+
+    def __init__(self, db_path):
+        import sqlite3
+        from pathlib import Path
+
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(db_path))
+        self._conn.execute(_SCHEMA_SQL)
+        self._conn.commit()
+
+    def get(self, cache_key: str) -> Optional[dict]:
+        row = self._conn.execute(
+            "SELECT output_refs FROM cache_index WHERE cache_key = ?", (cache_key,)
+        ).fetchone()
+        if row is None:
+            return None
+        self._conn.execute(
+            "UPDATE cache_index SET hit_count = hit_count + 1 WHERE cache_key = ?",
+            (cache_key,),
+        )
+        self._conn.commit()
+        return {"output_refs": json.loads(row[0])}
+
+    def put(self, cache_key: str, stage: str, version: int, output_refs: dict) -> None:
+        from datetime import datetime, timezone
+
+        self._conn.execute(
+            "INSERT OR IGNORE INTO cache_index "
+            "(cache_key, stage, version, output_refs, created_at) VALUES (?, ?, ?, ?, ?)",
+            (cache_key, stage, version, json.dumps(output_refs), datetime.now(timezone.utc).isoformat()),
+        )
+        self._conn.commit()
+
+
+class PostgresCacheStore(CacheStore):
+    """Shared cache index for the worker. Table shape: platform/db/schema.sql."""
+
+    def __init__(self, dsn: str):
+        self._dsn = dsn
+
+    def _connect(self):
+        import psycopg2
+
+        return psycopg2.connect(self._dsn)
+
+    @staticmethod
+    def _json(value: dict):
+        from psycopg2.extras import Json
+
+        return Json(value)
+
+    def get(self, cache_key: str) -> Optional[dict]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT output_refs FROM cache_index WHERE cache_key = %s", (cache_key,))
+            row = cur.fetchone()
+            if row is None:
+                return None
+            cur.execute(
+                "UPDATE cache_index SET hit_count = hit_count + 1, last_hit_at = now() "
+                "WHERE cache_key = %s",
+                (cache_key,),
+            )
+            return {"output_refs": row[0]}
+
+    def put(self, cache_key: str, stage: str, version: int, output_refs: dict) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO cache_index (cache_key, stage, version, output_refs, created_at) "
+                "VALUES (%s, %s, %s, %s, now()) ON CONFLICT (cache_key) DO NOTHING",
+                (cache_key, stage, version, self._json(output_refs)),
+            )

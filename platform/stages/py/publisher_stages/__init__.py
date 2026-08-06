@@ -17,6 +17,7 @@ import inspect
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 
@@ -69,6 +70,9 @@ class StageResult:
     metrics: dict[str, float] = field(default_factory=dict)
     warnings: list[Diagnostic] = field(default_factory=list)
     toolchain: Optional[dict[str, Any]] = None
+    # True when the executor served this from CacheStore instead of calling
+    # decl.fn -- set by the executor, never by a stage function itself.
+    cache_hit: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,6 +90,15 @@ class StageCtx:
     # tracer_bullet.py's own DagExecutor sets this — the API-triggered production
     # executor never does.
     allow_stub_engines: bool = False
+    # Durable CAS root every stage must write artifacts into -- ARCHITECTURE_
+    # REMEDIATION.md A1.1. Empty defaults to work_dir/.cas, today's implicit
+    # behaviour (e.g. cli.py's single-stage `run-stage`, which has no notion
+    # of a durable root separate from its scratch dir).
+    cas_root: str = ""
+
+    def __post_init__(self):
+        if not self.cas_root:
+            object.__setattr__(self, "cas_root", str(Path(self.work_dir) / ".cas"))
 
 
 @dataclass(frozen=True)

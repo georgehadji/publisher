@@ -34,7 +34,7 @@ from publisher_cover.judge import (
 
 
 def _cas(ctx: StageCtx) -> ContentAddressedStore:
-    return ContentAddressedStore(CasConfig(local_cache_root=Path(ctx.work_dir) / ".cas"))
+    return ContentAddressedStore(CasConfig(local_cache_root=Path(ctx.cas_root)))
 
 
 def _deterministic_timestamp(ctx: StageCtx) -> str:

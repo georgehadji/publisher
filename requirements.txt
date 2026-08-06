@@ -1,0 +1,15 @@
+# Publisher -- Python runtime dependencies.
+# Every package's own pyproject.toml declares `dependencies = []` (a pre-
+# existing project convention, not something this file changes) -- this is
+# the first place third-party deps are actually pinned, gathered from what
+# stages/ and services/ genuinely import. See docs/ARCHITECTURE_REMEDIATION.md
+# A1.5: Docker needs a real install list, not an assumption of a pre-set-up
+# dev machine.
+psycopg2-binary>=2.9,<3
+weasyprint>=62,<63
+# weasyprint 62.x calls pydyf's Stream API in a way pydyf 0.11+ removed
+# (AttributeError: 'super' object has no attribute 'transform') -- pin to the
+# last compatible release rather than the resolver's default latest.
+pydyf<0.11
+PyYAML>=6,<7
+jsonschema>=4.20,<5

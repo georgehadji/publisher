@@ -138,7 +138,7 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
         # real pagemap extraction from the renderer.
         page_count = full_html.count('<div class="chapter') + full_html.count("</div>\n") // 20 + 1
 
-    cas_root = Path(ctx.work_dir) / ".cas"
+    cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))
 
     media_type = MediaType.APPLICATION_PDF if renderer and pdf_bytes[:4] == b"%PDF" else MediaType.TEXT_HTML
