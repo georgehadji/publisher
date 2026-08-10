@@ -30,6 +30,7 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 from publisher_prepress.ghostscript import (
     GhostscriptError, find_binary, to_pdfx, to_proof,
 )
+from profiles import load_profile
 
 
 @stage(
@@ -38,9 +39,15 @@ from publisher_prepress.ghostscript import (
     # output" notice, and the presence of an OutputIntent in the bytes). v4
     # could return a non-PDF/X file reported as pdfx-1a, so every v4 press
     # artifact in the cache is suspect and must not be replayed.
-    version=5,
+    # v6: takes the vendor profile so it can inset the TrimBox by the bleed that
+    # `design-compile` grew the page box by. v5 always passed bleed_pt=0, which
+    # collapsed TrimBox onto MediaBox and produced a press file measuring 0.00mm
+    # of bleed no matter what the renderer had laid down.
+    version=6,
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
-    inputs={"pdf_path": "raw-pdf/1"},
+    inputs={"pdf_path": "raw-pdf/1", "profile_name": "profile/1"},
+    root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
+    optional_root_inputs=["profile_name"],   # absent => no bleed; preflight judges that
     outputs={"pdf": "pdfx/1", "proof": "proof-pdf/1", "report": "finish-report/1"},
     toolchain=["ghostscript"],
     fixtures="fixtures/finish/v1",
@@ -48,10 +55,24 @@ from publisher_prepress.ghostscript import (
     queue="q.prepress",
     description="Apply CMYK, bleed, marks, OutputIntent; emit press + proof PDFs",
 )
-def finish(ctx: StageCtx, pdf_path: str | None = None) -> StageResult:
+def finish(ctx: StageCtx, pdf_path: str | None = None,
+           profile_name: str | None = None) -> StageResult:
     """Finish stage -- prepare press and proof PDFs for delivery."""
     if pdf_path is None:
         raise StageError(kind=ErrorKind.BAD_INPUT, message="finish requires 'pdf_path' (from paginate)")
+
+    # Must be the same figure design-compile grew the page box by, or the
+    # TrimBox lands somewhere the type was not laid out for.
+    bleed_mm = 0.0
+    if profile_name:
+        profile = load_profile(profile_name)
+        if profile is None:
+            raise StageError(
+                kind=ErrorKind.BAD_INPUT,
+                message=f"Unknown vendor profile: {profile_name!r}",
+            )
+        bleed_mm = float((profile.get("bleed") or {}).get("all", 0.0))
+    bleed_pt = bleed_mm * 72.0 / 25.4
 
     pdf_path_p = Path(pdf_path)
     if not pdf_path_p.exists():
@@ -74,7 +95,8 @@ def finish(ctx: StageCtx, pdf_path: str | None = None) -> StageResult:
         press_path = work / "press.pdf"
         proof_path = work / "proof.pdf"
         try:
-            to_pdfx(pdf_path_p, press_path, work, title=ctx.build_id, gs_binary=gs_binary)
+            to_pdfx(pdf_path_p, press_path, work, title=ctx.build_id,
+                    bleed_pt=bleed_pt, gs_binary=gs_binary)
             to_proof(pdf_path_p, proof_path, gs_binary=gs_binary)
         except GhostscriptError as e:
             # A failed conversion is an engine failure, not a reason to fall back

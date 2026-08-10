@@ -86,7 +86,10 @@ def _initial_inputs_for(build: dict) -> dict:
     """
     return {
         "acquire": {"manifest_path": "corpus/manuscripts/minimal-novel.ast.json"},
-        "design-compile": {"designspec_path": None},
+        # The same profile drives all three: design-compile grows the page box by
+        # its bleed, finish insets the TrimBox by it, preflight measures it.
+        "design-compile": {"designspec_path": None, "profile_name": "Generic 6x9"},
+        "finish": {"profile_name": "Generic 6x9"},
         "preflight": {"profile_name": "Generic 6x9"},
     }
 

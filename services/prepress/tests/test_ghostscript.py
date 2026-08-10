@@ -11,12 +11,14 @@ say nothing about PDF/X conformance.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from publisher_prepress.ghostscript import (
+    PDFX_DEF_TEMPLATE,
     GhostscriptError,
     _assert_no_pdfx_downgrade,
     _assert_pdf,
@@ -182,3 +184,27 @@ def test_title_parens_cannot_break_the_postscript_prologue(tmp_path: Path, monke
 
     prologue = (tmp_path / "PDFX_def.ps").read_text(encoding="utf-8")
     assert r"Ends\) with \(parens" in prologue
+
+
+# --- PDF/X box geometry -------------------------------------------------
+
+def test_bleed_offset_matches_the_trim_offset():
+    """BleedBox must reach the MediaBox, not sit on the TrimBox.
+
+    Writing [0 0 0 0] for BleedBoxToTrimBoxOffset makes gs compute
+    BleedBox == TrimBox, and it then fails its own "TrimBox does not fit
+    inside BleedBox" test on two identical non-integral rectangles and
+    silently reverts to ordinary PDF. Both offsets carry the same figure so
+    that no two boxes come out exactly equal.
+    """
+    prologue = PDFX_DEF_TEMPLATE.format(
+        icc_profile="/tmp/x.icc",
+        trim_offset="8.50394 8.50394 8.50394 8.50394",
+        bleed_offset="8.50394 8.50394 8.50394 8.50394",
+        title="t", output_condition="c", condition_id="i",
+    )
+    trim = re.search(r"/PDFXTrimBoxToMediaBoxOffset \[([^\]]+)\]", prologue)
+    bleed = re.search(r"/PDFXBleedBoxToTrimBoxOffset \[([^\]]+)\]", prologue)
+    assert trim and bleed
+    assert trim.group(1) == bleed.group(1)
+    assert set(bleed.group(1).split()) != {"0"}

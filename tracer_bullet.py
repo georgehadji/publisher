@@ -338,8 +338,16 @@ class DagExecutor:
         return results
 
 
-def run_tracer_bullet():
-    """Run the full tracer bullet pipeline."""
+def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9"):
+    """Run the full tracer bullet pipeline.
+
+    `manuscript` is a path to an `ast/1` JSON document; it defaults to the
+    synthetic corpus. Pass a real one to exercise the pipeline against an
+    actual book (see services/ingest for DOCX -> AST conversion).
+
+    `profile` names a vendor profile from profiles/*/*.yaml -- e.g.
+    "Greek 17x24". It drives trim size and bleed for the whole build.
+    """
     # A single `import stages` registers every stage (stages/__init__.py owns that
     # list). Previously this function and platform/stages/integrity.py each hand-
     # maintained their own import list, and the two had silently diverged: this list
@@ -359,9 +367,16 @@ def run_tracer_bullet():
     # Only provide root inputs for stages whose declared inputs
     # are not produced by any other stage.
     initial_inputs = {
-        "acquire": {"manifest_path": "corpus/manuscripts/minimal-novel.ast.json"},
-        "design-compile": {"designspec_path": None},
-        "preflight": {"profile_name": "Generic 6x9"},
+        "acquire": {
+            "manifest_path": manuscript or "corpus/manuscripts/minimal-novel.ast.json"
+        },
+        # One profile name, supplied to every stage that has a say in page
+        # geometry. design-compile grows the page box by its bleed, finish insets
+        # the TrimBox by the same amount, preflight measures the result. Give two
+        # of them different profiles and the third will correctly fail the build.
+        "design-compile": {"designspec_path": None, "profile_name": profile},
+        "finish": {"profile_name": profile},
+        "preflight": {"profile_name": profile},
     }
 
     try:
@@ -391,4 +406,7 @@ def run_tracer_bullet():
 
 
 if __name__ == "__main__":
-    sys.exit(run_tracer_bullet())
+    sys.exit(run_tracer_bullet(
+        sys.argv[1] if len(sys.argv) > 1 else None,
+        sys.argv[2] if len(sys.argv) > 2 else "Generic 6x9",
+    ))

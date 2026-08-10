@@ -38,10 +38,18 @@ PDFX_DEF_TEMPLATE = """%!
 % then abandoned PDF/X and STILL exited 0. These are array-valued distiller
 % params, which `-d` cannot express (`-dPDFXTrimBoxToMediaBoxOffset=[0 0 0 0]`
 % makes gs exit 1), so they are set here in PostScript instead.
+%
+% BleedBoxToTrimBoxOffset carries the SAME figure as the trim offset, so the
+% BleedBox is the TrimBox grown back out to exactly the MediaBox. Writing
+% [0 0 0 0] here instead -- and relying on PDFXSetBleedBoxToMediaBox to widen it
+% -- collapsed BleedBox onto TrimBox, and gs then failed its own
+% TrimBox-fits-inside-BleedBox test on two identical non-integral rectangles.
+% That is the same floating-point equality bug documented at the -dUseTrimBox
+% call site below; the fix is to leave no pair of boxes exactly equal.
 <<
   /PDFXSetBleedBoxToMediaBox true
   /PDFXTrimBoxToMediaBoxOffset [{trim_offset}]
-  /PDFXBleedBoxToTrimBoxOffset [0 0 0 0]
+  /PDFXBleedBoxToTrimBoxOffset [{bleed_offset}]
 >> setdistillerparams
 
 /ICCProfile ({icc_profile}) def
@@ -190,6 +198,12 @@ def to_pdfx(
     fabricate a bleed the pages do not have. Whether that is acceptable for a
     given vendor is preflight's judgement to make, not this function's.
 
+    Note that Ghostscript applies those offsets only to boxes the input LACKS.
+    weasyprint always writes all three, so for anything this pipeline renders
+    the boxes come from the CSS (`@page { bleed: ... }`, emitted by
+    design-compile) and `bleed_pt` merely has to agree with them. The offsets
+    still matter for inputs that carry a MediaBox alone.
+
     Raises GhostscriptError if gs is missing, the ICC profile cannot be found,
     gs fails, gs declines PDF/X, or the output carries no OutputIntent. It never
     returns having produced something less than what it claims -- a silently-
@@ -220,6 +234,7 @@ def to_pdfx(
         PDFX_DEF_TEMPLATE.format(
             icc_profile=str(icc).replace("\\", "/"),
             trim_offset=" ".join([f"{bleed_pt:g}"] * 4),
+            bleed_offset=" ".join([f"{bleed_pt:g}"] * 4),
             title=_ps_escape(title),
             output_condition=_ps_escape(output_condition),
             condition_id=_ps_escape(condition_id),

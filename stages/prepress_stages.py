@@ -32,7 +32,8 @@ def _deterministic_timestamp(ctx: StageCtx) -> str:
 
 @stage(
     name="preflight",
-    version=3,
+    version=5,   # v4 made the probe real; v5 fixes its page count, which read 1
+                 # for every Ghostscript-produced file (see preflight._PAGE_RE).
     # Input dict KEYS are bound to the stage function's parameter names by the
     # executor (`decl.fn(ctx, **stage_inputs)`), not just documentation. The
     # previous keys ("pdf", "profile") didn't match this function's actual
@@ -260,7 +261,7 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
 
 @stage(
     name="finish-gs",
-    version=5,   # see the note on `finish` v5 -- same to_pdfx verification change
+    version=6,   # see the note on `finish` v6 -- same TrimBox/bleed change
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     # "pdf" -> "pdf_path", "profile" -> "profile_name": see the note on preflight
     # above for why the input dict's KEYS must exactly match this function's
@@ -325,6 +326,8 @@ def finish_gs(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -> Stag
                 pdf_path_p, press_path, work,
                 title=ctx.build_id,
                 output_condition=str(profile.get("name", "Commercial printing")),
+                # Same figure design-compile grew the page box by; see finish v6.
+                bleed_pt=float((profile.get("bleed") or {}).get("all", 0.0)) * 72.0 / 25.4,
                 gs_binary=gs_binary,
             )
         except GhostscriptError as e:

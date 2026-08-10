@@ -306,10 +306,21 @@ def test_second_build_of_same_input_hits_cache():
 
     persistent_root = REPO_ROOT / ".test-cas-cache"
     executor = DagExecutor(get_registry(), allow_stub_engines=True)
+    # `preflight`'s root input is deliberately withheld, which makes preflight
+    # (and `package` behind it) unreachable, so this probe stops at `finish`.
+    #
+    # Not a convenience: with no renderer installed, the stub `paginate` emits
+    # an HTML dump and stub `finish` passes it straight through, so the `pdf`
+    # artifact is not a PDF. Preflight measures the bytes now instead of
+    # restating the profile back at itself, so it correctly refuses to certify
+    # it -- a stub build is not press-ready, and the gate saying so is the point
+    # of the gate. Softening it to keep a cache probe green would put back
+    # exactly the blindness that made preflight pass nine checks on a blank
+    # page. What this test is about is the durable CAS root, and every stage it
+    # needs to prove that runs before the gate.
     initial_inputs = {
         "acquire": {"manifest_path": "corpus/manuscripts/minimal-novel.ast.json"},
         "design-compile": {"designspec_path": None},
-        "preflight": {"profile_name": "Generic 6x9"},
     }
 
     # The interface a durable cache requires -- a reusable, caller-supplied CAS

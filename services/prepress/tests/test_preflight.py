@@ -8,6 +8,7 @@ from publisher_prepress.preflight import (
     PreflightCheck, PreflightReport, run_preflight,
     check_trim_size, check_bleed, check_min_pages, check_max_pages,
     check_file_size, check_color_space, check_page_multiple,
+    _count_pages,
     check_embed_fonts, check_pdf_standard, check_resolution,
     _CHECKS,
 )
@@ -187,3 +188,46 @@ def test_preflight_report_serialization():
     assert d["status"] == "pass"
     assert len(d["checks"]) == 1
     assert d["checks"][0]["code"] == "test"
+
+
+# --- page counting ------------------------------------------------------
+#
+# The regression these cover: `_PAGE_RE` excluded a `/` after "Page", which
+# matches weasyprint's `/Type /Page /Parent` but never Ghostscript's
+# `/Type/Page/MediaBox`. Every press file probed as 0 pages, and a
+# `max(count, 1)` turned that into a confident "1 page" that min-pages then
+# passed. Both producers' spellings are asserted here so a future tightening
+# of the pattern cannot silently drop one again.
+
+def test_count_pages_reads_ghostscript_spelling():
+    raw = b"<</Type/Page/MediaBox [0 0 430 649]>>" * 168
+    assert _count_pages(raw) == 168
+
+
+def test_count_pages_reads_spaced_spelling():
+    raw = b"<< /Type /Page /Parent 3 0 R >>" * 7
+    assert _count_pages(raw) == 7
+
+
+def test_count_pages_does_not_count_the_page_tree_node():
+    raw = b"<</Type /Pages /Count 2>>" + b"<</Type/Page/MediaBox[0 0 1 1]>>" * 2
+    assert _count_pages(raw) == 2
+
+
+def test_count_pages_falls_back_to_the_page_tree_count():
+    """Page objects can live in compressed object streams; /Count survives."""
+    raw = b"<</Type /Pages /Kids[5 0 R]/Count 168>>"
+    assert _count_pages(raw) == 168
+
+
+def test_count_pages_is_none_when_unreadable():
+    """Not 1. A guessed page count is one the min/max checks pass on blindly."""
+    assert _count_pages(b"%PDF-1.7\nnothing useful here\n%%EOF") is None
+
+
+def test_page_checks_warn_rather_than_pass_on_an_unknown_count():
+    info = {"page_count": None}
+    profile = {"minPages": 24, "maxPages": 800, "pageSizeMultiple": 4}
+    assert check_min_pages(info, profile).status == "warn"
+    assert check_max_pages(info, profile).status == "warn"
+    assert check_page_multiple(info, profile).status == "warn"

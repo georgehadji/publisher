@@ -21,6 +21,7 @@ HTML renderer that could drift from what the integrity gate actually verified.
 
 from __future__ import annotations
 import json
+import re
 from pathlib import Path
 
 from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef
@@ -63,9 +64,141 @@ def _check_available() -> str | None:
     return None
 
 
+# Characters of body text that fit on one typeset page. Only ever used to
+# estimate extent when no renderer paginated the document; a real render
+# reports its own page count and this constant is not consulted.
+CHARS_PER_PAGE = 1800
+
+_CHAPTER_DIV = re.compile(
+    r'<div class="chapter" id="(?P<id>[^"]*)" data-number="(?P<number>[^"]*)">'
+)
+_TAG = re.compile(r"<[^>]+>")
+
+
+def _chapters_in_order(html_body: str) -> list[dict]:
+    """Chapter id/number/text-length triples, in document order.
+
+    Read back out of the rendered HTML rather than the AST because the HTML is
+    what the renderer actually paginates -- if `extract` ever stops emitting a
+    chapter, the pagemap should lose it too instead of describing a chapter
+    that is not in the PDF.
+    """
+    matches = list(_CHAPTER_DIV.finditer(html_body))
+    chapters: list[dict] = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(html_body)
+        text = _TAG.sub(" ", html_body[m.start():end])
+        try:
+            number = int(m.group("number"))
+        except ValueError:
+            number = i + 1
+        chapters.append(
+            {
+                "chapterId": m.group("id") or f"ch{i + 1}",
+                "number": number,
+                "textLength": len(" ".join(text.split())),
+            }
+        )
+    return chapters
+
+
+def _estimate_page_count(html_body: str) -> int:
+    """Approximate extent from text volume, for stub mode only."""
+    text = " ".join(_TAG.sub(" ", html_body).split())
+    return max(1, -(-len(text) // CHARS_PER_PAGE))
+
+
+def _chapter_start_pages(chapters: list[dict], rendered_pages) -> dict[str, int]:
+    """First page of each chapter, from the renderer's own anchor positions.
+
+    `extract` emits every chapter as `<div class="chapter" id="...">`, so each
+    chapter id becomes a named anchor that weasyprint records on whichever page
+    it laid the element out.
+    """
+    wanted = {c["chapterId"] for c in chapters}
+    starts: dict[str, int] = {}
+    for page_number, page in enumerate(rendered_pages, start=1):
+        for anchor in getattr(page, "anchors", {}) or {}:
+            if anchor in wanted and anchor not in starts:
+                starts[anchor] = page_number
+    return starts
+
+
+def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dict:
+    """Assemble a `pagemap/1` describing which chapter occupies which page.
+
+    With a real render this is measured. Without one it is apportioned by text
+    volume -- still an estimate, but one that at least tracks the manuscript
+    instead of claiming, as this stage used to, that a single chapter `ch1`
+    spans every page of every book.
+    """
+    if not chapters:
+        chapters = [{"chapterId": "ch1", "number": 1, "textLength": 1}]
+
+    if rendered_pages is not None:
+        starts_by_id = _chapter_start_pages(chapters, rendered_pages)
+    else:
+        total = sum(c["textLength"] for c in chapters) or 1
+        starts_by_id = {}
+        cursor = 0
+        for c in chapters:
+            starts_by_id[c["chapterId"]] = min(page_count, 1 + cursor * page_count // total)
+            cursor += c["textLength"]
+
+    # A chapter the renderer never placed (empty, or dropped in layout) inherits
+    # its predecessor's page rather than defaulting to page 1 out of order.
+    starts: list[int] = []
+    previous = 1
+    for c in chapters:
+        previous = max(previous, starts_by_id.get(c["chapterId"], previous))
+        starts.append(previous)
+
+    entries = []
+    for i, c in enumerate(chapters):
+        start = starts[i]
+        end = (starts[i + 1] - 1) if i + 1 < len(chapters) else page_count
+        end = max(start, min(end, page_count))
+        entries.append(
+            {
+                "chapterId": c["chapterId"],
+                "number": c["number"],
+                "startPage": start,
+                "endPage": end,
+                "pageCount": end - start + 1,
+            }
+        )
+
+    owner_of_page = {}
+    for e in entries:
+        for p in range(e["startPage"], e["endPage"] + 1):
+            owner_of_page.setdefault(p, e["chapterId"])
+    first_chapter = entries[0]["chapterId"]
+
+    width_pt, height_pt = 432.0, 648.0
+    if rendered_pages:
+        width_pt = float(getattr(rendered_pages[0], "width", width_pt))
+        height_pt = float(getattr(rendered_pages[0], "height", height_pt))
+
+    pages = [
+        {
+            "pageNumber": p,
+            "folio": p,
+            "side": "recto" if p % 2 == 1 else "verso",
+            "widthPt": width_pt,
+            "heightPt": height_pt,
+            # Pages before the first chapter are front matter; the schema still
+            # requires a chapterId, so they are attributed to chapter one.
+            "chapterId": owner_of_page.get(p, first_chapter),
+        }
+        for p in range(1, page_count + 1)
+    ]
+
+    return {"schema": "pagemap/1", "pages": pages, "chapters": entries}
+
+
 @stage(
     name="paginate",
-    version=2,
+    version=3,
     inputs={"doc_path": "doc-effective/1", "css_path": "text/css"},
     # NEITHER is a root input: `css_path`'s schema (text/css) is produced by
     # `design-compile`; `doc_path`'s (doc-effective/1) by `resolve`, which itself
@@ -103,14 +236,24 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
 
     full_html = PAGE_TEMPLATE.format(css=css, html=html_body)
 
+    chapters = _chapters_in_order(html_body)
+
     renderer = _check_available()
     pdf_bytes = None
+    rendered_pages = None
 
     if renderer == "weasyprint":
         try:
             import weasyprint
-            pdf_bytes = weasyprint.HTML(string=full_html).write_pdf()
-            print(f"  [paginate] Rendered PDF via weasyprint ({len(pdf_bytes)} bytes)")
+            # `.render()` before `.write_pdf()` so the laid-out document itself is
+            # available. It is the only authority on how many pages there are and
+            # where each chapter landed; counting tags in the *input* HTML cannot
+            # know either, because pagination is what the renderer decides.
+            document = weasyprint.HTML(string=full_html).render()
+            pdf_bytes = document.write_pdf()
+            rendered_pages = document.pages
+            print(f"  [paginate] Rendered PDF via weasyprint "
+                  f"({len(pdf_bytes)} bytes, {len(rendered_pages)} pages)")
         except Exception as e:
             print(f"  [paginate] weasyprint failed: {e}")
 
@@ -129,14 +272,14 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
                         "substitute an unpaginated HTML dump for a PDF.",
             )
         pdf_bytes = full_html.encode("utf-8")
-        page_count = full_html.count('<div class="chapter') + full_html.count("</div>\n") // 20 + 1
+        page_count = _estimate_page_count(html_body)
         print(f"  [paginate] STUB MODE (allow_stub_engines=True): no renderer available, "
               f"producing an HTML report instead of a real PDF")
-    else:
-        # weasyprint reports actual page count via its own layout, which we don't
-        # currently introspect; approximate the same way as the stub path pending
-        # real pagemap extraction from the renderer.
-        page_count = full_html.count('<div class="chapter') + full_html.count("</div>\n") // 20 + 1
+        print(f"  [paginate] page_count is a text-volume ESTIMATE ({page_count}), not a "
+              f"layout result -- no renderer paginated this document")
+
+    if rendered_pages is not None:
+        page_count = len(rendered_pages)
 
     cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))
@@ -144,17 +287,7 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
     media_type = MediaType.APPLICATION_PDF if renderer and pdf_bytes[:4] == b"%PDF" else MediaType.TEXT_HTML
     ref = cas.put(pdf_bytes, media_type=media_type)
 
-    pagemap = {
-        "schema": "pagemap/1",
-        "pages": [
-            {"pageNumber": i + 1, "folio": i + 1, "side": "recto" if (i + 1) % 2 == 1 else "verso",
-             "widthPt": 432, "heightPt": 648, "chapterId": "ch1"}
-            for i in range(page_count)
-        ],
-        "chapters": [
-            {"chapterId": "ch1", "number": 1, "startPage": 1, "endPage": page_count, "pageCount": page_count}
-        ],
-    }
+    pagemap = _build_pagemap(chapters, page_count, rendered_pages)
     pagemap_bytes = json.dumps(pagemap, indent=2).encode("utf-8")
     pm_ref = cas.put(pagemap_bytes, media_type=MediaType("application/json"))
 
@@ -177,6 +310,11 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
         ],
         metrics={
             "page_count": page_count,
+            # Whether `page_count` was measured from a laid-out document or
+            # merely estimated from text volume. Anything that prices a spine
+            # or a print run off page_count must refuse the estimated variety.
+            "page_count_measured": 1.0 if rendered_pages is not None else 0.0,
+            "chapter_count": float(len(chapters)),
             "output_size_bytes": len(pdf_bytes),
             "renderer_type": 1.0 if renderer else 0.0,
             "stub_engine": 0.0 if renderer else 1.0,

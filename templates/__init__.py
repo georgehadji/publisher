@@ -400,8 +400,94 @@ REFERENCE = {
 
 # ── Registry ─────────────────────────────────────────────────────
 
+# ── Greek trade sizes ───────────────────────────────────────────
+#
+# Written as a factory rather than four more literal dicts: these differ only in
+# trim and margins, and the eight presets above already show what four more
+# copies of the same forty lines would cost the next person to change a default.
+#
+# Leading is 14.173pt on all four -- 5.00mm exactly (14.173 / 72 * 25.4). Greek
+# houses set the baseline grid in whole millimetres, so the grid's
+# baselineIncrement matches it and every line sits on a 5mm rule.
+#
+# Pair each with the same-named profile in profiles/greek/standard-sizes.yaml.
+# The profile is what `design-compile` and `finish` actually read for page
+# geometry and bleed; `trimSize` here must agree with it, and is kept so the
+# preset stands on its own when listed.
+
+GREEK_LEADING_PT = 14.173   # 5.00 mm
+
+
+def _greek_preset(name: str, width: float, height: float, margins: dict) -> dict:
+    return {
+        "schema": "designspec/1",
+        "name": name,
+        "preferredEngine": "chrome-pagedjs",
+        "trimSize": {"width": width, "height": height, "unit": "mm"},
+        "typography": {
+            "bodyFont": {"family": "EB Garamond"},
+            "headingFont": {"family": "EB Garamond"},
+            "bodySize": 10.5,
+            "leading": GREEK_LEADING_PT,
+            "scaleRatio": 1.25,
+            "measure": 66,
+            "bodyAlignment": "justified",
+            "paragraphIndent": 1.5,
+            "opticalMargins": True,
+        },
+        "grid": {"type": "single", "baselineIncrement": GREEK_LEADING_PT},
+        "margins": margins,
+        "folio": {
+            "position": "bottom-center",
+            "style": "arabic",
+            "suppressOn": ["chapter-opening"],
+            "startNumber": 1,
+        },
+        "runningHeads": {
+            "rectoSource": "chapter-title",
+            "versoSource": "book-title",
+            "style": "centered",
+        },
+        "chapterOpenings": {
+            "startsOn": "recto",
+            "dropCap": False,
+            "dropCapLines": 3,
+            "titleTreatment": "centered",
+            "firstParagraphStyle": "no-indent",
+        },
+        "fonts": [
+            {"family": "EB Garamond", "style": "regular", "source": "bundled_ofl"},
+            {"family": "EB Garamond", "style": "italic", "source": "bundled_ofl"},
+            {"family": "EB Garamond", "style": "bold", "source": "bundled_ofl"},
+        ],
+        "colors": {"text": "#000000", "paper": "#FFFFFF"},
+    }
+
+
+GREEK_17X24 = _greek_preset(
+    "Greek 17x24", 170.0, 240.0,
+    {"top": 20, "bottom": 22, "inside": 18, "outside": 22},
+)
+GREEK_14X21 = _greek_preset(
+    "Greek 14x21", 140.0, 210.0,
+    {"top": 18, "bottom": 20, "inside": 15, "outside": 20},
+)
+GREEK_12X17 = _greek_preset(
+    "Greek 12x17", 120.0, 170.0,
+    {"top": 15, "bottom": 17, "inside": 13, "outside": 16},
+)
+GREEK_21X29 = _greek_preset(
+    "Greek 21x29", 210.0, 290.0,
+    {"top": 22, "bottom": 25, "inside": 20, "outside": 25},
+)
+
+
 TEMPLATES = {
     "literary": LITERARY,
+    "greek-17x24": GREEK_17X24,
+    "greek-14x21": GREEK_14X21,
+    "greek-12x17": GREEK_12X17,
+    "greek-21x29": GREEK_21X29,
     "thriller": THRILLER,
     "memoir": MEMOIR,
     "academic": ACADEMIC,

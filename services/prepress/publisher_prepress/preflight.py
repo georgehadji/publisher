@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -134,14 +135,30 @@ def check_trim_size(pdf_info: dict, profile: dict) -> PreflightCheck:
             policyUrl="https://kdp.amazon.com/en_US/help/topic/G201834340"
         )
 
-    return _pass("trim-size", f"Trim size {exp_w:.1f}x{exp_h:.1f} mm OK")
+    # Report what was measured, not what was required. Printing `exp_w`/`exp_h`
+    # here made a pass line that read identically whether the probe had measured
+    # the page or not -- the same shape of self-confirmation the constants in
+    # `pdf_info` used to be.
+    return _pass(
+        "trim-size",
+        f"Trim size {pdf_w:.1f}x{pdf_h:.1f} mm OK "
+        f"(profile {exp_w:.1f}x{exp_h:.1f} mm, tolerance 0.5 mm)",
+    )
 
 
 @preflight_check("bleed")
 def check_bleed(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify PDF has adequate bleed for the profile."""
     expected_bleed = profile.get("bleed", {}).get("all", 3.0)
-    pdf_bleed = pdf_info.get("bleed_mm", 0)
+    pdf_bleed = pdf_info.get("bleed_mm")
+
+    if pdf_bleed is None:
+        return _warn(
+            "bleed",
+            "Could not determine bleed: the PDF declares no TrimBox/MediaBox pair",
+            suggestedFix="Emit a TrimBox so bleed can be measured against the profile",
+            expected={"bleed_mm": expected_bleed},
+        )
 
     if pdf_bleed < expected_bleed - 0.1:
         return _fail(
@@ -157,8 +174,16 @@ def check_bleed(pdf_info: dict, profile: dict) -> PreflightCheck:
 @preflight_check("min-pages")
 def check_min_pages(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify page count meets vendor minimum."""
-    page_count = pdf_info.get("page_count", 0)
+    page_count = pdf_info.get("page_count")
     min_pages = profile.get("minPages", 1)
+
+    if page_count is None:
+        return _warn(
+            "min-pages",
+            "Page count could not be read from the PDF",
+            suggestedFix="Check the file with a PDF-aware probe before printing",
+            value=None, expected=min_pages,
+        )
 
     if page_count < min_pages:
         return _fail(
@@ -174,8 +199,16 @@ def check_min_pages(pdf_info: dict, profile: dict) -> PreflightCheck:
 @preflight_check("max-pages")
 def check_max_pages(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify page count does not exceed vendor maximum."""
-    page_count = pdf_info.get("page_count", 0)
+    page_count = pdf_info.get("page_count")
     max_pages = profile.get("maxPages", 2000)
+
+    if page_count is None:
+        return _warn(
+            "max-pages",
+            "Page count could not be read from the PDF",
+            suggestedFix="Check the file with a PDF-aware probe before printing",
+            value=None, expected=max_pages,
+        )
 
     if page_count > max_pages:
         return _fail(
@@ -191,8 +224,16 @@ def check_max_pages(pdf_info: dict, profile: dict) -> PreflightCheck:
 @preflight_check("page-multiple")
 def check_page_multiple(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify page count is a valid multiple (e.g. 4 for KDP)."""
-    page_count = pdf_info.get("page_count", 0)
+    page_count = pdf_info.get("page_count")
     multiple = profile.get("pageSizeMultiple", 4)
+
+    if page_count is None:
+        return _warn(
+            "page-multiple",
+            "Page count could not be read from the PDF",
+            suggestedFix="Check the file with a PDF-aware probe before printing",
+            value=None, expected=f"multiple of {multiple}",
+        )
 
     if page_count % multiple != 0:
         # Parity pad handles this in the pipeline, but check anyway
@@ -227,7 +268,18 @@ def check_color_space(pdf_info: dict, profile: dict) -> PreflightCheck:
 def check_resolution(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify image resolution meets minimum DPI."""
     min_dpi = profile.get("proofSpec", {}).get("dpi", 300)
-    pdf_dpi = pdf_info.get("effective_dpi", 300)
+    pdf_dpi = pdf_info.get("effective_dpi")
+
+    if pdf_dpi is None:
+        # Byte scanning cannot decode image streams. Saying so is the honest
+        # result; the previous hard-coded 300 silently passed this check for
+        # every book, including one full of 72-DPI screenshots.
+        return _warn(
+            "resolution",
+            "Effective image resolution not measured (no PDF image decoder available)",
+            suggestedFix="Install PyMuPDF in the worker image to enable DPI checking",
+            expected=min_dpi,
+        )
 
     if pdf_dpi < min_dpi:
         return _warn(
@@ -329,21 +381,23 @@ def run_preflight(pdf_path: str | Path, profile: dict,
             checks=[_fail("file-not-found", f"PDF not found: {pdf_path}")],
         )
 
-    # Extract PDF info (simple: file size, page count from filename convention or metadata)
-    file_size = pdf_path.stat().st_size
+    pdf_info = probe_pdf(pdf_path)
 
-    # Build PDF info dict — in production this uses pdfprobe (Rust/PyMuPDF)
-    pdf_info = {
-        "file_size_bytes": file_size,
-        "page_count": _estimate_page_count(pdf_path),
-        "color_space": "cmyk",  # assumed for now; real check uses PyMuPDF
-        "width_mm": profile.get("trimSize", {}).get("width", 152.4),
-        "height_mm": profile.get("trimSize", {}).get("height", 228.6),
-        "bleed_mm": profile.get("bleed", {}).get("all", 3.0),
-        "effective_dpi": 300,
-        "fonts": [],
-        "pdf_standard": "none",
-    }
+    # A file that is not a PDF cannot be preflighted, and must never collect a
+    # row of passes because each individual check found its field absent.
+    if not pdf_info["is_pdf"]:
+        return PreflightReport(
+            status="fail",
+            profileId=profile.get("name"),
+            checks=[_fail(
+                "file-format",
+                f"{pdf_path.name} is not a PDF (no %PDF- header)",
+                suggestedFix="Check that the finish stage produced a real PDF.",
+            )],
+            summary={"passed": 0, "failed": 1, "warnings": 0, "policyViolations": 1},
+            profileVersion=profile.get("vendorProfileVersion"),
+            createdAt=created_at,
+        )
 
     checks = []
     for code, check_fn in sorted(_CHECKS.items()):
@@ -381,16 +435,131 @@ def run_preflight(pdf_path: str | Path, profile: dict,
     )
 
 
-def _estimate_page_count(pdf_path: Path) -> int:
-    """Estimate page count from a PDF file.
-    
-    In production, uses pdfprobe (Rust) or PyMuPDF.
-    For the tracer bullet, counts '\\n/Type /Page' occurrences in the raw PDF.
+_PT_PER_MM = 72.0 / 25.4
+
+_BOX_RE = {
+    "media": re.compile(rb"/MediaBox\s*\[\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)"),
+    "trim": re.compile(rb"/TrimBox\s*\[\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)"),
+}
+# `(?![s\w])` excludes `/Pages` (the page-tree node) while still matching the
+# `/Type/Page/MediaBox` that Ghostscript emits. An earlier version also excluded
+# a following `/`, which meant it matched weasyprint's spaced-out `/Type /Page`
+# but not a single page of any Ghostscript output: the 168-page press file
+# probed as 0 pages, and `max(..., 1)` quietly rounded that up to 1, so
+# min-pages passed on a book the probe could not see.
+_PAGE_RE = re.compile(rb"/Type\s*/Page(?![s\w])")
+# The page tree's own tally. Preferred over counting page objects because it is
+# one number written by the producer rather than a sum over a byte scan.
+_PAGE_COUNT_RE = re.compile(rb"/Type\s*/Pages\b[^>]{0,400}?/Count\s+(\d+)", re.DOTALL)
+_COUNT_RE = re.compile(rb"/Count\s+(\d+)")
+_BASEFONT_RE = re.compile(rb"/BaseFont\s*/([#\w+-]+)")
+_FONTFILE_RE = re.compile(rb"/FontFile[23]?\b")
+
+
+def _count_pages(raw: bytes) -> int | None:
+    """Number of pages, or None when the byte stream does not reveal it.
+
+    None rather than a fallback of 1: a page count is the input to the
+    min/max/multiple checks and to spine width downstream, so guessing here
+    means those checks pass on a number nobody measured.
     """
-    try:
-        raw = pdf_path.read_bytes()
-        # Simple heuristic: count /Page entries in the PDF structure
-        count = raw.count(b"/Type /Page") - raw.count(b"/Type /Pages")
-        return max(count, 1)
-    except Exception:
-        return 1
+    objects = len(_PAGE_RE.findall(raw))
+    if objects:
+        return objects
+
+    # No page objects in plaintext -- the file may store them in compressed
+    # object streams. The page tree's /Count usually survives; take the largest
+    # (nested /Pages nodes each carry their own subtree tally).
+    counts = [int(m) for m in _COUNT_RE.findall(raw)] if _PAGE_COUNT_RE.search(raw) else []
+    if counts:
+        return max(counts)
+
+    return None
+
+
+def _box(raw: bytes, which: str) -> tuple[float, float, float, float] | None:
+    m = _BOX_RE[which].search(raw)
+    if not m:
+        return None
+    x0, y0, x1, y1 = (float(v) for v in m.groups())
+    return x0, y0, x1, y1
+
+
+def probe_pdf(pdf_path: Path) -> dict:
+    """Measure the facts preflight checks against, from the PDF itself.
+
+    This function exists because `pdf_info` used to be a dict of constants:
+    `pdf_standard` was hard-coded "none", `color_space` "cmyk", `effective_dpi`
+    300, `fonts` empty, and -- worst -- `width_mm`/`height_mm`/`bleed_mm` were
+    copied straight out of the vendor profile the checks then compared them to.
+    Trim-size and bleed therefore compared the profile with itself and could not
+    fail; embed-fonts passed vacuously over an empty list. The gate reported
+    nine passes on any input whatsoever, including a blank page.
+
+    Values that genuinely cannot be read from the byte stream are reported as
+    `None` so their checks can say "unknown" rather than assert a flattering
+    default.
+    """
+    raw = pdf_path.read_bytes()
+
+    is_pdf = raw[:5] == b"%PDF-"
+    has_pdfx = b"/GTS_PDFX" in raw and b"/OutputIntent" in raw
+
+    media = _box(raw, "media")
+    trim = _box(raw, "trim") or media
+
+    width_mm = height_mm = None
+    if trim:
+        width_mm = round(abs(trim[2] - trim[0]) / _PT_PER_MM, 2)
+        height_mm = round(abs(trim[3] - trim[1]) / _PT_PER_MM, 2)
+
+    # Bleed is the margin the media box extends beyond the trim box, per side.
+    bleed_mm = None
+    if media and trim:
+        bleed_mm = round(
+            min(
+                abs(trim[0] - media[0]),
+                abs(trim[1] - media[1]),
+                abs(media[2] - trim[2]),
+                abs(media[3] - trim[3]),
+            )
+            / _PT_PER_MM,
+            2,
+        )
+
+    has_cmyk = b"/DeviceCMYK" in raw
+    has_rgb = b"/DeviceRGB" in raw
+    if has_cmyk and has_rgb:
+        color_space = "mixed"
+    elif has_cmyk:
+        color_space = "cmyk"
+    elif has_rgb:
+        color_space = "rgb"
+    else:
+        color_space = "unknown"
+
+    # Font objects and embedded font programs are counted, not paired: matching
+    # each /BaseFont to its own /FontFile needs real object-graph parsing. If
+    # every font object has an accompanying font program the set is embedded;
+    # otherwise report the shortfall rather than guessing which one is missing.
+    font_names = sorted({m.group(1).decode("latin-1") for m in _BASEFONT_RE.finditer(raw)})
+    embedded_count = len(_FONTFILE_RE.findall(raw))
+    fonts = [
+        {"name": name, "embedded": i < embedded_count}
+        for i, name in enumerate(font_names)
+    ]
+
+    return {
+        "is_pdf": is_pdf,
+        "file_size_bytes": pdf_path.stat().st_size,
+        "page_count": _count_pages(raw),
+        "color_space": color_space,
+        "width_mm": width_mm,
+        "height_mm": height_mm,
+        "bleed_mm": bleed_mm,
+        # Raster resolution needs image-stream decoding, which byte scanning
+        # cannot do. Unknown, and reported as such.
+        "effective_dpi": None,
+        "fonts": fonts,
+        "pdf_standard": "pdfx-1a" if has_pdfx else "none",
+    }

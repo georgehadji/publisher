@@ -12,12 +12,31 @@ from pathlib import Path
 from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 from publisher_prepress.fontvault import FontLicenseViolation, validate_font_use
+from profiles import load_profile
 
 
-def _emit_css(designspec: dict) -> str:
+def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     """Emit CSS @page rules and typographic styles from a DesignSpec.
-    
+
     This implements a subset of the CSS Paged Media output from ARCHITECTURE.md §2.7.
+
+    `bleed_mm` is emitted as the CSS Paged Media `bleed` property rather than
+    being added to `size` by hand. The renderer, not this function, then owns
+    the box arithmetic: weasyprint keeps the page box at trim (so margins and
+    the type area do not move), grows MediaBox/BleedBox outward by the bleed,
+    and writes a TrimBox at the trim edge.
+
+    Doing it by hand -- `size: trim + 2*bleed` with padded margins -- lays out
+    the right geometry but leaves TrimBox == BleedBox == MediaBox in the output,
+    because weasyprint writes all three from the page box. Ghostscript then
+    ignores `PDFXTrimBoxToMediaBoxOffset` (those apply only to boxes the input
+    lacks), fails its own TrimBox-fits-inside-BleedBox test on three identical
+    non-integral rectangles, and abandons PDF/X. The bleed has to be declared
+    where the renderer can see it.
+
+    A page laid out at exactly trim -- what this emitted before -- cannot carry
+    bleed at all, however much the vendor profile asks for. Preflight measured
+    0.00mm against a profile demanding 3.00mm and was right to fail.
     """
     typography = designspec.get("typography", {})
     grid = designspec.get("grid", {})
@@ -55,7 +74,10 @@ def _emit_css(designspec: dict) -> str:
         "/* Auto-generated from DesignSpec -- emit_css() */",
         "",
         "@page {",
-        f"  size: {w_mm}mm {h_mm}mm;",
+        f"  size: {w_mm:g}mm {h_mm:g}mm;",
+        # Emitted only when there is bleed to declare, so a no-bleed profile's
+        # stylesheet is byte-identical to what it was before bleed existed.
+        *([f"  bleed: {bleed_mm:g}mm;"] if bleed_mm > 0 else []),
         f"  margin-top: {top}mm;",
         f"  margin-bottom: {bottom}mm;",
         f"  margin-left: {inside}mm;",
@@ -324,17 +346,28 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
 
 @stage(
     name="design-compile",
-    version=1,
-    inputs={"designspec_path": "designspec/1"},
+    # v2: page geometry now comes from the vendor profile, and the emitted
+    # @page box carries the profile's bleed. Every v1 stylesheet was laid out at
+    # exactly trim, so none may be replayed for a profile that requires bleed.
+    # v3: bleed is declared with the CSS `bleed` property instead of being added
+    # to `size`. A v2 stylesheet renders a trim+2*bleed page whose TrimBox sits
+    # on its MediaBox -- geometrically plausible, and rejected by Ghostscript.
+    version=3,
+    inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
-    root_inputs=["designspec_path"],
+    # `profile_name` is optional so that a build which omits it still renders --
+    # at trim, with no bleed. That is not a silent downgrade: preflight measures
+    # the bleed and fails the build against any profile that requires some.
+    root_inputs=["designspec_path", "profile_name"],
+    optional_root_inputs=["profile_name"],
     toolchain=[],
     fixtures="fixtures/design-compile/v1",
     memory_budget_mb=64,
     queue="q.composition",
     description="Compile DesignSpec -> CSS for Paged.js rendering",
 )
-def design_compile(ctx: StageCtx, designspec_path: str | None = None) -> StageResult:
+def design_compile(ctx: StageCtx, designspec_path: str | None = None,
+                   profile_name: str | None = None) -> StageResult:
     """
     Emit CSS from a DesignSpec.
     Uses a built-in default DesignSpec for the tracer bullet.
@@ -373,7 +406,29 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None) -> StageRe
         except FontLicenseViolation as exc:
             raise StageError(kind=ErrorKind.POLICY_VIOLATION, message=str(exc))
 
-    css = _emit_css(spec)
+    # Page geometry is the vendor profile's to decide, not the DesignSpec's.
+    # They used to be declared independently and never reconciled: the built-in
+    # spec said 152x229mm while "Generic 6x9" says 152.4x228.6mm, so the renderer
+    # laid out one page size and preflight measured it against another. That
+    # passed only because the disagreement (0.4mm) happened to sit inside
+    # check_trim_size's 0.5mm tolerance. The DesignSpec keeps typography; the
+    # profile owns trim and bleed.
+    bleed_mm = 0.0
+    if profile_name:
+        profile = load_profile(profile_name)
+        if profile is None:
+            raise StageError(
+                kind=ErrorKind.BAD_INPUT,
+                message=f"Unknown vendor profile: {profile_name!r}. "
+                        f"Profiles are loaded from profiles/*/*.yaml by their "
+                        f"`name:` field.",
+            )
+        trim = profile.get("trimSize") or {}
+        if trim.get("width") and trim.get("height"):
+            spec = {**spec, "trimSize": trim}
+        bleed_mm = float((profile.get("bleed") or {}).get("all", 0.0))
+
+    css = _emit_css(spec, bleed_mm=bleed_mm)
     css_bytes = css.encode("utf-8")
     
     cas_root = Path(ctx.cas_root)
