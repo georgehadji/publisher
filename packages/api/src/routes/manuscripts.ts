@@ -8,7 +8,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, open, rename, unlink } from 'node:fs/promises';
+import { access, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
@@ -112,7 +112,6 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
         // tenant's manuscript nowhere in the store.
         if (err?.code === 'EEXIST' || err?.code === 'EPERM') {
           try {
-            const { access } = await import('node:fs/promises');
             await access(dest);
           } catch {
             throw err;

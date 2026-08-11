@@ -6,6 +6,7 @@
  * is down.
  */
 import type { FastifyInstance } from 'fastify';
+import { access } from 'node:fs/promises';
 import { CAS_ROOT, pool } from '../db.js';
 
 export async function registerHealth(server: FastifyInstance): Promise<void> {
@@ -23,7 +24,6 @@ export async function registerHealth(server: FastifyInstance): Promise<void> {
     }
 
     try {
-      const { access } = await import('node:fs/promises');
       await access(CAS_ROOT);
       checks.cas = 'ok';
     } catch {
