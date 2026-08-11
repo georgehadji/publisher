@@ -60,7 +60,12 @@ services:
       # Read-only: the API reads blobs, it never produces them.
       PUBLISHER_CAS_ROOT: /data/cas
     volumes:
-      - cas-data:/data/cas:ro
+      # U2: the API now WRITES to CAS -- the upload route streams manuscript
+      # bytes into it (PUT /v1/manuscripts/:id/upload). The :ro this volume had
+      # predates that route; it made every upload 500 with ENOENT on
+      # .upload-tmp. Reads are still the common path, but the API is a CAS
+      # producer now.
+      - cas-data:/data/cas
     ports:
       - "4000:4000"
     restart: unless-stopped

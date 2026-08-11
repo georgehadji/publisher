@@ -227,7 +227,12 @@ def test_health_degraded_when_postgres_down(api_server):
     })
     try:
         # Wait for the server to boot by hitting the health route itself.
-        deadline = time.monotonic() + 20
+        # Generous deadline: on this Windows host the SECOND concurrent tsx
+        # instance is ~5x slower to boot than the first (real-time AV scans
+        # every .ts; the module api_server fixture is already running, so this
+        # spawned process is instance #2 -- measured 86s here). The mechanism
+        # under test is the health response, not boot speed; 20s was flaky.
+        deadline = time.monotonic() + 120
         body: dict = {}
         while time.monotonic() < deadline:
             try:
@@ -302,9 +307,16 @@ def test_sse_pushes_notified_events(api_server, db, make_docx):
         lines: list[str] = []
 
         def _reader() -> None:
-            for raw in stream.iter_lines():
-                if raw:
-                    lines.append(raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw)
+            try:
+                for raw in stream.iter_lines():
+                    if raw:
+                        lines.append(raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw)
+            except Exception:
+                # The server closes the stream on terminal state (or the 30 s
+                # keep-alive cap); iter_lines then raises on the closed socket.
+                # The assertions below have already read what they need by then
+                # -- this thread exists only to drain, never to fail the test.
+                pass
 
         reader = threading.Thread(target=_reader, daemon=True)
         reader.start()

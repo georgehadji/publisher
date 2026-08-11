@@ -254,12 +254,21 @@ def _initial_inputs_for(conn, build: dict) -> dict:
 
     profile_name = _resolve_profile_name(build)
 
+    # Root inputs are keyed by STAGE NAME (the executor resolves
+    # initial_inputs.get(decl.name)), and "finish" is a step with two
+    # implementations -- the selected one is `finish-gs`. Keying by the bare
+    # step name made `finish-gs` unreachable (its profile root input never
+    # supplied), which silently dropped `preflight` and `package` from the
+    # DAG: the build reported `completed` with no preflight verdict and no
+    # package -- the second hard gate, bypassed. Resolve the selected name.
+    finish_stage = get_registry().selected_implementation("finish")
+
     return {
         "ingest": {"docx_path": str(cas_path)},
         # The same profile drives all three: design-compile grows the page box by
         # its bleed, finish insets the TrimBox by it, preflight measures it.
         "design-compile": {"designspec_path": None, "profile_name": profile_name},
-        "finish": {"profile_name": profile_name},
+        finish_stage: {"profile_name": profile_name},
         "preflight": {"profile_name": profile_name},
     }
 
@@ -371,6 +380,23 @@ def run_build(conn, build: dict) -> None:
             cache_store=cache_store,
             on_stage_complete=_on_stage,
         )
+        # HARD GATE (BUILD_PLAN.md F2.3): `package` declares `preflight_report`
+        # as a required input, so the DAG makes it structurally impossible to
+        # reach `package` without a preflight verdict. But reachability is a
+        # derived property -- a caller bug (e.g. a root-input keyed by step
+        # name instead of the selected stage name) can silently drop the tail
+        # of the DAG. The tracer bullet guards this; the worker must too: a
+        # build without the terminal `package` stage is NOT completed, and
+        # certifying it would be the exact silent-gate-bypass the plan bans.
+        if "package" not in results:
+            raise StageError(
+                kind=ErrorKind.ENGINE_BUG,
+                message=(
+                    f"terminal stage 'package' did not execute "
+                    f"({len(results)} stages ran) -- refusing to certify "
+                    "a build without a preflight verdict and package report"
+                ),
+            )
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE builds SET status = 'completed', completed_at = now() WHERE id = %s",

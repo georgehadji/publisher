@@ -278,3 +278,58 @@ Stage 1 (U1–U4) is **done.** The system is now at the 8.0 band — zero CRITIC
 HIGH violations open against the audit's rubric. Stage 2 (U5 API hardening, U6 boundary
 hygiene, U7 observability, → 8.5) is the next sequential band per the plan's dependency
 graph.
+
+---
+
+## 9. Post-commit verification addendum (2026-08-11, compose stack live)
+
+Stage 2 verification against the real compose stack (Postgres + rebuilt worker + API)
+found and fixed **one CRITICAL defect in the Stage 1/2 code as committed in 22a6ccd**:
+
+### 9.1 Hard-gate bypass: `finish-gs` unreachable ⇒ `preflight`/`package` silently dropped
+
+**Symptom:** with the rebuilt worker (real engines), a build reached `status='completed'`
+after only **6 stages** (ingest … paginate). `finish-gs`, `preflight`, and `package` never
+ran; no `preflight/1` artifact existed. The second hard gate (a build cannot be packaged
+without a preflight verdict) was bypassed **silently** — exactly the failure class
+BUILD_PLAN.md F2.3 exists to forbid.
+
+**Root cause:** the executor resolves root inputs by **stage name**
+(`initial_inputs.get(decl.name)`). `finish` is a step with two implementations; the
+registry selects `finish-gs` (stages/__init__.py:47). But both callers —
+`worker.py::_initial_inputs_for` and `tracer_bullet.py` — supplied the profile under the
+key `"finish"` (the step name), so `finish-gs` never received its `profile_name` root
+input, was unreachable, and the DAG tail collapsed.
+
+**Why the old compose image masked it:** the pre-uplift image lacked the `_is_active`
+selection filter (added in 22a6ccd as the audit's selection-blindness fix). Without it,
+the *deselected* `finish` stage still ran, so the pipeline happened to complete — with
+the wrong implementation. The audit's `_is_active` fix was correct and exposed this
+latent key mismatch.
+
+**Fix (committed after 22a6ccd):**
+- `worker.py::_initial_inputs_for` and `tracer_bullet.py`: key the finish profile by
+  `get_registry().selected_implementation("finish")` → `finish-gs`, with a comment.
+- `worker.py::run_build`: **new hard-gate guard** — if `"package" not in results`, raise
+  `StageError(ENGINE_BUG)` instead of certifying `completed`. The tracer already had this
+  guard; the worker now mirrors it, so a future caller bug drops the DAG tail loudly
+  (`status='failed'`, `error_kind='engine_bug'`) rather than silently passing.
+
+**Verification:** tracer bullet now runs the full 9-stage order
+(… paginate → finish-gs → preflight → package) and preflight honestly refuses the stub
+paginate output (not a PDF). E2E through the compose stack: upload → build →
+`completed` with all 9 stages, `pdfx/1` artifact present, real `%PDF-1.3` bytes download
+at `/v1/builds/:id/artifacts/pdf/download`. Integration suite: 20 passed / 1 skipped
+(SIGTERM, posix-only) / 1 documented pre-existing host-conditional failure
+(`test_build_request_produces_a_real_artifact` — needs `gs` on PATH or a shared CAS
+between the test harness and the compose worker; the audit §5.2 already records this as
+the baseline single failure on this host).
+
+### 9.2 Other findings fixed during the same verification pass
+
+| Finding | Severity | Fix |
+|---|---|---|
+| SSE route: `LISTEN build_${id}` — unquoted identifier, `-` in build id ⇒ Postgres syntax error ⇒ client got an empty stream (no `connected` event) | HIGH (U5/S11 code defect) | `routes/builds.ts`: `LISTEN "…"` with quote-doubling |
+| API container CAS mount was `:ro`; the U2 upload route writes to CAS ⇒ every upload 500'd with ENOENT on `.upload-tmp` | HIGH (U2 deployment) | `docker-compose.yml`: `cas-data:/data/cas` writable |
+| `test_health_degraded_when_postgres_down` spawned a 2nd tsx instance; on this Windows host the 2nd instance boots ~86 s (AV scanning), test allowed 20 s ⇒ flaky | LOW (test) | boot deadline 20 s → 120 s with explanatory comment |
+| SSE test reader thread raised on socket close after assertions ⇒ PytestUnhandledThreadExceptionWarning | LOW (test) | drain thread swallows post-assertion socket errors |

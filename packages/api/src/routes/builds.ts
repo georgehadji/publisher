@@ -142,7 +142,12 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
             void close();
           }
         });
-        await held.query(`LISTEN ${channel}`);
+        // LISTEN takes an identifier, and the channel name embeds the build id
+        // (`build_build-<base64url>`), whose `-` is a syntax error unquoted --
+        // the worker NOTIFYs via parameterized pg_notify (no such problem),
+        // but this side must quote. SAFE_ID already excludes `"`, so the
+        // doubling is belt-and-braces against a future id-shape change.
+        await held.query(`LISTEN "${channel.replace(/"/g, '""')}"`);
 
         // The handler returns after setting up the subscription; hijack so
         // Fastify does not finalize the response when it does (the standard

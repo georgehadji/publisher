@@ -377,6 +377,13 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
     print("=" * 60)
     print()
 
+    # Root inputs are keyed by STAGE NAME (executor resolves
+    # initial_inputs.get(decl.name)); "finish" is a step whose selected
+    # implementation is `finish-gs`, not the bare step name -- keying by
+    # "finish" left it unreachable and dropped preflight/package (hard-gate
+    # bypass; see worker.py _initial_inputs_for for the full story).
+    finish_stage = registry.selected_implementation("finish")
+
     # Only provide root inputs for stages whose declared inputs
     # are not produced by any other stage.
     initial_inputs = {
@@ -388,7 +395,7 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
         # the TrimBox by the same amount, preflight measures the result. Give two
         # of them different profiles and the third will correctly fail the build.
         "design-compile": {"designspec_path": None, "profile_name": profile},
-        "finish": {"profile_name": profile},
+        finish_stage: {"profile_name": profile},
         "preflight": {"profile_name": profile},
     }
 
