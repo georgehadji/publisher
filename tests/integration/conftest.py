@@ -212,6 +212,34 @@ def _headers(idem: str) -> dict:
     return {"Authorization": f"Bearer {TOKEN}", "Idempotency-Key": f"{RUN_ID}-{idem}"}
 
 
+def create_uploaded_manuscript(base_url: str, make_docx, heading: str, body: str,
+                              *, tag: str = "ms") -> tuple[str, bytes]:
+    """Create a title + manuscript through the API and upload a real DOCX to it.
+
+    Returns (manuscriptId, docx bytes) so callers can assert on the stored bytes
+    as well as the id. `tag` scopes the Idempotency-Keys (which persist in
+    Postgres across runs) so a second call in the same test process does not
+    replay the first call's cached response.
+    """
+    title = requests.post(
+        f"{base_url}/v1/titles", json={"title": f"{tag} fixture"}, headers=_headers(f"{tag}t")
+    ).json()
+    manuscript = requests.post(
+        f"{base_url}/v1/titles/{title['id']}/manuscripts", json={}, headers=_headers(f"{tag}m")
+    ).json()
+    docx = make_docx(heading, body)
+    upload = requests.put(
+        f"{base_url}{manuscript['uploadUrl']}",
+        data=docx,
+        headers={
+            **{k: v for k, v in _headers(f"{tag}u").items()},
+            "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+    )
+    assert upload.status_code == 201, f"upload failed: {upload.status_code} {upload.text}"
+    return manuscript["manuscriptId"], docx
+
+
 @pytest.fixture(scope="module")
 def api_server():
     """

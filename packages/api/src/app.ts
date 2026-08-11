@@ -61,8 +61,18 @@ async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   server.log.info({ signal }, 'shutting down');
+  // N6 fix: server.close() waits for in-flight requests to finish, and a stuck
+  // connection (e.g. an SSE client that never closes) could otherwise hold the
+  // process open forever. Give the drain a hard ceiling, then force-exit --
+  // a container that cannot die is worse than one that drops stragglers.
+  const force = setTimeout(() => {
+    server.log.warn('graceful shutdown timed out -- forcing exit');
+    process.exit(0);
+  }, 10_000);
+  force.unref();
   try {
     await server.close();
+    clearTimeout(force);
     await pool.end();
     process.exit(0);
   } catch (err) {

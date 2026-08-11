@@ -36,37 +36,17 @@ import requests
 
 from conftest import (
     API_DIR, DATABASE_URL, RUN_ID, TEST_CAS_ROOT, TOKEN,
-    _headers, api_server, make_docx,
+    _headers, api_server, create_uploaded_manuscript, make_docx,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _create_uploaded_manuscript(base_url: str, make_docx, heading: str, body: str) -> str:
-    title = requests.post(
-        f"{base_url}/v1/titles", json={"title": "U5 fixture"}, headers=_headers("u5t")
-    ).json()
-    manuscript = requests.post(
-        f"{base_url}/v1/titles/{title['id']}/manuscripts", json={}, headers=_headers("u5m")
-    ).json()
-    docx = make_docx(heading, body)
-    upload = requests.put(
-        f"{base_url}{manuscript['uploadUrl']}",
-        data=docx,
-        headers={
-            **{k: v for k, v in _headers("u5u").items()},
-            "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        },
-    )
-    assert upload.status_code == 201, f"upload failed: {upload.status_code} {upload.text}"
-    return manuscript["manuscriptId"]
 
 
 # ── S3: idempotency TOCTOU ──────────────────────────────────────
 
 
 def test_concurrent_idempotent_build_creates_exactly_one(api_server, make_docx):
-    ms_id = _create_uploaded_manuscript(api_server, make_docx, "IDEM NOVEL", "Body of the idempotency test.")
+    ms_id = create_uploaded_manuscript(api_server, make_docx, "IDEM NOVEL", "Body of the idempotency test.", tag="u5idem")[0]
     key = f"{RUN_ID}-concurrent"
     barrier = threading.Barrier(2)
     statuses: list[int] = []
@@ -256,14 +236,19 @@ def test_health_degraded_when_postgres_down(api_server):
 # ── U7: /v1/admin/metrics ───────────────────────────────────────
 
 
-def test_admin_metrics_aggregates_stages(api_server, db):
+def test_admin_metrics_aggregates_stages(api_server, db, register_tenant):
+    # A real manuscript row (via register_tenant) instead of a hardcoded
+    # document_id with no matching manuscript -- consistent with the RUN_ID
+    # namespacing every other test uses, and immune to any future query that
+    # joins builds.document_id against manuscripts.
+    ms_id = register_tenant("test-tenant-u7")
     # Seed build_stages rows the endpoint aggregates, under a stage name unique
     # to this test so rows left by other suites cannot skew the assertion.
     with db.cursor() as cur:
         for i in range(4):
             cur.execute(
-                "INSERT INTO builds (id, tenant_id, document_id, status) VALUES (%s, 'test-tenant-u7', 'test-ms-u7', 'failed')",
-                (f"test-{RUN_ID}-m{i}",),
+                "INSERT INTO builds (id, tenant_id, document_id, status) VALUES (%s, 'test-tenant-u7', %s, 'failed')",
+                (f"test-{RUN_ID}-m{i}", ms_id),
             )
             cur.execute(
                 "INSERT INTO build_stages (build_id, stage_name, stage_version, status, duration_ms) "
@@ -293,7 +278,7 @@ def test_admin_metrics_aggregates_stages(api_server, db):
 
 def test_sse_pushes_notified_events(api_server, db, make_docx):
     """S11 gate: a pg_notify must reach a connected SSE client without polling."""
-    ms_id = _create_uploaded_manuscript(api_server, make_docx, "SSE NOVEL", "Body of the SSE test.")
+    ms_id = create_uploaded_manuscript(api_server, make_docx, "SSE NOVEL", "Body of the SSE test.", tag="u5sse")[0]
     build = requests.post(
         f"{api_server}/v1/builds",
         json={"documentId": ms_id, "designId": "d1", "profileIds": ["Generic 6x9"]},

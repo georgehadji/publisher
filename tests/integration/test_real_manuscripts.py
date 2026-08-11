@@ -28,36 +28,17 @@ import psycopg2.extras
 import pytest
 import requests
 
-from conftest import RUN_ID, TEST_CAS_ROOT, api_server, insert_build, set_manuscript_source
+from conftest import (
+    RUN_ID,
+    TEST_CAS_ROOT,
+    _headers,
+    api_server,
+    create_uploaded_manuscript,
+    insert_build,
+    set_manuscript_source,
+)
 
 PROFILE_JSON = '["Generic 6x9"]'
-
-
-def _headers(idem: str) -> dict:
-    from conftest import TOKEN
-
-    return {"Authorization": f"Bearer {TOKEN}", "Idempotency-Key": f"{RUN_ID}-{idem}"}
-
-
-def _create_uploaded_manuscript(base_url: str, make_docx, heading: str, body: str) -> tuple[str, bytes]:
-    """Create a title + manuscript through the API and upload a real DOCX to it."""
-    title = requests.post(
-        f"{base_url}/v1/titles", json={"title": "U2 fixture"}, headers=_headers("u2t")
-    ).json()
-    manuscript = requests.post(
-        f"{base_url}/v1/titles/{title['id']}/manuscripts", json={}, headers=_headers("u2m")
-    ).json()
-    docx = make_docx(heading, body)
-    upload = requests.put(
-        f"{base_url}{manuscript['uploadUrl']}",
-        data=docx,
-        headers={
-            **{k: v for k, v in _headers("u2u").items()},
-            "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        },
-    )
-    assert upload.status_code == 201, f"upload failed: {upload.status_code} {upload.text}"
-    return manuscript["manuscriptId"], docx
 
 
 def _artifact_sha(db, build_id: str, schema_id: str) -> str | None:
@@ -70,7 +51,7 @@ def _artifact_sha(db, build_id: str, schema_id: str) -> str | None:
     return row[0] if row else None
 
 
-def _run_build(db, worker_module, build_id: str, document_id: str, tenant: str) -> None:
+def _run_build(db, worker_module, build_id: str, document_id: str, tenant: str) -> dict:
     insert_build(db, build_id, document_id, tenant)
     with db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SELECT * FROM builds WHERE id = %s", (build_id,))
@@ -85,7 +66,7 @@ def _run_build(db, worker_module, build_id: str, document_id: str, tenant: str) 
 
 
 def test_upload_route_streams_docx_into_cas(api_server, make_docx):
-    ms_id, docx = _create_uploaded_manuscript(api_server, make_docx, "UPLOAD ME", "Body of the upload test.")
+    ms_id, docx = create_uploaded_manuscript(api_server, make_docx, "UPLOAD ME", "Body of the upload test.", tag="u2upload")
     sha = hashlib.sha256(docx).hexdigest()
 
     # The bytes must be readable back out of the shared CAS at the sharded path.
@@ -110,7 +91,7 @@ def test_upload_route_streams_docx_into_cas(api_server, make_docx):
 
 
 def test_upload_route_rejects_non_docx(api_server, make_docx):
-    ms_id, _ = _create_uploaded_manuscript(api_server, make_docx, "REJECT ME", "Body.")
+    ms_id, _ = create_uploaded_manuscript(api_server, make_docx, "REJECT ME", "Body.", tag="u2reject")
     resp = requests.put(
         f"{api_server}/v1/manuscripts/{ms_id}/upload",
         data=b"this is definitely not a zip archive",
@@ -125,7 +106,7 @@ def test_upload_route_rejects_non_docx(api_server, make_docx):
 
 def test_upload_route_rejects_oversized_docx(api_server, make_docx):
     """The upload size cap (PUBLISHER_UPLOAD_MAX_BYTES) is enforced with a 413."""
-    ms_id, _ = _create_uploaded_manuscript(api_server, make_docx, "BIG ME", "Body.")
+    ms_id, _ = create_uploaded_manuscript(api_server, make_docx, "BIG ME", "Body.", tag="u2big")
     big = b"PK\x03\x04" + b"\x00" * (100_100)  # over the 100 KB test cap, DOCX magic prefix
     resp = requests.put(
         f"{api_server}/v1/manuscripts/{ms_id}/upload",

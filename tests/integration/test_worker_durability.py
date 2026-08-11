@@ -42,18 +42,6 @@ from conftest import RUN_ID, TEST_CAS_ROOT, insert_build, set_manuscript_source
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.fixture(scope="module")
-def worker_module():
-    """worker.py imported AFTER the CAS root env is pinned (it reads it at import)."""
-    os.environ["PUBLISHER_CAS_ROOT"] = str(TEST_CAS_ROOT)
-    os.environ["PUBLISHER_WORKER_LEASE_SECONDS"] = "60"
-    os.environ["PUBLISHER_WORKER_MAX_ATTEMPTS"] = "3"
-    sys.path.insert(0, str(REPO_ROOT))
-    import worker
-
-    return worker
-
-
 def _spawn_worker(db_url: str) -> subprocess.Popen:
     env = {
         **os.environ,

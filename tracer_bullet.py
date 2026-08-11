@@ -194,6 +194,7 @@ class DagExecutor:
         cas_root: Path | str | None = None,
         cache_store: CacheStore | None = None,
         on_stage_complete: Any = None,
+        on_stage_error: Any = None,
     ) -> dict[str, StageResult]:
         """
         Execute the subset of registered stages reachable from `initial_inputs`, in
@@ -226,6 +227,13 @@ class DagExecutor:
                       to diagnose it), and the SSE events endpoint -- which
                       polls build_stages for live progress -- never saw a row
                       until the build was already over.
+            on_stage_error: Optional callback
+                      `(stage_name, decl, error, duration_ms) -> None`, invoked
+                      when a stage raises StageError (or crashes into one) so
+                      the worker can record a FAILED build_stages row for the
+                      stage that actually failed -- without it, a build failing
+                      at stage N has no per-stage row at all, only the build's
+                      terminal error_message.
 
         Returns:
             dict of stage_name -> StageResult
@@ -332,14 +340,19 @@ class DagExecutor:
                     print(f"  FAIL {stage_name} FAILED after {elapsed:.2f}s: [{e.kind}] {e.message}")
                     for d in e.diagnostics:
                         print(f"     {d.severity}: {d.human_message}")
+                    if on_stage_error:
+                        on_stage_error(stage_name, decl, e, int(elapsed * 1000))
                     raise
                 except Exception as e:
                     elapsed = time.monotonic() - start
                     print(f"  FAIL {stage_name} CRASHED after {elapsed:.2f}s: {type(e).__name__}: {e}")
-                    raise StageError(
+                    wrapped = StageError(
                         kind=ErrorKind.ENGINE_BUG,
                         message=f"Unexpected error in {stage_name}: {e}",
                     )
+                    if on_stage_error:
+                        on_stage_error(stage_name, decl, wrapped, int(elapsed * 1000))
+                    raise wrapped
 
                 print()
 

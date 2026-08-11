@@ -13,6 +13,7 @@
  *   S8  pg Pool is configured (max / idle / connection timeouts), not defaults
  */
 import path from 'node:path';
+import { access, readFile, stat } from 'node:fs/promises';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -60,18 +61,15 @@ export class CasReadTooLargeError extends Error {
 /** S6 -- read a CAS blob as UTF-8, refusing anything over CAS_READ_MAX_BYTES. */
 export async function readCasFile(sha256: string): Promise<string> {
   const blob = casPath(sha256);
-  const { stat } = await import('node:fs/promises');
   const st = await stat(blob);
   if (st.size > CAS_READ_MAX_BYTES) {
     throw new CasReadTooLargeError(sha256, st.size, CAS_READ_MAX_BYTES);
   }
-  const { readFile } = await import('node:fs/promises');
   return readFile(blob, 'utf-8');
 }
 
 export async function casBlobExists(sha256: string): Promise<boolean> {
   try {
-    const { access } = await import('node:fs/promises');
     await access(casPath(sha256));
     return true;
   } catch {

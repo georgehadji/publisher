@@ -66,6 +66,10 @@ _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 # ── U7 observability: one JSON line per event, build_id + correlation_id on
 # every build-scoped record, so an HTTP request can be joined to a container's
 # stdout by a single id. Replaces print() -- structured logs are queryable.
+# Single-worker-per-process (U8): this module-level mutable holds the ONE build
+# this process is running. It is correct BECAUSE run_build runs one build at a
+# time; if the process ever runs builds concurrently, this becomes shared
+# mutable state and must become a per-build context instead.
 _CURRENT_BUILD: dict = {}
 
 
@@ -388,7 +392,23 @@ def run_build(conn, build: dict) -> None:
         # U1: a stage just finished -- the build is alive, extend the lease.
         # A build that takes longer than one lease period between stages is
         # pathological and will be reclaimed; every healthy build renews here.
+        # (N10: the FAILED counterpart lives in _on_stage_error below -- a
+        # build that dies at stage N must still leave a per-stage row, or the
+        # API/SSE can only report "build failed" with no stage evidence.)
         _renew_lease(conn, build_id)
+
+    def _on_stage_error(stage_name, decl, error, duration_ms):
+        # N10: record a FAILED row for the stage that actually died. Without
+        # this, `_fail` below marks the build failed but no build_stages row
+        # exists for the failing stage -- the API can say "failed" but not
+        # WHERE or WHY. The executor invokes this for both StageError and
+        # wrapped crashes before re-raising.
+        _record_stage(
+            conn, build_id, stage_name, decl.version, "failed",
+            False, duration_ms,
+            {"error_kind": getattr(error, "kind", ErrorKind.ENGINE_BUG).value,
+             "error": getattr(error, "message", str(error))},
+        )
 
     try:
         results = executor.execute(
@@ -397,6 +417,7 @@ def run_build(conn, build: dict) -> None:
             cas_root=CAS_ROOT,
             cache_store=cache_store,
             on_stage_complete=_on_stage,
+            on_stage_error=_on_stage_error,
         )
         # HARD GATE (BUILD_PLAN.md F2.3): `package` declares `preflight_report`
         # as a required input, so the DAG makes it structurally impossible to
@@ -437,7 +458,14 @@ def run_build(conn, build: dict) -> None:
         # U1: recording before re-raising is the whole point; without it the row
         # would sit at 'running' with an expired lease until another worker
         # reclaimed it, indistinguishable from a build still in flight.
-        _fail(conn, build_id, "INTERNAL", f"{type(e).__name__}: {e}")
+        # N8: _fail itself can fail (e.g. the connection died mid-build); that
+        # must not mask the ORIGINAL exception that follows. Log it and carry on
+        # to the re-raise.
+        try:
+            _fail(conn, build_id, "INTERNAL", f"{type(e).__name__}: {e}")
+        except Exception as record_err:
+            _log_info("failed to record build failure -- original error follows",
+                      record_error=f"{type(record_err).__name__}: {record_err}")
         _log_info("build crashed -- recorded as failed, process exiting",
                   error_type=type(e).__name__, error=str(e))
         raise
