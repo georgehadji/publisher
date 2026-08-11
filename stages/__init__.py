@@ -15,6 +15,7 @@ the DAG integrity check.
 """
 
 from . import acquire_stage  # noqa: F401
+from . import ingest_stage  # noqa: F401
 from . import extract_stage  # noqa: F401
 from . import structure_stage  # noqa: F401 -- registers "ast-assemble"
 from . import resolve_stage  # noqa: F401
@@ -27,6 +28,7 @@ from . import cover_stages  # noqa: F401
 
 __all__ = [
     "acquire_stage",
+    "ingest_stage",
     "extract_stage",
     "structure_stage",
     "resolve_stage",
@@ -43,3 +45,10 @@ __all__ = [
 # single producer of pdfx/1 instead of whichever stage happened to run first.
 from publisher_stages import get_registry as _get_registry  # noqa: E402
 _get_registry().select_implementation("finish", "finish-gs")
+
+# The `ingest` step has two implementations: `ingest` (U2 -- real DOCX the tenant
+# uploaded) and `acquire` (fixture ast/1 loader). Default to the REAL one: a build
+# must render what the tenant submitted, and the only way to reintroduce the
+# fixture-substitution CRITICAL (ARCHITECTURE_UPLIFT_PLAN.md N1) is to explicitly
+# select `acquire`. The local dev harness (tracer_bullet.py) does exactly that.
+_get_registry().select_implementation("ingest", "ingest")

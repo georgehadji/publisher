@@ -66,7 +66,6 @@ fixtures/         # Stage fixture sets (versioned)
 corpus/           # Golden manuscripts + raster diff harness
 profiles/         # Vendor specs (KDP, IngramSpark, Lulu)
 templates/        # DesignSpec presets
-infra/            # Docker, k8s, terraform
 ```
 
 ## License

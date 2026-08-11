@@ -32,7 +32,7 @@ def _deterministic_timestamp(ctx: StageCtx) -> str:
 
 @stage(
     name="preflight",
-    version=5,   # v4 made the probe real; v5 fixes its page count, which read 1
+    version=6,   # v6: module-level bump -- same file as cover/finish-gs (U6); v5 fixed the page count
                  # for every Ghostscript-produced file (see preflight._PAGE_RE).
     # Input dict KEYS are bound to the stage function's parameter names by the
     # executor (`decl.fn(ctx, **stage_inputs)`), not just documentation. The
@@ -121,15 +121,12 @@ def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -
 
 @stage(
     name="cover",
-    version=2,   # v1 declared a `cover_art: image/*` root input this function never
-                 # read. Bumped to v2 dropping it: art generation is now the separate
-                 # page-count-FREE cover-brief/cover-art/cover-judge fan-out in
-                 # stages/cover_stages.py — see COVER_DESIGN.md §0/§1. This stage
-                 # computes geometry only; cover-compose (also cover_stages.py) is what
-                 # joins geometry with the human-selected art.
+    version=3,   # v3: page_count input schema "integer" -> "page-count/1" (U6); v2 dropped the
+                 # cover_art root input (art generation is the separate cover-brief/cover-art/
+                 # cover-judge fan-out in stages/cover_stages.py -- see COVER_DESIGN.md §0/§1).
     # "profile" -> "profile_name" to match this function's actual parameter name;
     # see the note on the preflight stage above about why this key must be exact.
-    inputs={"page_count": "integer", "profile_name": "profile/1"},
+    inputs={"page_count": "page-count/1", "profile_name": "profile/1"},
     # Both are caller-supplied: page_count comes from the paginated interior, profile
     # from profiles/. Neither is the declared output of any registered stage.
     root_inputs=["page_count", "profile_name"],
@@ -195,7 +192,7 @@ def cover_stage(ctx: StageCtx, page_count: int = 0, profile_name: str = "") -> S
 
 @stage(
     name="cover-preflight",
-    version=1,
+    version=2,   # v2: module-level bump -- same file as cover/finish-gs (U6)
     inputs={"pdf_path": "cover-raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
     # Distinct output kind from `preflight`'s -- both stages emit content that
@@ -261,7 +258,7 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
 
 @stage(
     name="finish-gs",
-    version=6,   # see the note on `finish` v6 -- same TrimBox/bleed change
+    version=7,   # v7: report declared a terminal output (U6); v6 = TrimBox/bleed change
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     # "pdf" -> "pdf_path", "profile" -> "profile_name": see the note on preflight
     # above for why the input dict's KEYS must exactly match this function's
@@ -269,6 +266,7 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
     inputs={"pdf_path": "raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
     outputs={"pdf": "pdfx/1", "report": "finish-report/1"},
+    terminal_outputs=["report"],   # delivered via the API, never consumed
     toolchain=["ghostscript", "icc"],
     fixtures="fixtures/finish-gs/v1",
     memory_budget_mb=512,

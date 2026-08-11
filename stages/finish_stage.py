@@ -43,12 +43,14 @@ from profiles import load_profile
     # `design-compile` grew the page box by. v5 always passed bleed_pt=0, which
     # collapsed TrimBox onto MediaBox and produced a press file measuring 0.00mm
     # of bleed no matter what the renderer had laid down.
-    version=6,
+    # v7: proof/report declared terminal outputs (U6).
+    version=7,
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     inputs={"pdf_path": "raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
     optional_root_inputs=["profile_name"],   # absent => no bleed; preflight judges that
     outputs={"pdf": "pdfx/1", "proof": "proof-pdf/1", "report": "finish-report/1"},
+    terminal_outputs=["proof", "report"],   # delivered via the API, never consumed
     toolchain=["ghostscript"],
     fixtures="fixtures/finish/v1",
     memory_budget_mb=256,

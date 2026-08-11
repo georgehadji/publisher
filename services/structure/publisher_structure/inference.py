@@ -81,7 +81,6 @@ class RouteConfig:
     timeout_s: int = 30
     cost_per_call: float = 0.0
     cache_ttl_hours: int = 168  # 7 days
-    fallback_route: Optional[str] = None  # Route to try on failure
 
 
 @dataclass
@@ -225,7 +224,6 @@ def load_routes_from_policy(
             model_id=model_id,
             tier=_TIER_BY_NAME.get(str(spec.get("tier", "fast")).lower(), ModelTier.FAST),
             cost_per_call=float(spec.get("cost_per_call", 0.0)),
-            fallback_route=spec.get("fallback_route"),
         )
     return routes
 
@@ -248,7 +246,33 @@ class InferenceGateway:
     """
     
     def __init__(self, config: Optional[InferenceGatewayConfig] = None,
-                 policy_path: Optional[str] = None):
+                 policy_path: Optional[str] = None, *,
+                 simulate: bool):
+        """
+        `simulate` is REQUIRED and has no default (U4 -- ARCHITECTURE_UPLIFT_PLAN.md).
+
+        The only model implementation that exists today FABRICATES its
+        classifications (`_simulate_model_call` returns paragraph/0.85 for
+        everything). A fake shaped exactly like the real thing means nothing in
+        the type system stops a future change from shipping fabricated
+        classifications as real ones -- so constructing a simulated gateway is
+        an explicit, gated act:
+
+        * `simulate=False` constructs the real gateway (the production shape;
+          no live provider is wired yet, so real calls will fail loudly).
+        * `simulate=True` is refused unless PUBLISHER_ALLOW_SIMULATED_INFERENCE
+          is set -- the same dev-only escape hatch as `allow_stub_engines`
+          (tracer_bullet.py, worker.py). The worker never sets it, so
+          production can never fabricate.
+        """
+        if simulate and os.environ.get("PUBLISHER_ALLOW_SIMULATED_INFERENCE", "") not in ("1", "true", "TRUE"):
+            raise RuntimeError(
+                "InferenceGateway(simulate=True) refused: PUBLISHER_ALLOW_"
+                "SIMULATED_INFERENCE is not set. A simulated gateway fabricates "
+                "classifications and must be explicitly enabled for dev/test "
+                "only -- the worker never sets it."
+            )
+        self._simulate = simulate
         self._config = config or InferenceGatewayConfig()
         self._prompt_cache = PromptCacheManager()
         self._cost_trackers: dict[str, CostTracker] = {}
@@ -314,8 +338,10 @@ class InferenceGateway:
                 cost_usd=0.0,
             )
         
-        # Run the model call (simulated)
-        result = self._call_model(request, route_config, start_tier)
+        # Run the model call. Today the only implementation is the SIMULATED
+        # one -- any result it produces is fabricated and marked `simulated`
+        # (U4). A real provider plugs in behind this call in Phase B.
+        result = self._simulate_model_call(request, route_config, start_tier)
         
         # Record cost
         tracker.record_call(request.route, result.cost_usd)
@@ -387,13 +413,17 @@ class InferenceGateway:
             refusal=refusal,
         )
     
-    def _call_model(self, request: InferenceRequest, config: RouteConfig,
-                    tier: ModelTier) -> InferenceResult:
+    def _simulate_model_call(self, request: InferenceRequest, config: RouteConfig,
+                             tier: ModelTier) -> InferenceResult:
         """
-        Call the LLM.
-        
-        In production, this calls the OpenRouter API or Bedrock.
-        In the tracer bullet, returns a simulated result.
+        FABRICATE a model result -- the quarantined simulation (U4).
+
+        This returns the same paragraph/0.85 classification for every input. It
+        is NOT a stand-in for a real model call: every artifact derived from it
+        carries `simulated: true` so a fabricated confidence is visible in the
+        build record rather than inferred from source reading. Production code
+        may only reach here with the explicit PUBLISHER_ALLOW_SIMULATED_
+        INFERENCE gate open (enforced in __init__).
         """
         # Simulate model call
         import time
@@ -425,6 +455,10 @@ class InferenceGateway:
                     "schemaVersion": config.schema_version,
                     "cacheHit": False,
                     "costUsd": config.cost_per_call,
+                    # U4: this classification was FABRICATED, not inferred. The
+                    # flag travels with the artifact so a simulated confidence
+                    # is visible in the build record.
+                    "simulated": True,
                 },
             },
             confidence=0.85,
@@ -494,9 +528,13 @@ class InferenceGateway:
 
 # ── Convenience factory ─────────────────────────────────────────
 
-def create_gateway(config: Optional[InferenceGatewayConfig] = None) -> InferenceGateway:
-    """Create a configured inference gateway."""
+def create_gateway(config: Optional[InferenceGatewayConfig] = None, *,
+                   simulate: bool) -> InferenceGateway:
+    """Create a configured inference gateway.
+
+    `simulate` is required and has no default -- see InferenceGateway.__init__.
+    """
     return InferenceGateway(config=config or InferenceGatewayConfig(
         routes={},
         cost_ceiling_usd=0.50,
-    ))
+    ), simulate=simulate)

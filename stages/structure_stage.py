@@ -78,9 +78,10 @@ def _extract_all_text(ast: dict) -> str:
 
 @stage(
     name="ast-assemble",
-    version=2,
+    version=3,   # v3: integrity-report/1 declared terminal (U6)
     inputs={"html": "typescript-html/1", "source": "raw-source/1"},
     outputs={"ast": "ast/1", "integrity-report": "integrity-report/1"},
+    terminal_outputs=["integrity-report"],   # delivered via the API, never consumed
     toolchain=[],
     fixtures="fixtures/structure/v1",
     memory_budget_mb=128,

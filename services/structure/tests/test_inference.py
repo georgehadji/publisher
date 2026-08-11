@@ -9,10 +9,48 @@ from publisher_structure.inference import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _allow_simulation(monkeypatch):
+    """U4: simulated inference is a gated dev/test escape hatch -- the tests
+    that intentionally fabricate classifications must open the gate."""
+    monkeypatch.setenv("PUBLISHER_ALLOW_SIMULATED_INFERENCE", "1")
+
+
+def test_gateway_requires_explicit_simulation_flag(monkeypatch):
+    """U4 gate: a simulated gateway must be explicitly opted into, and the
+    opt-in is refused when the env gate is closed. Pre-U4, `InferenceGateway()`
+    constructed a fabricating gateway with no ceremony at all."""
+    # No `simulate` argument at all -- the constructor must not have a default.
+    with pytest.raises(TypeError):
+        InferenceGateway()
+
+    # Explicit simulate=True is still refused unless the env gate is open.
+    monkeypatch.delenv("PUBLISHER_ALLOW_SIMULATED_INFERENCE")
+    with pytest.raises(RuntimeError, match="SIMULATED_INFERENCE"):
+        InferenceGateway(simulate=True)
+
+
+def test_simulated_classifications_are_marked(monkeypatch):
+    """U4: any classification produced by the simulated path carries
+    `simulated: true` in its artifact, so a fabricated confidence is visible in
+    the build record instead of being inferred from source reading."""
+    monkeypatch.setenv("PUBLISHER_ALLOW_SIMULATED_INFERENCE", "1")
+    gateway = InferenceGateway(simulate=True)
+    request = InferenceRequest(
+        request_id="sim-marked",
+        route="structure-classify",
+        inputs={"nodes": [{"sourceRef": "p1", "text": "Hello"}]},
+        prompt_version="1.0",
+        schema_version="classification/1",
+    )
+    result = gateway.classify(request)
+    assert result.output["modelInfo"]["simulated"] is True
+
+
 def test_gateway_creation():
     """A constructor cannot return None. Assert the gateway loaded its routes from
     versioned YAML (LLM_STRATEGY.md §4) rather than from hardcoded literals."""
-    gateway = InferenceGateway()
+    gateway = InferenceGateway(simulate=True)
     routes = gateway._config.routes
     assert "structure-classify" in routes
     # Routing policy is data: concrete slugs only, never a moving `-latest` alias,
@@ -25,7 +63,7 @@ def test_gateway_creation():
 
 
 def test_classify_basic():
-    gateway = InferenceGateway()
+    gateway = InferenceGateway(simulate=True)
     request = InferenceRequest(
         request_id="test-001",
         route="structure-classify",
@@ -40,7 +78,7 @@ def test_classify_basic():
 
 
 def test_classify_no_external_llm():
-    gateway = InferenceGateway()
+    gateway = InferenceGateway(simulate=True)
     request = InferenceRequest(
         request_id="test-002",
         route="structure-classify",
@@ -67,7 +105,7 @@ def test_cost_tracking():
 
 def test_cost_ceiling():
     config = InferenceGatewayConfig(cost_ceiling_usd=0.01)
-    gateway = InferenceGateway(config)
+    gateway = InferenceGateway(config, simulate=True)
     
     # Mock a tracker that's exceeded ceiling
     gateway._cost_trackers["test"] = CostTracker(tenant_id="test", total_cost=999.0)
@@ -109,7 +147,7 @@ def test_route_config():
 
 
 def test_cost_summary():
-    gateway = InferenceGateway()
+    gateway = InferenceGateway(simulate=True)
     request = InferenceRequest(
         request_id="test-summary",
         route="structure-classify",

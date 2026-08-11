@@ -7,7 +7,11 @@ name = "publisher-agents"
 version = "0.1.0"
 description = "Publisher agent layer — Structure Wrangler, Compositor, Preflight Explainer"
 requires-python = ">=3.12"
-dependencies = []
+# U3 (docs/ARCHITECTURE_UPLIFT_PLAN.md): structure_wrangler.py imports
+# publisher_structure.rules -- declare it so CI breaks loudly if packaging ever
+# changes, instead of production breaking quietly on one PYTHONPATH. Enforced by
+# tools/lint_service_deps.py in CI.
+dependencies = ["publisher-structure"]
 optional-dependencies = {test = ["pytest>=8.0"]}
 
 [tool.setuptools.packages.find]

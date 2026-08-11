@@ -18,10 +18,11 @@ from publisher_cas import ContentAddressedStore, CasConfig, Sha256, MediaType, A
 
 @stage(
     name="acquire",
-    version=2,
+    version=3,
     inputs={"manifest_path": "fixture-manifest/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["manifest_path"],
+    implements="ingest",  # fixture alternative to `ingest` (U2); default for the local dev harness
     toolchain=[],
     fixtures="fixtures/manuscripts/v1",
     memory_budget_mb=64,

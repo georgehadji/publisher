@@ -13,98 +13,31 @@ PR as its fix, detector first in the diff. Do not soften these to pass early.
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import sys
 import time
-import uuid
-from contextlib import closing
 from pathlib import Path
 
 import pytest
 import requests
 
+from conftest import (
+    DATABASE_URL, RUN_ID, TEST_CAS_ROOT, TOKEN,
+    _headers, api_server, make_docx,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_DIR = REPO_ROOT / "packages" / "api"
-TOKEN = "detector-token"
-TENANT = "detector-tenant"
+
 # Port 55432 is the compose stack's published port -- see docker-compose.yml.
 # It is deliberately NOT 5432: a locally-installed PostgreSQL owns that port on
 # many dev machines, and these tests would then assert against a database the
 # worker never writes to, which is precisely the kind of result that looks like
 # a pass and means nothing.
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://publisher:publisher@localhost:55432/publisher"
-)
-# Idempotency-Key is scoped (tenant, key) and rows persist in Postgres across
-# test runs -- a literal key reused run-to-run would replay a PREVIOUS run's
-# cached response instead of exercising the route again. Unique per process.
-RUN_ID = uuid.uuid4().hex[:8]
-
-
-def _free_port() -> int:
-    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _headers(idem: str) -> dict:
-    return {"Authorization": f"Bearer {TOKEN}", "Idempotency-Key": f"{RUN_ID}-{idem}"}
-
-
-@pytest.fixture(scope="module")
-def api_server():
-    """
-    Boots the real Fastify server (not a mock) so these tests exercise the
-    actual routes in packages/api/src/index.ts, not a stand-in for them.
-    """
-    tsx = API_DIR / "node_modules" / ".bin" / ("tsx.cmd" if os.name == "nt" else "tsx")
-    if not tsx.exists():
-        pytest.fail(
-            f"tsx not found at {tsx} -- run `npm install` in packages/api "
-            f"before this detector can even attempt to run."
-        )
-
-    port = _free_port()
-    env = {
-        **os.environ,
-        "PORT": str(port),
-        "HOST": "127.0.0.1",
-        "PUBLISHER_API_TOKENS": f"{TOKEN}:{TENANT}",
-        "PUBLISHER_CORS_ORIGINS": "http://localhost",
-        "DATABASE_URL": DATABASE_URL,
-        "PUBLISHER_CAS_ROOT": str(REPO_ROOT / ".test-cas-cache"),
-    }
-    proc = subprocess.Popen(
-        [str(tsx), "src/index.ts"],
-        cwd=str(API_DIR),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    base_url = f"http://127.0.0.1:{port}"
-    try:
-        healthy = False
-        for _ in range(100):
-            try:
-                if requests.get(f"{base_url}/v1/health", timeout=1).status_code == 200:
-                    healthy = True
-                    break
-            except requests.RequestException:
-                pass
-            time.sleep(0.2)
-        if not healthy:
-            proc.terminate()
-            out = proc.stdout.read() if proc.stdout else ""
-            pytest.fail(f"API server never became healthy.\n{out}")
-        yield base_url
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+#
+# (DATABASE_URL / RUN_ID / _headers now live in conftest.py -- the same values
+# the U1/U2/U5 integration tests use, so a worker or API server spawned by one
+# file drains the same queue the others write to.)
 
 
 @pytest.fixture(scope="module")
@@ -131,7 +64,7 @@ def worker_process():
     env = {
         **os.environ,
         "DATABASE_URL": DATABASE_URL,
-        "PUBLISHER_CAS_ROOT": str(REPO_ROOT / ".test-cas-cache"),
+        "PUBLISHER_CAS_ROOT": str(TEST_CAS_ROOT),
     }
     proc = subprocess.Popen(
         [sys.executable, str(REPO_ROOT / "worker.py")],
@@ -151,17 +84,32 @@ def worker_process():
             proc.kill()
 
 
-def _make_document(base_url: str) -> str:
+def _make_document(base_url: str, make_docx, *, heading: str = "DETECTOR NOVEL",
+                   body: str = "A short body for the A0 pipeline detector build.") -> str:
     title = requests.post(
         f"{base_url}/v1/titles", json={"title": "Detector fixture"}, headers=_headers("t1")
     ).json()
     manuscript = requests.post(
         f"{base_url}/v1/titles/{title['id']}/manuscripts", json={}, headers=_headers("m1")
     ).json()
+    # U2: a manuscript is a real DOCX once uploaded. The upload route streams the
+    # bytes into CAS and records source_sha256; a build of a manuscript with no
+    # stored source is refused with BAD_INPUT (never silently substituted with
+    # the fixture book).
+    docx = make_docx(heading, body)
+    upload = requests.put(
+        f"{base_url}{manuscript['uploadUrl']}",
+        data=docx,
+        headers={
+            **{k: v for k, v in _headers("m1u").items()},
+            "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+    )
+    assert upload.status_code == 201, f"manuscript upload failed: {upload.status_code} {upload.text}"
     return manuscript["manuscriptId"]
 
 
-def test_build_request_produces_a_real_artifact(api_server, worker_process):
+def test_build_request_produces_a_real_artifact(api_server, make_docx, worker_process):
     """
     POST a build, poll to completion, fetch the artifact record, and assert it
     identifies bytes the pipeline actually produced -- a content hash -- rather
@@ -174,7 +122,7 @@ def test_build_request_produces_a_real_artifact(api_server, worker_process):
     no worker ever ran the pipeline for this build -- POST /v1/builds only
     ever wrote to an in-process Map.
     """
-    document_id = _make_document(api_server)
+    document_id = _make_document(api_server, make_docx)
     build = requests.post(
         f"{api_server}/v1/builds",
         json={"documentId": document_id, "designId": "d1", "profileIds": ["p1"]},
@@ -196,7 +144,12 @@ def test_build_request_produces_a_real_artifact(api_server, worker_process):
         "Start one (`docker compose up -d worker`) or install Ghostscript "
         f"locally so this test can spawn its own: {status}"
     )
-    assert status.get("status") == "completed", f"build did not complete: {status}"
+    assert status.get("status") == "completed", (
+        f"build did not complete: {status}. "
+        "(On a host without weasyprint/Ghostscript, an otherwise-correct build "
+        "stops at the paginate engine gate with status='failed' -- that engine "
+        "absence is not the defect this detector targets.)"
+    )
 
     artifact = requests.get(
         f"{api_server}/v1/builds/{build_id}/artifacts/pdf", headers=_headers("a1")
@@ -214,7 +167,7 @@ def test_build_request_produces_a_real_artifact(api_server, worker_process):
     )
 
 
-def test_build_status_is_not_a_hardcoded_literal(api_server):
+def test_build_status_is_not_a_hardcoded_literal(api_server, make_docx):
     """
     A0.3 -- anti-fabrication regression guard (findings 1, 14).
 
@@ -223,7 +176,7 @@ def test_build_status_is_not_a_hardcoded_literal(api_server):
     same seven-stage completed payload every build reports today regardless of
     whether anything executed.
     """
-    document_id = _make_document(api_server)
+    document_id = _make_document(api_server, make_docx)
     build = requests.post(
         f"{api_server}/v1/builds",
         json={"documentId": document_id, "designId": "d1", "profileIds": ["p1"]},
@@ -264,11 +217,11 @@ def test_api_deliverable_schemas_all_exist_in_the_stage_registry():
     import stages  # noqa: F401 -- registration side effect
     from publisher_stages import get_registry
 
-    source = (API_DIR / "src" / "index.ts").read_text(encoding="utf-8")
+    source = (API_DIR / "src" / "db.ts").read_text(encoding="utf-8")
     block = re.search(
         r"DELIVERABLE_SCHEMAS[^=]*=\s*Object\.freeze\(\{(.*?)\}\)", source, re.S
     )
-    assert block, "DELIVERABLE_SCHEMAS not found in packages/api/src/index.ts"
+    assert block, "DELIVERABLE_SCHEMAS not found in packages/api/src/db.ts"
     mapped = dict(re.findall(r"'?([\w-]+)'?\s*:\s*'([^']+)'", block.group(1)))
     assert mapped, "DELIVERABLE_SCHEMAS parsed as empty"
 
@@ -305,7 +258,11 @@ def test_second_build_of_same_input_hits_cache():
     from tracer_bullet import DagExecutor
 
     persistent_root = REPO_ROOT / ".test-cas-cache"
-    executor = DagExecutor(get_registry(), allow_stub_engines=True)
+    registry = get_registry()
+    # The registry default-selects the real `ingest` stage (U2); this probe
+    # exercises the FIXTURE path, so select the fixture loader explicitly.
+    registry.select_implementation("ingest", "acquire")
+    executor = DagExecutor(registry, allow_stub_engines=True)
     # `preflight`'s root input is deliberately withheld, which makes preflight
     # (and `package` behind it) unreachable, so this probe stops at `finish`.
     #
@@ -328,4 +285,9 @@ def test_second_build_of_same_input_hits_cache():
     executor.execute("cache-probe-1", initial_inputs, cas_root=persistent_root)
     second = executor.execute("cache-probe-2", initial_inputs, cas_root=persistent_root)
 
-    assert second["acquire"].cache_hit is True
+    try:
+        assert second["acquire"].cache_hit is True
+    finally:
+        # Restore the production default so later in-process executor use in
+        # this test process does not silently run the fixture loader.
+        registry.select_implementation("ingest", "ingest")

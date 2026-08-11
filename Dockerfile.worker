@@ -30,6 +30,6 @@ COPY templates/ templates/
 COPY corpus/ corpus/
 COPY tracer_bullet.py worker.py cli.py ./
 
-ENV PYTHONPATH=/app/platform/stages/py:/app/platform/cas/py:/app/platform/cache/py:/app/platform/reproducibility/src:/app/platform/supply-chain/src:/app/services/structure:/app/services/agents:/app/services/cover:/app/services/epub:/app/services/idml:/app/services/onix:/app/services/prepress:/app/services/alttext:/app/services/learning
+ENV PYTHONPATH=/app/platform/stages/py:/app/platform/cas/py:/app/platform/cache/py:/app/platform/reproducibility/src:/app/platform/supply-chain/src:/app/services/structure:/app/services/agents:/app/services/ingest:/app/services/cover:/app/services/epub:/app/services/idml:/app/services/onix:/app/services/prepress:/app/services/alttext
 
 CMD ["python", "worker.py"]

@@ -124,6 +124,13 @@ class StageDeclaration:
     # parameter merely HAS a default conflates the two cases.
     optional_root_inputs: Optional[list[str]] = None
     terminal: bool = False  # True if outputs are not expected to be consumed
+    # U6 (docs/ARCHITECTURE_UPLIFT_PLAN.md): output KEYS that are legitimate
+    # terminal deliverables -- produced for the API/delivery layer, never
+    # consumed by another stage (e.g. integrity-report/1, pagemap/1,
+    # proof-pdf/1, finish-report/1). Finer-grained than `terminal` (which
+    # marks the whole stage): check_integrity() treats these as intended
+    # sinks, so a genuinely orphaned output still fails loudly.
+    terminal_outputs: Optional[list[str]] = None
     # Logical pipeline step this stage implements. Two stages may declare the same
     # outputs ONLY when they are alternative implementations of one step (e.g. the
     # Ghostscript vs pass-through finish path, or the two render engines of O1) and
@@ -344,9 +351,10 @@ class StageRegistry:
                 consumed.add(schema_id)
         
         for name, decl in self._stages.items():
-            if decl.terminal:
-                continue
+            terminal_keys = set(decl.terminal_outputs or [])
             for out_key, schema_id in decl.outputs.items():
+                if decl.terminal or out_key in terminal_keys:
+                    continue
                 if schema_id not in consumed:
                     violations.append({
                         "kind": "orphan_output",
@@ -447,6 +455,7 @@ def stage(
     root_inputs: Optional[list[str]] = None,
     optional_root_inputs: Optional[list[str]] = None,
     terminal: bool = False,
+    terminal_outputs: Optional[list[str]] = None,
     implements: Optional[str] = None,
     placement: str = "on-demand",
     memory_budget_mb: int = 256,
@@ -478,6 +487,7 @@ def stage(
             root_inputs=root_inputs,
             optional_root_inputs=optional_root_inputs,
             terminal=terminal,
+            terminal_outputs=terminal_outputs,
             implements=implements,
             placement=placement,
             memory_budget_mb=memory_budget_mb,

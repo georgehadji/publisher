@@ -24,7 +24,7 @@ env:
     -e platform/cas/py -e platform/stages/py -e platform/cache/py
     -e platform/sandbox/py -e platform/reproducibility -e platform/supply-chain
     -e services/prepress -e services/structure -e services/agents
-    -e services/learning -e services/cover -e services/idml
+    -e services/ingest -e services/cover -e services/idml
     -e services/epub -e services/onix
 
 jobs:
@@ -78,3 +78,5 @@ jobs:
         run: python -m pytest tests/contracts -v
       - name: Version-bump rule (§3.3, §7)
         run: python tools/lint_stage_versions.py "${{ github.event.pull_request.base.sha || 'HEAD~1' }}"
+      - name: Service deps declared (U3)
+        run: python tools/lint_service_deps.py

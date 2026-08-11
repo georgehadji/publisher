@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Publisher worker -- DB-backed queue, real execution.
-ARCHITECTURE_REMEDIATION.md A1.4.
+ARCHITECTURE_REMEDIATION.md A1.4 · ARCHITECTURE_UPLIFT_PLAN.md U1/U2.
 
 Claims a queued build with `FOR UPDATE SKIP LOCKED` (correct multi-worker
 claim without double-processing), runs the real DAG via DagExecutor against
@@ -9,6 +9,18 @@ a durable CAS root and a PostgresCacheStore (so cache state is visible to
 every worker and, eventually, the API), and records build_stages/artifacts
 rows as the source of truth GET /v1/builds/:id will read from once A2 wires
 the routes to it.
+
+U1 (worker durability): every claimed build reaches a terminal state. Claims
+carry a lease (attempt / worker_id / lease_expires_at); a row left at
+'running' by a killed worker is reclaimed once its lease expires, and a
+poison build dead-letters after MAX_ATTEMPTS instead of looping forever. A
+build is marked 'failed' before an unexpected exception is re-raised, so the
+process dies loudly but the row is not left stuck at 'running'.
+
+U2 (real manuscripts): `_initial_inputs_for` maps the build's document_id to
+the manuscript bytes the tenant actually uploaded (manuscripts.source_sha256
+-> CAS) and feeds them to the `ingest` stage. A document with no stored
+source is a BAD_INPUT failure -- never a silent fixture substitution.
 
 tracer_bullet.py is the local dev harness (single build_id, prints to
 stdout, no DB). This is the production path: many builds, many workers,
@@ -18,7 +30,12 @@ see the comment at its call site below.
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import random
+import re
+import signal
 import sys
 import time
 from datetime import datetime, timezone
@@ -33,11 +50,57 @@ for sub in ("platform/stages/py", "platform/cas/py", "platform/cache/py"):
 
 import stages  # noqa: F401 -- registration side effect
 from publisher_cache import PostgresCacheStore
-from publisher_stages import StageError, get_registry
+from publisher_stages import ErrorKind, StageError, get_registry
 from tracer_bullet import DagExecutor
 
 POLL_INTERVAL_S = 2
 CAS_ROOT = Path(os.environ.get("PUBLISHER_CAS_ROOT", "./.publisher/cas"))
+# U1 lease: a healthy build renews its lease after every stage (on_stage_complete),
+# so a long build never expires while a dead one always does within one lease period.
+LEASE_SECONDS = int(os.environ.get("PUBLISHER_WORKER_LEASE_SECONDS", "600"))
+MAX_ATTEMPTS = int(os.environ.get("PUBLISHER_WORKER_MAX_ATTEMPTS", "3"))
+WORKER_ID = os.environ.get("PUBLISHER_WORKER_ID") or f"worker-{os.getpid()}"
+
+_SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+
+# ── U7 observability: one JSON line per event, build_id + correlation_id on
+# every build-scoped record, so an HTTP request can be joined to a container's
+# stdout by a single id. Replaces print() -- structured logs are queryable.
+_CURRENT_BUILD: dict = {}
+
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "event": record.getMessage(),
+            "worker_id": WORKER_ID,
+        }
+        if _CURRENT_BUILD:
+            payload.update(_CURRENT_BUILD)
+        extra = getattr(record, "extra_fields", None)
+        if extra:
+            payload.update(extra)
+        return json.dumps(payload, default=str)
+
+
+_LOGGER = logging.getLogger("publisher.worker")
+if not _LOGGER.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(_JsonFormatter())
+    _LOGGER.addHandler(_handler)
+    _LOGGER.setLevel(logging.INFO)
+    _LOGGER.propagate = False
+
+
+def _log(level: int, msg: str, **fields) -> None:
+    _LOGGER.log(level, msg, extra={"extra_fields": fields} if fields else None)
+
+
+def _log_info(msg: str, **fields) -> None:
+    _log(logging.INFO, msg, **fields)
 
 
 def _dsn() -> str:
@@ -50,12 +113,20 @@ def _dsn() -> str:
 def _claim_build(conn) -> dict | None:
     """FOR UPDATE SKIP LOCKED -- the mechanism that makes `builds` a correct
     multi-worker queue: a second worker's concurrent claim query skips a row
-    this transaction already holds, rather than blocking or double-claiming."""
+    this transaction already holds, rather than blocking or double-claiming.
+
+    U1: the claim is reclaim-aware. A row at 'running' whose lease has expired
+    is a build whose worker died -- reclaim it exactly like a queued build. A
+    row that has already been reclaimed MAX_ATTEMPTS times is poison (bad
+    input, or a bug that crashes every attempt): dead-letter it to 'dead'
+    instead of looping it forever.
+    """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
             SELECT * FROM builds
             WHERE status = 'queued'
+               OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
             ORDER BY created_at
             FOR UPDATE SKIP LOCKED
             LIMIT 1
@@ -64,33 +135,132 @@ def _claim_build(conn) -> dict | None:
         build = cur.fetchone()
         if build is None:
             return None
+
+        if build["attempt"] >= MAX_ATTEMPTS:
+            # Poison build: it has already been claimed MAX_ATTEMPTS times --
+            # bad input, or a bug that crashes every attempt. Dead-letter it
+            # whether it is stuck at 'running' or was requeued, instead of
+            # looping it forever.
+            cur.execute(
+                "UPDATE builds SET status = 'dead', completed_at = now(), "
+                "error_kind = 'exhausted', error_message = %s WHERE id = %s",
+                (f"build exceeded {MAX_ATTEMPTS} attempts -- moved to dead letter", build["id"]),
+            )
+            _notify(conn, build["id"], {"status": "dead"})
+            conn.commit()
+            return None
+
         cur.execute(
-            "UPDATE builds SET status = 'running', started_at = now() WHERE id = %s",
-            (build["id"],),
+            """
+            UPDATE builds
+            SET status = 'running',
+                started_at = COALESCE(started_at, now()),
+                attempt = attempt + 1,
+                worker_id = %s,
+                lease_expires_at = now() + %s * interval '1 second'
+            WHERE id = %s
+            """,
+            (WORKER_ID, LEASE_SECONDS, build["id"]),
         )
         conn.commit()
         return dict(build)
 
 
-def _initial_inputs_for(build: dict) -> dict:
+def _renew_lease(conn, build_id: str) -> None:
+    """U1: extend the current build's lease. Called after every completed
+    stage, so a long but healthy build never expires."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE builds SET lease_expires_at = now() + %s * interval '1 second' WHERE id = %s",
+            (LEASE_SECONDS, build_id),
+        )
+        conn.commit()
+
+
+def _notify(conn, build_id: str, payload: dict) -> None:
+    """U5/S11: push a build event to the SSE channel via Postgres LISTEN/NOTIFY.
+
+    Executed inside the CALLER's transaction: NOTIFY is delivered at commit,
+    so stage records and their events land atomically. The channel name embeds
+    the build id (server-generated safe token); pg_notify parameterizes it so
+    no SQL construction is involved."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_notify(%s, %s)",
+            (f"build_{build_id}", json.dumps(payload, default=str)),
+        )
+
+
+def _resolve_profile_name(build: dict) -> str:
+    """U2: `build['profile_ids']` -> one vendor profile name.
+
+    The API stores profile_ids as a JSONB array; the first entry is the book
+    profile. Unknown profiles are a BAD_INPUT -- never a silent fallback to
+    "Generic 6x9", which would rebuild every book to a demo size.
+    """
+    ids = build.get("profile_ids") or []
+    if not ids:
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message="build has no profile_ids -- a book cannot be built without a profile",
+        )
+    name = ids[0] if isinstance(ids, list) else str(ids)
+    from profiles import load_profile
+
+    if load_profile(name) is None:
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"unknown profile {name!r} -- refusing to guess a default",
+        )
+    return name
+
+
+def _initial_inputs_for(conn, build: dict) -> dict:
     """
     Maps a build's {documentId, designId, profileIds} to real DagExecutor
-    root inputs.
+    root inputs (U2).
 
-    Placeholder: A2 has not yet wired manuscript upload to real stored
-    content, so there is no real manuscript behind `documentId` yet to read.
-    Runs the same fixture tracer_bullet.py uses so the queue/cache/artifact
-    mechanism this worker owns is exercised end-to-end today. Replace this
-    function's body -- not its callers -- once A2 lands real manuscript
-    storage; nothing else here needs to change.
+    Reads the manuscript the tenant actually uploaded: build['document_id'] ->
+    manuscripts.source_sha256 -> the DOCX bytes in CAS, fed to the `ingest`
+    stage. A document with no stored source is a BAD_INPUT failure -- this is
+    the same lesson as `acquire`'s silent fixture substitution (commit
+    7a4401b), applied one layer up. Never fall back to a fixture.
     """
+    document_id = build["document_id"]
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT source_sha256 FROM manuscripts WHERE id = %s", (document_id,))
+        row = cur.fetchone()
+
+    source_sha = (row or {}).get("source_sha256")
+    if not source_sha:
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"document {document_id} has no stored manuscript source. "
+                    "Upload the manuscript first -- refusing to build a fixture "
+                    "in its place.",
+        )
+    if not _SHA256_RE.fullmatch(source_sha):
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"document {document_id} has a malformed source_sha256 {source_sha!r}",
+        )
+    cas_path = CAS_ROOT / source_sha[:2] / source_sha[2:4] / source_sha
+    if not cas_path.is_file():
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"manuscript bytes for {document_id} are not in CAS at "
+                    f"{cas_path} -- the upload is incomplete",
+        )
+
+    profile_name = _resolve_profile_name(build)
+
     return {
-        "acquire": {"manifest_path": "corpus/manuscripts/minimal-novel.ast.json"},
+        "ingest": {"docx_path": str(cas_path)},
         # The same profile drives all three: design-compile grows the page box by
         # its bleed, finish insets the TrimBox by it, preflight measures it.
-        "design-compile": {"designspec_path": None, "profile_name": "Generic 6x9"},
-        "finish": {"profile_name": "Generic 6x9"},
-        "preflight": {"profile_name": "Generic 6x9"},
+        "design-compile": {"designspec_path": None, "profile_name": profile_name},
+        "finish": {"profile_name": profile_name},
+        "preflight": {"profile_name": profile_name},
     }
 
 
@@ -110,6 +280,7 @@ def _record_stage(conn, build_id: str, stage_name: str, decl_version: int,
             (build_id, stage_name, decl_version, status, cache_hit, duration_ms,
              psycopg2.extras.Json(metrics)),
         )
+        _notify(conn, build_id, {"stage": stage_name, "status": status})
         conn.commit()
 
 
@@ -143,10 +314,32 @@ def _record_artifact(conn, build_id: str, kind: str, schema_id: str, sha256: str
         conn.commit()
 
 
+def _fail(conn, build_id: str, error_kind: str, error_message: str) -> None:
+    """U1: record a terminal 'failed' state. Called for BOTH expected
+    StageError and unexpected exceptions -- the build must never be left at
+    'running' with nobody holding its lease."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE builds SET status = 'failed', error_kind = %s, error_message = %s, "
+            "completed_at = now() WHERE id = %s",
+            (error_kind, error_message, build_id),
+        )
+        _notify(conn, build_id, {"status": "failed", "error_kind": error_kind})
+        conn.commit()
+
+
 def run_build(conn, build: dict) -> None:
     build_id = build["id"]
-    print(f"[worker] claimed build {build_id}")
+    _CURRENT_BUILD.clear()
+    _CURRENT_BUILD["build_id"] = build_id
+    if build.get("correlation_id"):
+        _CURRENT_BUILD["correlation_id"] = build["correlation_id"]
+    _log_info("claimed build", attempt=build.get("attempt"), lease_s=LEASE_SECONDS)
     registry = get_registry()
+    # U2: this worker renders what the tenant uploaded. Select `ingest` (the real
+    # DOCX path) -- idempotent, and it forces the requirement in-process even if
+    # something else flipped the registry to the fixture loader `acquire`.
+    registry.select_implementation("ingest", "ingest")
     executor = DagExecutor(registry, allow_stub_engines=False)
     cache_store = PostgresCacheStore(_dsn())
 
@@ -165,11 +358,15 @@ def run_build(conn, build: dict) -> None:
                 conn, build_id, art.kind, decl.outputs.get(art.kind, ""),
                 art.hash, art.media_type, art.size,
             )
+        # U1: a stage just finished -- the build is alive, extend the lease.
+        # A build that takes longer than one lease period between stages is
+        # pathological and will be reclaimed; every healthy build renews here.
+        _renew_lease(conn, build_id)
 
     try:
         results = executor.execute(
             build_id=build_id,
-            initial_inputs=_initial_inputs_for(build),
+            initial_inputs=_initial_inputs_for(conn, build),
             cas_root=CAS_ROOT,
             cache_store=cache_store,
             on_stage_complete=_on_stage,
@@ -179,24 +376,49 @@ def run_build(conn, build: dict) -> None:
                 "UPDATE builds SET status = 'completed', completed_at = now() WHERE id = %s",
                 (build_id,),
             )
+            _notify(conn, build_id, {"status": "completed"})
             conn.commit()
-        print(f"[worker] build {build_id} completed -- {len(results)} stages")
+        _log_info("build completed", stages=len(results))
 
     except StageError as e:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE builds SET status = 'failed', error_kind = %s, error_message = %s, "
-                "completed_at = now() WHERE id = %s",
-                (e.kind.value, e.message, build_id),
-            )
-            conn.commit()
-        print(f"[worker] build {build_id} failed: [{e.kind}] {e.message}")
+        # Expected: a gate refused the build, or the input was bad. The build
+        # reaches a terminal state and the worker keeps going.
+        _fail(conn, build_id, e.kind.value, e.message)
+        _log_info("build failed", error_kind=e.kind.value, error=e.message)
+
+    except Exception as e:
+        # Unexpected: a bug, OOM, disk full. Record 'failed' FIRST so the build
+        # reaches a terminal state, THEN let the process die loudly -- the
+        # caller (main) propagates this out of the poll loop and exits non-zero.
+        # U1: recording before re-raising is the whole point; without it the row
+        # would sit at 'running' with an expired lease until another worker
+        # reclaimed it, indistinguishable from a build still in flight.
+        _fail(conn, build_id, "INTERNAL", f"{type(e).__name__}: {e}")
+        _log_info("build crashed -- recorded as failed, process exiting",
+                  error_type=type(e).__name__, error=str(e))
+        raise
+
+
+_stop_requested = False
+
+
+def _handle_sigterm(signum, frame):
+    """U1: graceful shutdown. Finish the current build, do not claim another,
+    exit 0. Without this every `docker compose up -d --build` orphans an
+    in-flight build for a full lease period."""
+    global _stop_requested
+    _stop_requested = True
 
 
 def main() -> int:
     dsn = _dsn()
-    print(f"[worker] starting, polling every {POLL_INTERVAL_S}s")
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    _log_info("starting", poll_interval_s=POLL_INTERVAL_S, lease_s=LEASE_SECONDS,
+              max_attempts=MAX_ATTEMPTS)
     while True:
+        if _stop_requested:
+            _log_info("SIGTERM received -- exiting cleanly, no new claims")
+            return 0
         # A worker that dies on a transient database blip is a worker that
         # silently stops draining the queue. Restarting Postgres killed this
         # process outright ("the database system is shutting down") and every
@@ -207,19 +429,25 @@ def main() -> int:
         try:
             conn = psycopg2.connect(dsn)
         except psycopg2.OperationalError as e:
-            print(f"[worker] database unavailable, retrying in {POLL_INTERVAL_S}s: {e}")
+            _log_info("database unavailable, retrying", error=str(e))
             time.sleep(POLL_INTERVAL_S)
             continue
         try:
             build = _claim_build(conn)
             if build is not None:
                 run_build(conn, build)
+                _CURRENT_BUILD.clear()
                 continue
         except psycopg2.OperationalError as e:
-            print(f"[worker] lost the database mid-poll, reconnecting: {e}")
+            _log_info("lost the database mid-poll, reconnecting", error=str(e))
         finally:
             conn.close()
-        time.sleep(POLL_INTERVAL_S)
+        if _stop_requested:
+            _log_info("SIGTERM received after build -- exiting cleanly")
+            return 0
+        # U1: jitter the poll. Ten workers polling on a fixed tick are a
+        # synchronised thundering herd against one row.
+        time.sleep(POLL_INTERVAL_S * (0.5 + random.random()))
 
 
 if __name__ == "__main__":

@@ -226,7 +226,6 @@ class AgentRuntime:
     def __init__(self, registry: Optional[ToolRegistry] = None):
         self._registry = registry or _GLOBAL_TOOLS
         self._budgets: dict[str, TaskBudget] = {}
-        self._active_calls: dict[str, AgentCall] = {}
     
     def set_budget(self, role: AgentRole, budget: TaskBudget):
         self._budgets[role.value] = budget
@@ -273,7 +272,6 @@ class AgentRuntime:
                 f"max_turns={budget.max_turns} for role '{role.value}'"
             )
             call.latency_ms = int((time.monotonic() - start) * 1000)
-            self._active_calls[call.started_at] = call
             return AgentResult(role=role, call=call, output={"error": call.error, "proposals": []}, failed=True)
 
         if subagent_requests > budget.max_subagents:
@@ -282,7 +280,6 @@ class AgentRuntime:
                 f"max_subagents={budget.max_subagents} for role '{role.value}'"
             )
             call.latency_ms = int((time.monotonic() - start) * 1000)
-            self._active_calls[call.started_at] = call
             return AgentResult(role=role, call=call, output={"error": call.error, "proposals": []}, failed=True)
 
         try:
@@ -297,8 +294,6 @@ class AgentRuntime:
             call.latency_ms = int((time.monotonic() - start) * 1000)
             output = {"error": call.error, "proposals": []}
             failed = True
-
-        self._active_calls[call.started_at] = call
 
         return AgentResult(
             role=role,

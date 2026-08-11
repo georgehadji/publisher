@@ -63,6 +63,13 @@ class DagExecutor:
         initial_inputs = initial_inputs or {}
         producers: dict[str, list[str]] = {}
         for decl in self._registry.all():
+            # Selection-blindness guard: a deselected alternative (e.g. the
+            # fixture loader `acquire` when `ingest` is selected) must not be a
+            # producer here -- derive_dag()/check_integrity() already exclude
+            # it, and a half-updated initial_inputs key must fail loudly rather
+            # than silently execute the deselected implementation.
+            if not self._registry._is_active(decl.name):
+                continue
             for schema_id in decl.outputs.values():
                 producers.setdefault(schema_id, []).append(decl.name)
 
@@ -72,6 +79,8 @@ class DagExecutor:
             changed = False
             for decl in self._registry.all():
                 if decl.name in reachable:
+                    continue
+                if not self._registry._is_active(decl.name):
                     continue
                 root_set = set(decl.root_inputs or [])
                 supplied = set(initial_inputs.get(decl.name, {}).keys())
@@ -357,6 +366,10 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
     import stages  # noqa: F401 — import for its registration side effect
 
     registry = get_registry()
+    # The registry default-selects `ingest` (U2: a build renders what the tenant
+    # submitted, never a fixture). This local harness runs off the synthetic
+    # corpus, so it explicitly selects the fixture loader `acquire` instead.
+    registry.select_implementation("ingest", "acquire")
     executor = DagExecutor(registry, allow_stub_engines=True)
 
     print("=" * 60)

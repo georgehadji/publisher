@@ -198,7 +198,7 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
 
 @stage(
     name="paginate",
-    version=3,
+    version=4,   # v4: pagemap/1 declared terminal (U6)
     inputs={"doc_path": "doc-effective/1", "css_path": "text/css"},
     # NEITHER is a root input: `css_path`'s schema (text/css) is produced by
     # `design-compile`; `doc_path`'s (doc-effective/1) by `resolve`, which itself
@@ -208,6 +208,7 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
     # F2.1, §5.1 P0). Do not "fix" a broken reachability chain by promoting an input
     # to root; fix the chain instead.
     outputs={"pdf": "raw-pdf/1", "pagemap": "pagemap/1"},
+    terminal_outputs=["pagemap"],   # delivered via the API, never consumed
     toolchain=["render-engine"],
     fixtures="fixtures/paginate/v1",
     memory_budget_mb=256,
