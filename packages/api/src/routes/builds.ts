@@ -94,6 +94,12 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
       const channel = `build_${id}`;
       const seen = new Set<string>();
       let closed = false;
+      // True once reply.hijack() hands raw socket control to this handler.
+      // Before that point the response is Fastify-managed: close() must NOT
+      // call reply.raw.end() or it tears down the socket before Fastify can
+      // send its own error response (the client gets a truncated stream
+      // instead of a proper 500 when setup fails).
+      let hijacked = false;
       let client: pg.PoolClient | null = null;
 
       const writeEvent = (event: string, data: unknown) => {
@@ -114,7 +120,9 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
           }
           held.release();
         }
-        reply.raw.end();
+        if (hijacked) {
+          reply.raw.end();
+        }
       };
 
       // 30 s keep-alive cap (same as the polling version) so abandoned
@@ -154,6 +162,7 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
         // Fastify SSE pattern -- without it, the raw stream is closed as soon
         // as the handler resolves).
         reply.hijack();
+        hijacked = true;
         reply.raw.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
@@ -184,6 +193,11 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
         }
       } catch (err) {
         request.log.error({ err, buildId: id }, 'SSE setup failed');
+        if (!hijacked) {
+          // Setup failed before the socket was hijacked: Fastify owns the
+          // response here, so send a real error instead of an empty stream.
+          return reply.code(500).send({ error: 'SSE setup failed' });
+        }
         await close();
       }
     }

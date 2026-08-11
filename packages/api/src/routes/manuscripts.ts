@@ -192,6 +192,15 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
   // ── Overrides ────────────────────────────────────────────────
   server.patch<{ Params: { id: string }; Body: { ops: unknown[] } }>(
     '/v1/documents/:id/overrides',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['ops'],
+          properties: { ops: { type: 'array' } },
+        },
+      },
+    },
     async (request, reply) => {
       // A "document" is a structured manuscript -- same store, same ownership
       // check as /v1/manuscripts/:id/structure.

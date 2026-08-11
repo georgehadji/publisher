@@ -18,6 +18,10 @@
       "schema": "pdfx/1"
     },
     {
+      "kind": "proof",
+      "schema": "proof-pdf/1"
+    },
+    {
       "kind": "report",
       "schema": "finish-report/1"
     }
@@ -32,6 +36,7 @@
       },
       "expectedFiles": {
         "pdf": "expected/tracer-bullet.pdf.json",
+        "proof": "expected/tracer-bullet.proof.json",
         "report": "expected/tracer-bullet.report.json"
       }
     }

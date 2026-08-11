@@ -23,6 +23,15 @@ export async function createApp() {
     // upload goes to the CAS via its own streamed route, not through the JSON
     // body parser.
     bodyLimit: 1 * 1024 * 1024,
+    // D1 fix: Fastify's default AJV config coerces types (coerceTypes: 'array'),
+    // so `{"ops": "not-an-array"}` silently became `["not-an-array"]` and passed
+    // the `type: 'array'` schema check. Validation must be strict: a string is
+    // NOT an array, and a route that accepts it is accepting a type its schema
+    // says it rejects. No route depends on coercion (verified: no numeric
+    // request params anywhere), so disabling it changes nothing else.
+    ajv: {
+      customOptions: { coerceTypes: false },
+    },
   });
 
   // Auth + idempotency hooks and the security plugins MUST be registered

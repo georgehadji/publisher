@@ -13,7 +13,7 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 
 from publisher_prepress.preflight import run_preflight
 from publisher_prepress.geometry import spine_width, cover_dimensions, TrimSize, BleedBox
-from publisher_prepress.ghostscript import GhostscriptError, find_binary, to_pdfx
+from publisher_prepress.ghostscript import GhostscriptError, find_binary, to_pdfx, to_proof
 from profiles import load_profile
 
 
@@ -258,15 +258,15 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
 
 @stage(
     name="finish-gs",
-    version=7,   # v7: report declared a terminal output (U6); v6 = TrimBox/bleed change
+    version=8,   # v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     # "pdf" -> "pdf_path", "profile" -> "profile_name": see the note on preflight
     # above for why the input dict's KEYS must exactly match this function's
     # actual parameter names.
     inputs={"pdf_path": "raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
-    outputs={"pdf": "pdfx/1", "report": "finish-report/1"},
-    terminal_outputs=["report"],   # delivered via the API, never consumed
+    outputs={"pdf": "pdfx/1", "proof": "proof-pdf/1", "report": "finish-report/1"},
+    terminal_outputs=["proof", "report"],   # delivered via the API, never consumed
     toolchain=["ghostscript", "icc"],
     fixtures="fixtures/finish-gs/v1",
     memory_budget_mb=512,
@@ -319,6 +319,7 @@ def finish_gs(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -> Stag
 
     if gs_binary is not None:
         press_path = work / "press.pdf"
+        proof_path = work / "proof.pdf"
         try:
             to_pdfx(
                 pdf_path_p, press_path, work,
@@ -328,22 +329,29 @@ def finish_gs(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -> Stag
                 bleed_pt=float((profile.get("bleed") or {}).get("all", 0.0)) * 72.0 / 25.4,
                 gs_binary=gs_binary,
             )
+            to_proof(pdf_path_p, proof_path, gs_binary=gs_binary)
         except GhostscriptError as e:
             raise StageError(
                 kind=ErrorKind.ENGINE_BUG,
                 message=f"Ghostscript PDF/X conversion failed: {e}",
             )
         data = press_path.read_bytes()
+        proof_bytes = proof_path.read_bytes()
         status, stub = "passed", 0.0
-        print(f"  [finish-gs] PDF/X-1a via ghostscript ({len(data)}B) | "
-              f"Profile: {profile.get('name', 'unknown')}")
+        print(f"  [finish-gs] PDF/X-1a via ghostscript -- press={len(data)}B, "
+              f"proof={len(proof_bytes)}B | Profile: {profile.get('name', 'unknown')}")
     else:
         data = pdf_path_p.read_bytes()
+        # Stub mode: press and proof share the same unconverted bytes, mirroring
+        # `finish` -- both stay DISTINCT CAS artifacts (distinct schema IDs) so
+        # nothing downstream changes shape between the stub and real paths.
+        proof_bytes = data
         status, stub = "stub", 1.0
         print(f"  [finish-gs] STUB MODE (allow_stub_engines=True) -- ghostscript not "
               f"installed | Profile: {profile.get('name', 'unknown')}")
 
     pdf_ref = cas.put(data, media_type=MediaType("application/pdf"))
+    proof_ref = cas.put(proof_bytes, media_type=MediaType("application/pdf"))
 
     result = {
         "schema": "finish-report/1",
@@ -366,6 +374,12 @@ def finish_gs(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -> Stag
                 hash=str(pdf_ref.hash),
                 media_type="application/pdf",
                 size=len(data),
+            ),
+            StageArtifactRef(
+                kind="proof",
+                hash=str(proof_ref.hash),
+                media_type="application/pdf",
+                size=len(proof_bytes),
             ),
             StageArtifactRef(
                 kind="report",
