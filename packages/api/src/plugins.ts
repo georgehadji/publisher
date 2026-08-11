@@ -71,6 +71,11 @@ export async function registerAuthAndSecurity(server: FastifyInstance): Promise<
   server.addHook('onRequest', async (request, reply) => {
     if (!['POST', 'PATCH', 'PUT'].includes(request.method)) return;
     if (PUBLIC_ROUTES.has(request.routeOptions?.url ?? request.url)) return;
+    // /v1/admin/* is its own auth zone (admin token, no tenantId set) -- the
+    // idempotency INSERT keys on request.tenantId, so a mutation there would
+    // hit a NOT NULL violation. Skip the hook; admin routes today are all
+    // GET (metrics), but a future POST must not silently break on tenancy.
+    if ((request.routeOptions?.url ?? request.url).startsWith('/v1/admin')) return;
 
     const key = request.headers['idempotency-key'];
     if (typeof key !== 'string' || !key) {

@@ -199,6 +199,20 @@ def _resolve_profile_name(build: dict) -> str:
     "Generic 6x9", which would rebuild every book to a demo size.
     """
     ids = build.get("profile_ids") or []
+    # Defensive: JSONB normally comes back deserialized (importing
+    # psycopg2.extras registers the typecaster process-wide), but that is a
+    # global side-effect -- if the cursor factory or import ever changes, the
+    # raw JSON text would arrive here and `ids[0]` would silently become the
+    # first CHARACTER of the JSON literal. Deserialize the string form
+    # explicitly so the read does not depend on a registration side-effect.
+    if isinstance(ids, str):
+        try:
+            ids = json.loads(ids)
+        except json.JSONDecodeError as e:
+            raise StageError(
+                kind=ErrorKind.BAD_INPUT,
+                message=f"build has malformed profile_ids {ids!r}: {e}",
+            )
     if not ids:
         raise StageError(
             kind=ErrorKind.BAD_INPUT,
@@ -343,7 +357,11 @@ def run_build(conn, build: dict) -> None:
     _CURRENT_BUILD["build_id"] = build_id
     if build.get("correlation_id"):
         _CURRENT_BUILD["correlation_id"] = build["correlation_id"]
-    _log_info("claimed build", attempt=build.get("attempt"), lease_s=LEASE_SECONDS)
+    _log_info("claimed build",
+              # _claim_build returns the row BEFORE its own UPDATE incremented
+              # attempt; the attempt this run is ON is pre-value + 1.
+              attempt=(build.get("attempt") or 0) + 1,
+              lease_s=LEASE_SECONDS)
     registry = get_registry()
     # U2: this worker renders what the tenant uploaded. Select `ingest` (the real
     # DOCX path) -- idempotent, and it forces the requirement in-process even if
