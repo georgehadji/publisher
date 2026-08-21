@@ -484,6 +484,13 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
             # glyph from a fallback font. It cost this book a Noto Sans hyphen on
             # roughly every page of Fedra Serif text. U+002D is in everything.
             f'  hyphenate-character: "{hyphen_char}";',
+            # The 3 3 are the minimum characters kept before and after the
+            # break. They also impose a FLOOR on the word length: a word needs
+            # 3 + 3 characters before it can split at all, so any
+            # `shortestWord` below 6 is inert. Measured on a 746-page Greek
+            # manuscript, `4 3 3`, `5 3 3` and `6 3 3` at the same zone produce
+            # byte-identical hyphenation (3465 of 30538 lines). A spec asking
+            # for less than 6 gets a Diagnostic rather than silence.
             f"  hyphenate-limit-chars: {shortest_word} 3 3;",
             *([f"  hyphenate-limit-zone: {float(hyphen_zone):g}mm;"]
               if hyphen_zone else []),
@@ -730,7 +737,7 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # v7: the folio takes the heading face and the running-head size. It was
     # pinned to the body face at a hard-coded 9pt, so it neither followed the
     # spec's `headingFont` nor noticed the body dropping to 9pt.
-    version=7,
+    version=8,
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
     # `profile_name` is optional so that a build which omits it still renders --
@@ -856,6 +863,26 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None,
         ))
         print(f"    WARN hyphen_ladder_not_enforced: consecutiveHyphens="
               f"{hyph['consecutiveHyphens']} cannot be enforced by this engine")
+
+    if hyph.get("shortestWord") is not None and int(hyph["shortestWord"]) < 6:
+        warnings.append(Diagnostic(
+            code="shortest_word_below_break_floor",
+            severity="warning",
+            human_message=(
+                f"DesignSpec sets hyphenation.shortestWord="
+                f"{hyph['shortestWord']}, but the emitter keeps 3 characters on "
+                "each side of a break, so no word shorter than 6 can hyphenate "
+                "whatever this value says. Values below 6 have no effect at all."
+            ),
+            suggested_fix=(
+                "Set shortestWord to 6 or more to make it meaningful, or tune "
+                "hyphenation.zone -- which is the field that actually changes "
+                "how many words break."
+            ),
+            source_ref="designspec:hyphenation.shortestWord",
+        ))
+        print(f"    WARN shortest_word_below_break_floor: shortestWord="
+              f"{hyph['shortestWord']} is below the 3+3 break floor of 6")
 
     verso_source = (spec.get("runningHeads") or {}).get("versoSource")
     if verso_source == "book-title":

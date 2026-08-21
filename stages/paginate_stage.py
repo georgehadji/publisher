@@ -24,7 +24,7 @@ import json
 import re
 from pathlib import Path
 
-from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef
+from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, Diagnostic, ArtifactRef as StageArtifactRef
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 
 
@@ -129,6 +129,42 @@ def _chapter_start_pages(chapters: list[dict], rendered_pages) -> dict[str, int]
     return starts
 
 
+def _text_outside_page(rendered_pages) -> dict[int, int]:
+    """Pages carrying text drawn outside the page box, and how many characters.
+
+    WeasyPrint 62.3 does not split a footnote across pages. A note taller than the
+    area it is given is laid out in full anyway and the excess is drawn BELOW the
+    page edge -- present in the PDF content stream, absent from the printed sheet.
+
+    Nothing else in the pipeline can see this. `ast-assemble` compares text before
+    layout, and every PDF text extractor (pdfplumber, pdftotext, Ghostscript)
+    returns off-page glyphs like any other, so a text-equality check on the
+    rendered PDF passes with the text missing from the page. Only the laid-out
+    geometry shows it, which is why it is measured here.
+    """
+    from weasyprint.formatting_structure import boxes as _boxes
+
+    lost: dict[int, int] = {}
+    for index, page in enumerate(rendered_pages, start=1):
+        height = page.height
+        count = 0
+
+        def walk(box):
+            nonlocal count
+            if isinstance(box, _boxes.TextBox):
+                # position_y is the top of the line box in page coordinates.
+                if box.position_y < 0 or box.position_y + box.height > height:
+                    count += len(box.text or "")
+                return
+            for child in getattr(box, "children", ()) or ():
+                walk(child)
+
+        walk(page._page_box)
+        if count:
+            lost[index] = count
+    return lost
+
+
 def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dict:
     """Assemble a `pagemap/1` describing which chapter occupies which page.
 
@@ -207,7 +243,7 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
     # language instead of a hardcoded lang="en". WeasyPrint picks its Pyphen
     # dictionary from that attribute, so every v4 render of a non-English book
     # was hyphenated with ENGLISH patterns -- wrong break points, silently.
-    version=5,   # v4: pagemap/1 declared terminal (U6)
+    version=6,   # v5: detect text laid out beyond the page edge (footnote overflow)
     inputs={"doc_path": "doc-effective/1", "css_path": "text/css"},
     # NEITHER is a root input: `css_path`'s schema (text/css) is produced by
     # `design-compile`; `doc_path`'s (doc-effective/1) by `resolve`, which itself
@@ -309,6 +345,31 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
 
     print(f"  [paginate] Produced {page_count} page(s): PDF={ref.hash}, pagemap={pm_ref.hash}")
 
+    warnings: list[Diagnostic] = []
+    overflow = _text_outside_page(rendered_pages) if rendered_pages is not None else {}
+    if overflow:
+        pages = ", ".join(str(p) for p in sorted(overflow)[:10])
+        total = sum(overflow.values())
+        warnings.append(Diagnostic(
+            code="text_outside_page",
+            severity="warning",
+            human_message=(
+                f"{total} characters on {len(overflow)} page(s) are laid out beyond "
+                f"the page edge and will not print: page(s) {pages}. This is a "
+                "footnote taller than the page it starts on -- WeasyPrint 62.3 "
+                "lays such a note out in full rather than splitting it, and draws "
+                "the remainder off the sheet."
+            ),
+            suggested_fix=(
+                "Shorten the note, move the quotation into the body as a block "
+                "quote, or carry it to an appendix. No stylesheet setting fixes "
+                "it: the note is taller than the area any page can offer."
+            ),
+            source_ref="paginate:footnote-overflow",
+        ))
+        print(f"    WARN text_outside_page: {total} chars on {len(overflow)} page(s) "
+              f"({pages}) fall outside the page box and will not print")
+
     return StageResult(
         artifacts=[
             StageArtifactRef(
@@ -334,5 +395,9 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
             "output_size_bytes": len(pdf_bytes),
             "renderer_type": 1.0 if renderer else 0.0,
             "stub_engine": 0.0 if renderer else 1.0,
+            # Characters laid out beyond the page edge. Non-zero means the PDF
+            # carries text that will not appear on the printed sheet.
+            "text_outside_page_chars": float(sum(overflow.values())),
         },
+        warnings=warnings,
     )
