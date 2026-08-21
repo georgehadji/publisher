@@ -139,9 +139,10 @@ class Block:
     # Set only in numbered mode: 1 for a top-level section ("5 ..."), 2 for
     # "5.1 ...", and so on. 0 means "not a numbered heading".
     depth: int = 0
-    # Ids of the footnotes anchored in this block, in the order Word placed
-    # their references. Empty for every block that carries no reference.
-    footnote_ids: tuple[str, ...] = ()
+    # (character offset into `text`, footnote id) for each reference Word
+    # placed in this block, in document order. The offset is what lets the call
+    # be set where the author put it instead of at the end of the paragraph.
+    footnote_refs: tuple[tuple[int, str], ...] = ()
 
 
 def _is_upper(text: str) -> bool:
@@ -207,14 +208,26 @@ def read_footnotes(path: str | Path) -> dict[str, str]:
     return notes
 
 
-def _footnote_ids_in(paragraph: Paragraph) -> tuple[str, ...]:
-    """Footnote ids referenced by this paragraph, in document order."""
-    ids = []
-    for ref in paragraph._p.iter(qn("w:footnoteReference")):
-        ref_id = ref.get(qn("w:id"))
-        if ref_id is not None:
-            ids.append(ref_id)
-    return tuple(ids)
+def _footnote_refs_in(paragraph: Paragraph) -> tuple[tuple[int, str], ...]:
+    """(offset, footnote id) for each reference in this paragraph.
+
+    The offset counts characters of `w:t` text seen so far, so it indexes into
+    exactly the string python-docx returns as `paragraph.text` -- the same
+    string that becomes `Block.text`. Walking the XML in document order is what
+    makes the two agree: `paragraph.text` is itself the concatenation of those
+    `w:t` nodes in that order.
+    """
+    refs: list[tuple[int, str]] = []
+    offset = 0
+    for node in paragraph._p.iter():
+        tag = node.tag.split("}")[-1]
+        if tag == "t":
+            offset += len(node.text or "")
+        elif tag == "footnoteReference":
+            ref_id = node.get(qn("w:id"))
+            if ref_id is not None:
+                refs.append((offset, ref_id))
+    return tuple(refs)
 
 
 def read_blocks(path: str | Path) -> list[Block]:
@@ -244,7 +257,7 @@ def read_blocks(path: str | Path) -> list[Block]:
         short = len(text) <= MAX_HEADING_CHARS
         is_heading = short and (_is_upper(text) or style.startswith("Heading"))
         blocks.append(
-            Block(text, style, is_heading, footnote_ids=_footnote_ids_in(item))
+            Block(text, style, is_heading, footnote_refs=_footnote_refs_in(item))
         )
 
     return _apply_numbering(blocks)
@@ -354,7 +367,7 @@ def _apply_numbering(blocks: list[Block]) -> list[Block]:
             # themselves: left as plain blocks so they stay inside the contents
             # section and are emitted as one `toc` item.
             promoted.append(
-                Block(block.text, block.style, bool(depth), depth, block.footnote_ids)
+                Block(block.text, block.style, bool(depth), depth, block.footnote_refs)
             )
         return promoted
 
@@ -367,7 +380,7 @@ def _apply_numbering(blocks: list[Block]) -> list[Block]:
         if not depth and _is_toc_marker(block.text):
             depth = 1
         promoted.append(
-            Block(block.text, block.style, bool(depth), depth, block.footnote_ids)
+            Block(block.text, block.style, bool(depth), depth, block.footnote_refs)
         )
     return promoted
 
@@ -399,31 +412,65 @@ def _footnote(text: str, number: int) -> dict:
     }
 
 
+def _inline_with_footnotes(
+    block: Block, footnotes: dict[str, str], counter: list[int]
+) -> list[dict]:
+    """Inline content for one block, with each footnote AT ITS REFERENCE POINT.
+
+    `footnote` is both a blockNode and an inlineNode in ast/1. Inline is what a
+    footnote reference actually is -- it happens at a point inside a sentence --
+    and it is what puts the call where the author put it: WeasyPrint generates
+    `::footnote-call` wherever the element sits, so a note emitted after the
+    paragraph produced a call hanging off the paragraph's last word, several
+    lines from the sentence it belonged to.
+
+    The text is cut at the offsets `_footnote_refs_in` recorded and the notes
+    are spliced into the gaps. Cutting rather than splitting into separate
+    paragraphs matters: the paragraph stays one paragraph, so no boundary the
+    manuscript does not have is invented, and `ast-assemble` still sees the same
+    text stream on both sides because `_render_inline` walks this list in order.
+    """
+    text = block.text
+    refs = [(o, i) for o, i in block.footnote_refs if footnotes.get(i)]
+    if not refs:
+        return [{"type": "text", "text": text}]
+
+    content: list[dict] = []
+    cursor = 0
+    for offset, note_id in refs:
+        # Word can record an offset past the stripped text (a reference sitting
+        # in trailing whitespace); clamp rather than slice into nothing.
+        offset = max(cursor, min(offset, len(text)))
+        if offset > cursor:
+            content.append({"type": "text", "text": text[cursor:offset]})
+        counter[0] += 1
+        content.append(_footnote(footnotes[note_id], counter[0]))
+        cursor = offset
+    if cursor < len(text):
+        content.append({"type": "text", "text": text[cursor:]})
+    return content
+
+
 def _section_content(
     blocks: list[Block], footnotes: dict[str, str], counter: list[int]
 ) -> list[dict]:
-    """Block nodes for one section, with each block's footnotes trailing it.
-
-    A `footnote` is a blockNode in ast/1, so it cannot sit inside the paragraph
-    that references it; it is emitted immediately after. `float: footnote` in the
-    stylesheet is what actually moves the text to the foot of the page it lands
-    on, and WeasyPrint auto-generates the call where the element sat -- i.e. at
-    the end of the referencing paragraph rather than mid-sentence. That is the
-    one fidelity cost of the schema's block-level footnote; the alternative was
-    splitting paragraphs at every reference, which would fabricate paragraph
-    boundaries the manuscript does not have.
-    """
+    """Block nodes for one section, footnotes inline at their reference points."""
     content: list[dict] = []
     for block in blocks:
+        inline = _inline_with_footnotes(block, footnotes, counter)
         if block.depth >= 2:
-            content.append(_heading(block.text, block.depth))
+            content.append(
+                {
+                    "type": "heading",
+                    "attrs": {
+                        "level": min(block.depth, 6),
+                        "role": _HEADING_ROLE.get(block.depth, "subsubsection"),
+                    },
+                    "content": inline,
+                }
+            )
         else:
-            content.append(_paragraph(block.text))
-        for note_id in block.footnote_ids:
-            text = footnotes.get(note_id)
-            if text:
-                counter[0] += 1
-                content.append(_footnote(text, counter[0]))
+            content.append({"type": "paragraph", "content": inline})
     return content
 
 
@@ -604,26 +651,65 @@ def _assert_no_text_lost(
 ) -> None:
     """Post-condition: no DOCX text was dropped on the way into the AST.
 
-    Compared on whitespace-stripped text, since the AST stores block text
-    verbatim and only the pipeline's own normalizer may collapse runs.
+    Two streams, kept apart on purpose. A paragraph that references a footnote
+    now has its inline content CUT at the reference point, with the note spliced
+    into the gap -- so a single flat concatenation of every text node would read
+    "...οποιουσδήποτε μανθάνοντες<the whole note> και σε οποιαδήποτε..." and the
+    block's own text would no longer appear in it contiguously. Rejoining each
+    block's pieces without the note reconstructs exactly the string
+    `paragraph.text` gave us, and the notes are checked as their own stream.
+
+    Weakening this to a substring-of-anything test would have been the easy fix
+    and the wrong one: contiguity is what makes it a text-loss check rather than
+    a character-set check.
     """
-    emitted: list[str] = []
+    body_parts: list[str] = []
+    note_parts: list[str] = []
+
+    def inline_text(nodes, sink: list[str]) -> None:
+        for node in nodes or []:
+            if not isinstance(node, dict):
+                continue
+            if node.get("type") == "text":
+                sink.append(node.get("text", ""))
+            elif node.get("type") == "footnote":
+                inner: list[str] = []
+                inline_text(node.get("content"), inner)
+                note_parts.append("".join(inner))
+            else:
+                # emphasis, crossReference, ... -- transparent wrappers whose
+                # text belongs to the block that contains them.
+                inline_text(node.get("content"), sink)
 
     def walk(node) -> None:
-        if isinstance(node, dict):
-            if node.get("type") == "text":
-                emitted.append(node.get("text", ""))
-            title = (node.get("attrs") or {}).get("title")
-            if title:
-                emitted.append(title)
-            for key in ("frontMatter", "body", "backMatter", "content"):
-                walk(node.get(key))
-        elif isinstance(node, list):
+        if isinstance(node, list):
             for item in node:
                 walk(item)
+            return
+        if not isinstance(node, dict):
+            return
+
+        title = (node.get("attrs") or {}).get("title")
+        if title:
+            body_parts.append(title)
+
+        kind = node.get("type")
+        if kind in ("paragraph", "heading"):
+            sink: list[str] = []
+            inline_text(node.get("content"), sink)
+            body_parts.append("".join(sink))
+            return
+        if kind == "footnote":
+            inner: list[str] = []
+            inline_text(node.get("content"), inner)
+            note_parts.append("".join(inner))
+            return
+
+        for key in ("frontMatter", "body", "backMatter", "content"):
+            walk(node.get(key))
 
     walk(ast)
-    haystack = " ".join(emitted)
+    haystack = " ".join(p for p in (*body_parts, *note_parts) if p)
 
     missing = [b.text for b in blocks if b.text not in haystack]
     if missing:
@@ -643,12 +729,24 @@ def _assert_no_text_lost(
         )
 
 
+def _blank_leaf() -> dict:
+    """One reserved leaf at the front of the book.
+
+    A bare `pageBreak` blockNode, which `frontMatterNode` admits directly
+    alongside the typed items. It carries no text, so it adds nothing to either
+    side of the integrity comparison -- it is structure, and the stylesheet
+    turns it into a page with no folio and no running head.
+    """
+    return {"type": "pageBreak", "attrs": {"breakType": "page"}}
+
+
 def docx_to_ast(
     path: str | Path,
     *,
     title: str | None = None,
     language: str = "el-GR",
     manuscript_id: str | None = None,
+    blank_leading_pages: int = 0,
 ) -> dict:
     """Convert a DOCX manuscript into an `ast/1` document.
 
@@ -754,6 +852,13 @@ def docx_to_ast(
                 "content": content,
             }
         )
+
+    if blank_leading_pages:
+        # Prepended, so they precede even the half title. Reserved for the
+        # material a publisher sets last (half title, title, copyright,
+        # dedication); the manuscript does not supply it and the pipeline must
+        # not invent it, so they are left empty.
+        front_matter[:0] = [_blank_leaf() for _ in range(blank_leading_pages)]
 
     if toc_blocks:
         # Inserted at the contents page's own position in the front matter, not

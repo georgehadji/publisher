@@ -29,7 +29,7 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 
 
 PAGE_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
+<html lang="{lang}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -41,6 +41,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 {html}
 </body>
 </html>"""
+
+
+def _escape_attr(value: str) -> str:
+    """Minimal attribute escaping for the one interpolated attribute here."""
+    return str(value).replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
 
 
 def _check_available() -> str | None:
@@ -198,7 +203,11 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
 
 @stage(
     name="paginate",
-    version=4,   # v4: pagemap/1 declared terminal (U6)
+    # v5: the rendered document element now carries the manuscript's own
+    # language instead of a hardcoded lang="en". WeasyPrint picks its Pyphen
+    # dictionary from that attribute, so every v4 render of a non-English book
+    # was hyphenated with ENGLISH patterns -- wrong break points, silently.
+    version=5,   # v4: pagemap/1 declared terminal (U6)
     inputs={"doc_path": "doc-effective/1", "css_path": "text/css"},
     # NEITHER is a root input: `css_path`'s schema (text/css) is produced by
     # `design-compile`; `doc_path`'s (doc-effective/1) by `resolve`, which itself
@@ -235,7 +244,13 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
         from stages.design_compile_stage import _default_designspec, _emit_css
         css = _emit_css(_default_designspec())
 
-    full_html = PAGE_TEMPLATE.format(css=css, html=html_body)
+    # `hyphens: auto` is inert without this. WeasyPrint chooses its Pyphen
+    # dictionary from the document element's `lang`, and the template hardcoded
+    # "en" -- so a Greek manuscript asking for hyphenation would have been
+    # hyphenated with ENGLISH patterns, breaking Greek words at points no Greek
+    # dictionary would allow. The AST already carries the real language.
+    lang = (doc.get("metadata") or {}).get("language") or "en"
+    full_html = PAGE_TEMPLATE.format(css=css, html=html_body, lang=_escape_attr(lang))
 
     chapters = _chapters_in_order(html_body)
 

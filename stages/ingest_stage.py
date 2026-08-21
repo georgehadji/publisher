@@ -75,9 +75,13 @@ def _check_zip_limits(source: Path) -> None:
     # a v1 AST for a manuscript with footnotes is missing every one of them.
     # Replaying one would silently reinstate the loss this bump exists to end.
     version=2,
-    inputs={"docx_path": "raw-docx/1"},
+    inputs={"docx_path": "raw-docx/1", "blank_leading_pages": "page-count/1"},
     outputs={"source": "raw-source/1"},
-    root_inputs=["docx_path"],
+    root_inputs=["docx_path", "blank_leading_pages"],
+    # Optional, so a build that says nothing about front leaves stays reachable
+    # and gets none. Declared rather than inferred from the parameter default --
+    # the same distinction `resolve`'s `overrides_path` makes.
+    optional_root_inputs=["blank_leading_pages"],
     implements="ingest",  # alternative to `acquire`; see module docstring
     toolchain=[],
     fixtures=None,
@@ -85,7 +89,8 @@ def _check_zip_limits(source: Path) -> None:
     queue="q.ingest",
     description="Convert an uploaded DOCX manuscript into the ast/1 source",
 )
-def ingest(ctx: StageCtx, docx_path: str | None = None) -> StageResult:
+def ingest(ctx: StageCtx, docx_path: str | None = None,
+           blank_leading_pages: int | str | None = None) -> StageResult:
     """
     Convert a tenant's DOCX (bytes stored in CAS by the upload route) into an
     ast/1 document, and store that as `raw-source/1` for the rest of the DAG.
@@ -120,7 +125,23 @@ def ingest(ctx: StageCtx, docx_path: str | None = None) -> StageResult:
     _check_zip_limits(source)
 
     try:
-        ast = docx_to_ast(source, manuscript_id=ctx.build_id)
+        leaves = int(blank_leading_pages or 0)
+    except (TypeError, ValueError):
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"blank_leading_pages must be an integer, got "
+                    f"{blank_leading_pages!r}",
+        )
+    if leaves < 0:
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"blank_leading_pages cannot be negative (got {leaves})",
+        )
+
+    try:
+        ast = docx_to_ast(
+            source, manuscript_id=ctx.build_id, blank_leading_pages=leaves
+        )
     except IngestError as e:
         raise StageError(
             kind=ErrorKind.BAD_INPUT,

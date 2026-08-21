@@ -1,6 +1,6 @@
 {
   "schema": "designspec/1",
-  "name": "Greek 17x24 -- 20mm margins",
+  "name": "Greek 17x24 -- Noto, 25mm inner",
   "preferredEngine": "chrome-pagedjs",
   "trimSize": {
     "width": 170.0,
@@ -9,10 +9,10 @@
   },
   "typography": {
     "bodyFont": {
-      "family": "EB Garamond"
+      "family": "Noto Serif"
     },
     "headingFont": {
-      "family": "EB Garamond"
+      "family": "Noto Sans"
     },
     "bodySize": 10.5,
     "leading": 14.173,
@@ -20,7 +20,8 @@
     "measure": 66,
     "bodyAlignment": "justified",
     "paragraphIndent": 1.5,
-    "opticalMargins": true
+    "opticalMargins": true,
+    "footnoteSize": 8.5
   },
   "grid": {
     "type": "single",
@@ -29,7 +30,7 @@
   "margins": {
     "top": 20,
     "bottom": 20,
-    "inside": 20,
+    "inside": 25,
     "outside": 20,
     "gutter": 0
   },
@@ -41,7 +42,7 @@
   },
   "runningHeads": {
     "rectoSource": "chapter-title",
-    "versoSource": "book-title",
+    "versoSource": "chapter-title",
     "style": "centered"
   },
   "chapterOpenings": {
@@ -53,17 +54,27 @@
   },
   "fonts": [
     {
-      "family": "EB Garamond",
+      "family": "Noto Serif",
       "style": "regular",
       "source": "bundled_ofl"
     },
     {
-      "family": "EB Garamond",
+      "family": "Noto Serif",
       "style": "italic",
       "source": "bundled_ofl"
     },
     {
-      "family": "EB Garamond",
+      "family": "Noto Serif",
+      "style": "bold",
+      "source": "bundled_ofl"
+    },
+    {
+      "family": "Noto Sans",
+      "style": "regular",
+      "source": "bundled_ofl"
+    },
+    {
+      "family": "Noto Sans",
       "style": "bold",
       "source": "bundled_ofl"
     }
@@ -72,10 +83,15 @@
     "text": "#000000",
     "paper": "#FFFFFF"
   },
-  "templateId": "greek-17x24-20mm",
+  "templateId": "greek-17x24-noto",
   "hyphenation": {
     "language": "el",
-    "shortestWord": 5,
-    "consecutiveHyphens": 2
+    "zone": 26.0,
+    "shortestWord": 8,
+    "consecutiveHyphens": 3
+  },
+  "footnoteRule": {
+    "width": 72,
+    "thickness": 0.25
   }
 }

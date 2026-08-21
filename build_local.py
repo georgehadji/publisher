@@ -62,7 +62,8 @@ def _cas_path(cas_root: Path, digest: str) -> Path:
 
 
 def build(docx: Path, profile: str, designspec: Path | None, out_dir: Path,
-          cas_root: Path, build_id: str | None = None) -> int:
+          cas_root: Path, build_id: str | None = None,
+          blank_leading_pages: int = 0) -> int:
     if not docx.is_file():
         print(f"FAILED: manuscript not found: {docx}")
         return 2
@@ -85,12 +86,16 @@ def build(docx: Path, profile: str, designspec: Path | None, out_dir: Path,
     print(f"  manuscript : {docx}")
     print(f"  profile    : {profile}")
     print(f"  designspec : {designspec or '(built-in default)'}")
+    print(f"  blank front: {blank_leading_pages} page(s)")
     print(f"  cas root   : {cas_root}")
     print(f"  output     : {out_dir}")
     print()
 
     initial_inputs = {
-        "ingest": {"docx_path": str(docx)},
+        "ingest": {
+            "docx_path": str(docx),
+            "blank_leading_pages": blank_leading_pages,
+        },
         # One profile name to all three stages with a say in page geometry:
         # design-compile grows the page box by its bleed, finish insets the
         # TrimBox by the same amount, preflight measures the result.
@@ -155,9 +160,11 @@ def main() -> int:
                     help="Directory to copy the finished artifacts into")
     ap.add_argument("--cas-root", type=Path, default=Path("./.publisher/cas"))
     ap.add_argument("--build-id", default=None)
+    ap.add_argument("--blank-pages", type=int, default=0,
+                    help="Reserved blank leaves at the front of the book")
     args = ap.parse_args()
     return build(args.docx, args.profile, args.designspec, args.out,
-                 args.cas_root, args.build_id)
+                 args.cas_root, args.build_id, args.blank_pages)
 
 
 if __name__ == "__main__":

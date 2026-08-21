@@ -15,7 +15,7 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType, ArtifactR
 
 
 HTML_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
+<html lang="{lang}">
 <head>
 <meta charset="UTF-8">
 <title>{title}</title>
@@ -40,6 +40,13 @@ def _ast_to_html(ast: dict) -> str:
     # Process front matter
     front_matter = ast.get("frontMatter") or []
     for item in front_matter:
+        # `frontMatterNode` admits a bare blockNode as well as the typed
+        # {type, content} items -- a reserved blank leaf is a lone `pageBreak`.
+        # Wrapping one in `.front-matter` would give it that class's
+        # `break-before: recto` and turn each reserved leaf into two pages.
+        if "content" not in item:
+            parts.append(_render_content([item]))
+            continue
         parts.append(f'<div class="front-matter {item.get("type", "unknown")}">')
         parts.append(_render_content(item.get("content", [])))
         parts.append("</div>")
@@ -64,7 +71,12 @@ def _ast_to_html(ast: dict) -> str:
         parts.append(_render_content(item.get("content", [])))
         parts.append("</div>")
     
-    return HTML_TEMPLATE.format(title=_escape_html(title), body="\n".join(parts))
+    language = (ast.get("metadata") or {}).get("language") or "en"
+    return HTML_TEMPLATE.format(
+        title=_escape_html(title),
+        body="\n".join(parts),
+        lang=_escape_html(language),
+    )
 
 
 def _render_content(content: list) -> str:
@@ -204,6 +216,14 @@ def _render_inline(content: list) -> str:
         
         elif ntype == "superscript":
             parts.append(f"<sup>{_render_inline(node.get('content', []))}</sup>")
+
+        elif ntype == "footnote":
+            # Inline here, at the reference point, so WeasyPrint puts the call
+            # exactly where the author put it. Same markup as the block-level
+            # branch; only the position differs.
+            parts.append(
+                f'<span class="footnote">{_render_inline(node.get("content", []))}</span>'
+            )
 
         elif ntype == "crossReference":
             # `href` is what earns the entry its page number: the stylesheet

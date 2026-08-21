@@ -5,184 +5,581 @@
   "description": "Engine-agnostic typographic specification. One source, three emitters (CSS, IDML, Typst).",
   "type": "object",
   "properties": {
-    "schema": { "type": "string", "enum": ["designspec/1"] },
-    "name": { "type": "string", "maxLength": 128 },
-    "templateId": { "type": "string", "maxLength": 64 },
+    "schema": {
+      "type": "string",
+      "enum": [
+        "designspec/1"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "templateId": {
+      "type": "string",
+      "maxLength": 64
+    },
     "preferredEngine": {
       "type": "string",
-      "enum": ["chrome-pagedjs", "typst", "prince"],
+      "enum": [
+        "chrome-pagedjs",
+        "typst",
+        "prince"
+      ],
       "default": "typst"
     },
-    "trimSize": { "$ref": "#/$defs/trimSize" },
-    "typography": { "$ref": "#/$defs/typography" },
-    "grid": { "$ref": "#/$defs/grid" },
-    "margins": { "$ref": "#/$defs/margins" },
-    "folio": { "$ref": "#/$defs/folio" },
-    "runningHeads": { "$ref": "#/$defs/runningHeads" },
-    "chapterOpenings": { "$ref": "#/$defs/chapterOpenings" },
+    "trimSize": {
+      "$ref": "#/$defs/trimSize"
+    },
+    "typography": {
+      "$ref": "#/$defs/typography"
+    },
+    "grid": {
+      "$ref": "#/$defs/grid"
+    },
+    "margins": {
+      "$ref": "#/$defs/margins"
+    },
+    "folio": {
+      "$ref": "#/$defs/folio"
+    },
+    "runningHeads": {
+      "$ref": "#/$defs/runningHeads"
+    },
+    "chapterOpenings": {
+      "$ref": "#/$defs/chapterOpenings"
+    },
     "fonts": {
       "type": "array",
-      "items": { "$ref": "#/$defs/fontSpec" },
+      "items": {
+        "$ref": "#/$defs/fontSpec"
+      },
       "maxItems": 20
     },
-    "ornaments": { "$ref": "#/$defs/ornaments" },
-    "hyphenation": { "$ref": "#/$defs/hyphenation" },
-    "colors": { "$ref": "#/$defs/colors" },
-    "metadata": { "$ref": "#/$defs/specMetadata" }
+    "ornaments": {
+      "$ref": "#/$defs/ornaments"
+    },
+    "hyphenation": {
+      "$ref": "#/$defs/hyphenation"
+    },
+    "colors": {
+      "$ref": "#/$defs/colors"
+    },
+    "metadata": {
+      "$ref": "#/$defs/specMetadata"
+    },
+    "footnoteRule": {
+      "$ref": "#/$defs/footnoteRule"
+    }
   },
-  "required": ["schema", "name", "trimSize", "typography", "grid", "margins", "fonts"],
+  "required": [
+    "schema",
+    "name",
+    "trimSize",
+    "typography",
+    "grid",
+    "margins",
+    "fonts"
+  ],
   "additionalProperties": false,
   "$defs": {
     "trimSize": {
       "type": "object",
       "properties": {
-        "width": { "type": "number", "minimum": 76, "maximum": 340, "description": "mm" },
-        "height": { "type": "number", "minimum": 100, "maximum": 340, "description": "mm" },
-        "unit": { "type": "string", "enum": ["mm", "in"], "default": "mm" }
+        "width": {
+          "type": "number",
+          "minimum": 76,
+          "maximum": 340,
+          "description": "mm"
+        },
+        "height": {
+          "type": "number",
+          "minimum": 100,
+          "maximum": 340,
+          "description": "mm"
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "mm",
+            "in"
+          ],
+          "default": "mm"
+        }
       },
-      "required": ["width", "height"],
+      "required": [
+        "width",
+        "height"
+      ],
       "additionalProperties": false
     },
     "typography": {
       "type": "object",
       "properties": {
-        "bodyFont": { "$ref": "#/$defs/fontRef" },
-        "headingFont": { "$ref": "#/$defs/fontRef" },
-        "bodySize": { "type": "number", "minimum": 6, "maximum": 20, "description": "pt" },
-        "leading": { "type": "number", "minimum": 8, "maximum": 36, "description": "pt" },
-        "scaleRatio": { "type": "number", "minimum": 1.0, "maximum": 3.0, "description": "Modular scale ratio for heading sizes" },
-        "measure": { "type": "integer", "minimum": 30, "maximum": 90, "description": "Optimal characters per line" },
-        "bodyAlignment": { "type": "string", "enum": ["justified", "ragged-right", "ragged-left"], "default": "justified" },
-        "paragraphIndent": { "type": "number", "minimum": 0, "maximum": 5, "description": "em" },
-        "paragraphSpacing": { "type": "number", "minimum": 0, "maximum": 3, "description": "em" },
-        "opticalMargins": { "type": "boolean", "default": true }
+        "bodyFont": {
+          "$ref": "#/$defs/fontRef"
+        },
+        "headingFont": {
+          "$ref": "#/$defs/fontRef"
+        },
+        "bodySize": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 20,
+          "description": "pt"
+        },
+        "leading": {
+          "type": "number",
+          "minimum": 8,
+          "maximum": 36,
+          "description": "pt"
+        },
+        "scaleRatio": {
+          "type": "number",
+          "minimum": 1.0,
+          "maximum": 3.0,
+          "description": "Modular scale ratio for heading sizes"
+        },
+        "measure": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 90,
+          "description": "Optimal characters per line"
+        },
+        "bodyAlignment": {
+          "type": "string",
+          "enum": [
+            "justified",
+            "ragged-right",
+            "ragged-left"
+          ],
+          "default": "justified"
+        },
+        "paragraphIndent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "description": "em"
+        },
+        "paragraphSpacing": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "em"
+        },
+        "opticalMargins": {
+          "type": "boolean",
+          "default": true
+        },
+        "footnoteSize": {
+          "type": "number",
+          "minimum": 4,
+          "maximum": 18,
+          "description": "pt; footnote text size. Defaults to bodySize - 2 when absent."
+        }
       },
-      "required": ["bodyFont", "bodySize", "leading", "measure"],
+      "required": [
+        "bodyFont",
+        "bodySize",
+        "leading",
+        "measure"
+      ],
       "additionalProperties": false
     },
     "grid": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["single", "double", "split"], "default": "single" },
-        "baselineIncrement": { "type": "number", "minimum": 4, "maximum": 36, "description": "pt" },
-        "linesPerPage": { "type": "integer", "minimum": 10, "maximum": 100 }
+        "type": {
+          "type": "string",
+          "enum": [
+            "single",
+            "double",
+            "split"
+          ],
+          "default": "single"
+        },
+        "baselineIncrement": {
+          "type": "number",
+          "minimum": 4,
+          "maximum": 36,
+          "description": "pt"
+        },
+        "linesPerPage": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 100
+        }
       },
       "additionalProperties": false
     },
     "margins": {
       "type": "object",
       "properties": {
-        "top": { "type": "number", "minimum": 5, "maximum": 60, "description": "mm" },
-        "bottom": { "type": "number", "minimum": 5, "maximum": 60, "description": "mm" },
-        "inside": { "type": "number", "minimum": 5, "maximum": 60, "description": "mm" },
-        "outside": { "type": "number", "minimum": 5, "maximum": 60, "description": "mm" },
-        "gutter": { "type": "number", "minimum": 0, "maximum": 30, "description": "mm" }
+        "top": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 60,
+          "description": "mm"
+        },
+        "bottom": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 60,
+          "description": "mm"
+        },
+        "inside": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 60,
+          "description": "mm"
+        },
+        "outside": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 60,
+          "description": "mm"
+        },
+        "gutter": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30,
+          "description": "mm"
+        }
       },
-      "required": ["top", "bottom", "inside", "outside"],
+      "required": [
+        "top",
+        "bottom",
+        "inside",
+        "outside"
+      ],
       "additionalProperties": false
     },
     "folio": {
       "type": "object",
       "properties": {
-        "position": { "type": "string", "enum": ["bottom-center", "bottom-outside", "top-center", "top-outside", "none"], "default": "bottom-center" },
-        "style": { "type": "string", "enum": ["arabic", "roman-lower", "roman-upper", "none"], "default": "arabic" },
+        "position": {
+          "type": "string",
+          "enum": [
+            "bottom-center",
+            "bottom-outside",
+            "top-center",
+            "top-outside",
+            "none"
+          ],
+          "default": "bottom-center"
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "arabic",
+            "roman-lower",
+            "roman-upper",
+            "none"
+          ],
+          "default": "arabic"
+        },
         "suppressOn": {
           "type": "array",
-          "items": { "type": "string", "enum": ["chapter-opening", "chapter-opening-recto", "full-bleed", "title-page", "part-opening"] },
+          "items": {
+            "type": "string",
+            "enum": [
+              "chapter-opening",
+              "chapter-opening-recto",
+              "full-bleed",
+              "title-page",
+              "part-opening"
+            ]
+          },
           "maxItems": 10
         },
-        "startNumber": { "type": "integer", "minimum": 1, "default": 1 },
-        "prefix": { "type": "string", "maxLength": 16 },
-        "suffix": { "type": "string", "maxLength": 16 }
+        "startNumber": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "prefix": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "suffix": {
+          "type": "string",
+          "maxLength": 16
+        }
       },
       "additionalProperties": false
     },
     "runningHeads": {
       "type": "object",
       "properties": {
-        "rectoSource": { "type": "string", "enum": ["chapter-title", "part-title", "book-title", "none"], "default": "chapter-title" },
-        "versoSource": { "type": "string", "enum": ["book-title", "chapter-title", "author", "none"], "default": "book-title" },
-        "style": { "type": "string", "enum": ["centered", "outer-margin", "inner-margin", "shown-and-shoulder"], "default": "centered" },
+        "rectoSource": {
+          "type": "string",
+          "enum": [
+            "chapter-title",
+            "part-title",
+            "book-title",
+            "none"
+          ],
+          "default": "chapter-title"
+        },
+        "versoSource": {
+          "type": "string",
+          "enum": [
+            "book-title",
+            "chapter-title",
+            "author",
+            "none"
+          ],
+          "default": "book-title"
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "centered",
+            "outer-margin",
+            "inner-margin",
+            "shown-and-shoulder"
+          ],
+          "default": "centered"
+        },
         "suppressOn": {
           "type": "array",
-          "items": { "type": "string", "enum": ["chapter-opening", "full-bleed", "title-page", "part-opening"] },
+          "items": {
+            "type": "string",
+            "enum": [
+              "chapter-opening",
+              "full-bleed",
+              "title-page",
+              "part-opening"
+            ]
+          },
           "maxItems": 10
         },
-        "separator": { "type": "string", "maxLength": 8 }
+        "separator": {
+          "type": "string",
+          "maxLength": 8
+        }
       },
       "additionalProperties": false
     },
     "chapterOpenings": {
       "type": "object",
       "properties": {
-        "startsOn": { "type": "string", "enum": ["recto", "verso", "any"], "default": "recto" },
-        "dropCap": { "type": "boolean", "default": true },
-        "dropCapLines": { "type": "integer", "minimum": 2, "maximum": 5, "default": 3 },
-        "titleTreatment": { "type": "string", "enum": ["centered", "recto-only", "shoulder-head", "none"], "default": "centered" },
-        "ornament": { "type": "string", "maxLength": 64 },
-        "firstParagraphStyle": { "type": "string", "enum": ["no-indent", "small-caps", "all-caps", "normal"], "default": "no-indent" }
+        "startsOn": {
+          "type": "string",
+          "enum": [
+            "recto",
+            "verso",
+            "any"
+          ],
+          "default": "recto"
+        },
+        "dropCap": {
+          "type": "boolean",
+          "default": true
+        },
+        "dropCapLines": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 5,
+          "default": 3
+        },
+        "titleTreatment": {
+          "type": "string",
+          "enum": [
+            "centered",
+            "recto-only",
+            "shoulder-head",
+            "none"
+          ],
+          "default": "centered"
+        },
+        "ornament": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "firstParagraphStyle": {
+          "type": "string",
+          "enum": [
+            "no-indent",
+            "small-caps",
+            "all-caps",
+            "normal"
+          ],
+          "default": "no-indent"
+        }
       },
       "additionalProperties": false
     },
     "fontSpec": {
       "type": "object",
       "properties": {
-        "family": { "type": "string", "maxLength": 128 },
-        "style": { "type": "string", "maxLength": 64 },
-        "weight": { "type": "integer", "minimum": 100, "maximum": 900 },
-        "opticalSize": { "type": "number", "minimum": 6, "maximum": 72 },
-        "source": { "type": "string", "enum": ["bundled_ofl", "tenant_upload", "licensed_server"] },
-        "licenseRef": { "type": "string", "maxLength": 128 }
+        "family": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "style": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "weight": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 900
+        },
+        "opticalSize": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 72
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "bundled_ofl",
+            "tenant_upload",
+            "licensed_server"
+          ]
+        },
+        "licenseRef": {
+          "type": "string",
+          "maxLength": 128
+        }
       },
-      "required": ["family", "source"],
+      "required": [
+        "family",
+        "source"
+      ],
       "additionalProperties": false
     },
     "fontRef": {
       "type": "object",
       "properties": {
-        "family": { "type": "string", "maxLength": 128 },
-        "style": { "type": "string", "maxLength": 64 }
+        "family": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "style": {
+          "type": "string",
+          "maxLength": 64
+        }
       },
-      "required": ["family"],
+      "required": [
+        "family"
+      ],
       "additionalProperties": false
     },
     "ornaments": {
       "type": "object",
       "properties": {
-        "dinkus": { "type": "string", "maxLength": 64, "description": "Unicode or glyph name" },
-        "chapterOrnament": { "type": "string", "maxLength": 64 },
-        "sectionSymbol": { "type": "string", "maxLength": 64 }
+        "dinkus": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Unicode or glyph name"
+        },
+        "chapterOrnament": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sectionSymbol": {
+          "type": "string",
+          "maxLength": 64
+        }
       },
       "additionalProperties": false
     },
     "hyphenation": {
       "type": "object",
       "properties": {
-        "language": { "type": "string", "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$" },
-        "zone": { "type": "number", "minimum": 0, "maximum": 20, "description": "mm, hyphenation zone width" },
-        "shortestWord": { "type": "integer", "minimum": 3, "maximum": 10, "default": 5 },
-        "consecutiveHyphens": { "type": "integer", "minimum": 1, "maximum": 5, "default": 2 },
-        "dictionaryVersion": { "type": "string", "maxLength": 64 }
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$"
+        },
+        "zone": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 20,
+          "description": "mm, hyphenation zone width"
+        },
+        "shortestWord": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 10,
+          "default": 5
+        },
+        "consecutiveHyphens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 2
+        },
+        "dictionaryVersion": {
+          "type": "string",
+          "maxLength": 64
+        }
       },
       "additionalProperties": false
     },
     "colors": {
       "type": "object",
       "properties": {
-        "text": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "default": "#000000" },
-        "paper": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "default": "#FFFFFF" },
-        "accent": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-        "link": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+        "text": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#000000"
+        },
+        "paper": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#FFFFFF"
+        },
+        "accent": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "link": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        }
       },
       "additionalProperties": false
     },
     "specMetadata": {
       "type": "object",
       "properties": {
-        "author": { "type": "string", "maxLength": 128 },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" },
-        "version": { "type": "integer", "minimum": 1 }
+        "author": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "footnoteRule": {
+      "type": "object",
+      "description": "The separator rule above the footnote area. Stated in points and independently of the measure, as book-design convention does -- it is not derived from the type area width.",
+      "properties": {
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "pt; the rule's length, not the footnote column's width"
+        },
+        "thickness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 12,
+          "description": "pt"
+        }
       },
       "additionalProperties": false
     }

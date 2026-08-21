@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef
+from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, Diagnostic, ArtifactRef as StageArtifactRef
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 from publisher_prepress.fontvault import FontLicenseViolation, validate_font_use
 from profiles import load_profile
@@ -69,6 +69,29 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     )
     paragraph_indent = float(typography.get("paragraphIndent", 1.5))
 
+    # Footnote size, stated absolutely in the spec or derived as two points
+    # below the body. It used to be `body_size * 0.8`, a ratio that drifts with
+    # the body size (8.4pt here, 7.6pt at a 9.5pt body) where the convention
+    # this book follows is a fixed 2pt step.
+    footnote_size = float(typography.get("footnoteSize", body_size - 2))
+
+    # Footnote separator geometry. Book-design convention states it in points
+    # and independently of the measure, so it is read in points here rather
+    # than derived from the type area.
+    # Hyphenation. Another whole DesignSpec block the emitter never emitted:
+    # `hyphenation.language`, `.shortestWord` and `.zone` were readable in the
+    # spec and absent from every stylesheet, so justified Greek was set with no
+    # hyphenation at all -- which is what forces the loose, gappy lines that
+    # full justification otherwise produces in a heavily inflected language.
+    hyphenation = designspec.get("hyphenation") or {}
+    hyphen_lang = hyphenation.get("language")
+    shortest_word = int(hyphenation.get("shortestWord", 5))
+    hyphen_zone = hyphenation.get("zone")
+
+    _footnote_rule = designspec.get("footnoteRule") or {}
+    rule_width = float(_footnote_rule.get("width", 72))
+    rule_thickness = float(_footnote_rule.get("thickness", 0.25))
+
     body_font_family = (typography.get("bodyFont") or {}).get("family", "EB Garamond")
     heading_font_family = (typography.get("headingFont") or {}).get("family", "")
     if not heading_font_family:
@@ -79,6 +102,10 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     inside = margins.get("inside", 15)
     outside = margins.get("outside", 20)
     gutter = margins.get("gutter", 0)
+
+    # The type area: trim less the two horizontal margins. Footnotes are set to
+    # it explicitly because their containing area is deliberately narrower.
+    measure_mm = w_mm - inside - outside
     
     text_color = colors.get("text", "#000000")
     paper_color = colors.get("paper", "#FFFFFF")
@@ -124,6 +151,7 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     rh_recto_source = running_heads.get("rectoSource", "chapter-title")
     rh_verso_source = running_heads.get("versoSource", "book-title")
     rh_style = running_heads.get("style", "centered")
+    verso_from_chapter = rh_verso_source == "chapter-title"
     
     if rh_recto_source != "none" or rh_verso_source != "none":
         lines.extend([
@@ -234,7 +262,15 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         f"  text-align: center;",
         f"  margin-top: {leading * 2}pt;",
         f"  margin-bottom: {leading}pt;",
-        f"  string-set: recto-head content(text);",
+        # BOTH strings are set here. `verso-head` never was, so the verso
+        # running head resolved to an empty string on every left-hand page while
+        # the recto carried its title -- the spec's `versoSource` was simply not
+        # implemented. `book-title` is still not reachable: design-compile emits
+        # CSS from the DesignSpec alone and never sees the manuscript metadata,
+        # so that value warns rather than silently printing nothing.
+        "  string-set: recto-head content(text)"
+        + (", verso-head content(text)" if verso_from_chapter else "")
+        + ";",
         "}",
         "",
     ])
@@ -368,6 +404,72 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
             "",
         ])
 
+    # Hyphenation rules. `hyphens: auto` is inert without a language on the
+    # document element -- WeasyPrint picks its Pyphen dictionary from `lang`, so
+    # `paginate` sets it from the AST's own metadata.language.
+    #
+    # NOTE ON `consecutiveHyphens`: the spec's cap on consecutive hyphenated
+    # lines (a "hyphen ladder") has NO CSS property WeasyPrint implements --
+    # `hyphenate-limit-lines` is rejected as an unknown property, prefixed or
+    # not. It is deliberately not emitted rather than emitted-and-silently-
+    # dropped, and design-compile raises a warning Diagnostic so the build says
+    # out loud that this part of the spec is not being honoured.
+    if hyphen_lang:
+        lines.extend([
+            "html {",
+            "  hyphens: auto;",
+            f"  hyphenate-limit-chars: {shortest_word} 3 3;",
+            *([f"  hyphenate-limit-zone: {float(hyphen_zone):g}mm;"]
+              if hyphen_zone else []),
+            "}",
+            "",
+            # A hyphenated heading reads as a typographic mistake even when the
+            # body wants hyphenation; same for the contents list, where a broken
+            # entry collides with its leader dots.
+            "h1, h2, h3, h4, h5, h6, .chapter-title, .toc p {",
+            "  hyphens: none;",
+            "}",
+            "",
+        ])
+
+    # Every heading level takes the heading face. Only `.chapter-title` did
+    # before, so `headingFont` reached the chapter openings and nothing else --
+    # the numbered subsection headings that `extract` emits as <h2>/<h3>
+    # inherited the body face from `html` and silently ignored the spec.
+    lines.extend([
+        "h1, h2, h3, h4, h5, h6 {",
+        f"  font-family: {heading_font_family};",
+        f"  text-align: left;",
+        "  text-indent: 0;",
+        f"  margin-top: {leading:.3f}pt;",
+        f"  margin-bottom: {leading * 0.35:.3f}pt;",
+        "  break-after: avoid;",
+        "}",
+        "",
+        f"h2 {{ font-size: {body_size * 1.25:.2f}pt; }}",
+        f"h3 {{ font-size: {body_size * 1.1:.2f}pt; }}",
+        f"h4, h5, h6 {{ font-size: {body_size:.2f}pt; }}",
+        "",
+    ])
+
+    # Reserved blank leaves at the front of the book (a bare `pageBreak` in the
+    # front matter). Their own named page so they carry neither folio nor
+    # running head -- a numbered blank is not a blank.
+    lines.extend([
+        ".page-break {",
+        "  page: blank-leaf;",
+        "  break-after: page;",
+        "  height: 0;",
+        "}",
+        "",
+        "@page blank-leaf {",
+        "  @bottom-center { content: none; }",
+        "  @top-left { content: none; }",
+        "  @top-right { content: none; }",
+        "}",
+        "",
+    ])
+
     # Footnotes (CSS GCPM). `float: footnote` takes the note out of flow and
     # lays it at the foot of the page its call lands on; WeasyPrint generates
     # the call and the marker from the same counter, so the two can never
@@ -377,10 +479,14 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         ".footnote {",
         "  float: footnote;",
         "  footnote-display: block;",
-        f"  font-size: {body_size * 0.8:.2f}pt;",
+        f"  font-size: {footnote_size:g}pt;",
         f"  line-height: {leading * 0.78:.3f}pt;",
         "  text-indent: 0;",
         f"  text-align: {css_align};",
+        # The @footnote area is only as wide as the separator rule, so each note
+        # states the type area's full width itself. Without this the notes wrap
+        # inside a 72pt column, two words to a line.
+        f"  width: {measure_mm:g}mm;",
         "}",
         "",
         "::footnote-call {",
@@ -396,8 +502,19 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "",
         "@page {",
         "  @footnote {",
-        "    border-top: 0.4pt solid currentColor;",
-        "    padding-top: 2pt;",
+        # The rule is the AREA's top border, and the area is narrowed to the
+        # rule's length; the notes get their full measure back explicitly below.
+        #
+        # The obvious alternative -- a full-width area with a background rule
+        # sized to 72pt -- is a trap. WeasyPrint renders any `linear-gradient`
+        # (and any SVG data-URI) as a TILING PATTERN, and it emitted ~17 of them
+        # per page: 272,412 pattern objects across this book. Ghostscript then
+        # converts every one to CMYK, and `finish` went from 48 seconds to over
+        # ten minutes without completing. Measured on a 17-page fixture:
+        # gradient 10.2s vs border 0.2s of gs time, 289 patterns vs zero.
+        f"    border-top: {rule_thickness:g}pt solid currentColor;",
+        f"    width: {rule_width:g}pt;",
+        f"    padding-top: {leading * 0.35:.3f}pt;",
         f"    margin-top: {leading * 0.5:.3f}pt;",
         "  }",
         "}",
@@ -541,7 +658,50 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None,
     ref = cas.put(css_bytes, media_type=MediaType("text/css"))
     
     print(f"  [design-compile] Generated CSS -> {ref.hash} ({len(css)} bytes)")
-    
+
+    # §3.15: a finding the user needs to know about travels as a Diagnostic, not
+    # as a silence. A spec field the target engine cannot honour is exactly that
+    # -- the alternative is emitting a declaration the renderer discards, which
+    # is how `bodyAlignment`, the hyphenation block and `@page :recto` all came
+    # to be quietly ignored for so long.
+    warnings = []
+    hyph = spec.get("hyphenation") or {}
+    if hyph.get("consecutiveHyphens") is not None:
+        warnings.append(Diagnostic(
+            code="hyphen_ladder_not_enforced",
+            severity="warning",
+            human_message=(
+                f"DesignSpec asks for at most {hyph['consecutiveHyphens']} "
+                "consecutive hyphenated lines, but the chrome-pagedjs/WeasyPrint "
+                "emitter has no property for it -- `hyphenate-limit-lines` is not "
+                "implemented. Hyphenation is applied; the ladder limit is not."
+            ),
+            suggested_fix=(
+                "Accept the ladders, or widen the measure / loosen "
+                "hyphenate-limit-zone so they arise less often."
+            ),
+            source_ref="designspec:hyphenation.consecutiveHyphens",
+        ))
+        print(f"    WARN hyphen_ladder_not_enforced: consecutiveHyphens="
+              f"{hyph['consecutiveHyphens']} cannot be enforced by this engine")
+
+    verso_source = (spec.get("runningHeads") or {}).get("versoSource")
+    if verso_source == "book-title":
+        warnings.append(Diagnostic(
+            code="verso_head_not_available",
+            severity="warning",
+            human_message=(
+                "DesignSpec asks for the book title in the verso running head, "
+                "but design-compile emits CSS from the DesignSpec alone and never "
+                "sees the manuscript's metadata, so there is no string to set. "
+                "Verso running heads will be blank."
+            ),
+            suggested_fix='Use runningHeads.versoSource: "chapter-title".',
+            source_ref="designspec:runningHeads.versoSource",
+        ))
+        print("    WARN verso_head_not_available: versoSource='book-title' has no "
+              "source in the emitter; verso heads will be blank")
+
     return StageResult(
         artifacts=[StageArtifactRef(
             kind="css",   # must exactly equal the declared output key "css"
@@ -550,6 +710,7 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None,
             size=len(css_bytes),
         )],
         metrics={"css_size_bytes": len(css_bytes), "rule_count": css.count(" {")},
+        warnings=warnings,
     )
 
 
