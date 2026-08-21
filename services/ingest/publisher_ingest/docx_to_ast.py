@@ -747,6 +747,7 @@ def docx_to_ast(
     language: str = "el-GR",
     manuscript_id: str | None = None,
     blank_leading_pages: int = 0,
+    isbn: str | None = None,
 ) -> dict:
     """Convert a DOCX manuscript into an `ast/1` document.
 
@@ -851,6 +852,21 @@ def docx_to_ast(
                 },
                 "content": content,
             }
+        )
+
+    if isbn:
+        # The copyright page sits on the verso of the title page, which is where
+        # a reader looks for the ISBN. Inserted directly after the manuscript's
+        # own front matter and before the contents, rather than appended, so the
+        # book keeps the order a reader expects.
+        #
+        # This is the one place ingestion ADDS text the DOCX does not contain.
+        # It is safe for both gates: `_assert_no_text_lost` only asserts that
+        # nothing was dropped, and `ast-assemble` compares the AST against HTML
+        # derived from that same AST, so the line appears on both sides.
+        insert_at = len(front_matter)
+        front_matter.insert(
+            insert_at, {"type": "copyrightPage", "content": [_paragraph(f"ISBN {isbn}")]}
         )
 
     if blank_leading_pages:

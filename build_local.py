@@ -63,7 +63,7 @@ def _cas_path(cas_root: Path, digest: str) -> Path:
 
 def build(docx: Path, profile: str, designspec: Path | None, out_dir: Path,
           cas_root: Path, build_id: str | None = None,
-          blank_leading_pages: int = 0) -> int:
+          blank_leading_pages: int = 0, isbn: str | None = None) -> int:
     if not docx.is_file():
         print(f"FAILED: manuscript not found: {docx}")
         return 2
@@ -87,6 +87,7 @@ def build(docx: Path, profile: str, designspec: Path | None, out_dir: Path,
     print(f"  profile    : {profile}")
     print(f"  designspec : {designspec or '(built-in default)'}")
     print(f"  blank front: {blank_leading_pages} page(s)")
+    print(f"  isbn       : {isbn or '(none)'}")
     print(f"  cas root   : {cas_root}")
     print(f"  output     : {out_dir}")
     print()
@@ -95,6 +96,7 @@ def build(docx: Path, profile: str, designspec: Path | None, out_dir: Path,
         "ingest": {
             "docx_path": str(docx),
             "blank_leading_pages": blank_leading_pages,
+            "isbn": isbn,
         },
         # One profile name to all three stages with a say in page geometry:
         # design-compile grows the page box by its bleed, finish insets the
@@ -162,9 +164,11 @@ def main() -> int:
     ap.add_argument("--build-id", default=None)
     ap.add_argument("--blank-pages", type=int, default=0,
                     help="Reserved blank leaves at the front of the book")
+    ap.add_argument("--isbn", default=None,
+                    help="Printed on a copyright page after the front matter")
     args = ap.parse_args()
     return build(args.docx, args.profile, args.designspec, args.out,
-                 args.cas_root, args.build_id, args.blank_pages)
+                 args.cas_root, args.build_id, args.blank_pages, args.isbn)
 
 
 if __name__ == "__main__":
