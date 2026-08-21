@@ -1,0 +1,81 @@
+{
+  "schema": "designspec/1",
+  "name": "Greek 17x24 -- 20mm margins",
+  "preferredEngine": "chrome-pagedjs",
+  "trimSize": {
+    "width": 170.0,
+    "height": 240.0,
+    "unit": "mm"
+  },
+  "typography": {
+    "bodyFont": {
+      "family": "EB Garamond"
+    },
+    "headingFont": {
+      "family": "EB Garamond"
+    },
+    "bodySize": 10.5,
+    "leading": 14.173,
+    "scaleRatio": 1.25,
+    "measure": 66,
+    "bodyAlignment": "justified",
+    "paragraphIndent": 1.5,
+    "opticalMargins": true
+  },
+  "grid": {
+    "type": "single",
+    "baselineIncrement": 14.173
+  },
+  "margins": {
+    "top": 20,
+    "bottom": 20,
+    "inside": 20,
+    "outside": 20,
+    "gutter": 0
+  },
+  "folio": {
+    "position": "bottom-center",
+    "style": "arabic",
+    "suppressOn": [],
+    "startNumber": 1
+  },
+  "runningHeads": {
+    "rectoSource": "chapter-title",
+    "versoSource": "book-title",
+    "style": "centered"
+  },
+  "chapterOpenings": {
+    "startsOn": "recto",
+    "dropCap": false,
+    "dropCapLines": 3,
+    "titleTreatment": "centered",
+    "firstParagraphStyle": "no-indent"
+  },
+  "fonts": [
+    {
+      "family": "EB Garamond",
+      "style": "regular",
+      "source": "bundled_ofl"
+    },
+    {
+      "family": "EB Garamond",
+      "style": "italic",
+      "source": "bundled_ofl"
+    },
+    {
+      "family": "EB Garamond",
+      "style": "bold",
+      "source": "bundled_ofl"
+    }
+  ],
+  "colors": {
+    "text": "#000000",
+    "paper": "#FFFFFF"
+  },
+  "templateId": "greek-17x24-20mm",
+  "hyphenation": {
+    "language": "el",
+    "shortestWord": 5,
+    "consecutiveHyphens": 2
+  }
+}
