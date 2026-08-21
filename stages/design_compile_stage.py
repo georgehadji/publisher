@@ -56,6 +56,19 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     leading = typography.get("leading", 14.0)
     measure = typography.get("measure", 66)
     
+    # DesignSpec's vocabulary -> CSS's. "justified" is the spec's word for what
+    # CSS calls `justify`; passing it through unmapped emits an invalid value
+    # that the renderer drops, which is the same ragged right by another route.
+    _ALIGNMENT_TO_CSS = {
+        "justified": "justify",
+        "ragged-right": "left",
+        "ragged-left": "right",
+    }
+    css_align = _ALIGNMENT_TO_CSS.get(
+        typography.get("bodyAlignment", "justified"), "justify"
+    )
+    paragraph_indent = float(typography.get("paragraphIndent", 1.5))
+
     body_font_family = (typography.get("bodyFont") or {}).get("family", "EB Garamond")
     heading_font_family = (typography.get("headingFont") or {}).get("family", "")
     if not heading_font_family:
@@ -89,18 +102,20 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "  @top-right { content: none; }",
         "}",
         "",
-        f"@page :recto {{",
+        # `:right`/`:left`, NOT `:recto`/`:verso`. CSS Paged Media defines only
+        # the former, and WeasyPrint discards the whole rule on the latter
+        # ("Unsupported @page selector"). Every mirrored margin and every running
+        # head lived inside these two blocks, so all of it was silently dropped:
+        # the book rendered with the base @page margins and no running heads at
+        # all, and nothing reported a problem.
+        f"@page :right {{",
         f"  margin-left: {inside}mm;",
         f"  margin-right: {outside}mm;",
-        f"  @top-left {{ content: ''; }}",
-        f"  @top-right {{ content: ''; }}",
         "}",
         "",
-        f"@page :verso {{",
+        f"@page :left {{",
         f"  margin-left: {outside}mm;",
         f"  margin-right: {inside}mm;",
-        f"  @top-left {{ content: ''; }}",
-        f"  @top-right {{ content: ''; }}",
         "}",
         "",
     ]
@@ -112,16 +127,16 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     
     if rh_recto_source != "none" or rh_verso_source != "none":
         lines.extend([
-            "@page :recto {",
-            "  @top-left {",
+            "@page :right {",
+            "  @top-right {",
             f"    content: string(recto-head);",
             f"    font-size: 9pt;",
             f"    font-family: {body_font_family};",
             "  }",
             "}",
             "",
-            "@page :verso {",
-            "  @top-right {",
+            "@page :left {",
+            "  @top-left {",
             f"    content: string(verso-head);",
             f"    font-size: 9pt;",
             f"    font-family: {body_font_family};",
@@ -180,9 +195,16 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         f"  counter-reset: chapter footnote;",
         "}",
         "",
+        # `bodyAlignment` and `paragraphIndent` are DesignSpec fields that this
+        # emitter read into its defaults and then never emitted -- so every book
+        # rendered at the initial `text-align: start`, ragged down the right-hand
+        # side, however emphatically the spec said "justified". The measure is
+        # the type area's full width; a paragraph that does not fill it is the
+        # renderer disagreeing with the spec, not a design choice.
         "p {",
         "  margin: 0;",
-        "  text-indent: 1.5em;",
+        f"  text-align: {css_align};",
+        f"  text-indent: {paragraph_indent:g}em;",
         "  widows: 2;",
         "  orphans: 2;",
         "}",
@@ -191,9 +213,17 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "  text-indent: 0;",
         "}",
         "",
+        # `break-before`, NOT `page-break-before`. The legacy alias accepts only
+        # auto|always|avoid|left|right, so `page-break-before: recto` was an
+        # invalid value that WeasyPrint dropped on the floor -- chapters opened
+        # wherever the text happened to reach, on odd and even pages alike, while
+        # the DesignSpec said `startsOn: recto` and nothing contradicted it.
+        # `break-before: recto` is CSS Fragmentation and is honoured: WeasyPrint
+        # inserts a blank verso when a chapter would otherwise open on an even
+        # page.
         ".chapter {",
         f"  page: chapter-opening;",
-        f"  page-break-before: {starts_on};",
+        f"  break-before: {starts_on};",
         "  counter-increment: chapter;",
         "}",
         "",
@@ -308,7 +338,7 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     # Front/back matter
     lines.extend([
         ".front-matter, .back-matter {",
-        "  page-break-before: recto;",
+        "  break-before: recto;",
         "}",
         ".titlePage {",
         "  text-align: center;",
@@ -320,11 +350,79 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "",
     ])
     
-    # Named pages for chapter openings
+    # Named pages for chapter openings.
+    #
+    # Emitted only when the DesignSpec actually asks for it. This block used to
+    # be unconditional, and because `.chapter` carries `page: chapter-opening`
+    # for every page the chapter SPANS (not merely its first), it blanked the
+    # running heads across the entire book -- while `runningHeads.suppressOn`,
+    # the schema field that exists to express this, was never read at all. The
+    # over-broad scope is a known limitation; making it opt-in at least stops it
+    # firing on specs that never requested it.
+    if "chapter-opening" in (running_heads.get("suppressOn") or []):
+        lines.extend([
+            "@page chapter-opening {",
+            f"  @top-left {{ content: none; }}",
+            f"  @top-right {{ content: none; }}",
+            "}",
+            "",
+        ])
+
+    # Footnotes (CSS GCPM). `float: footnote` takes the note out of flow and
+    # lays it at the foot of the page its call lands on; WeasyPrint generates
+    # the call and the marker from the same counter, so the two can never
+    # disagree. Without this rule the note text renders inline, mid-page, as an
+    # ordinary run of body copy.
     lines.extend([
-        "@page chapter-opening {",
-        f"  @top-left {{ content: none; }}",
-        f"  @top-right {{ content: none; }}",
+        ".footnote {",
+        "  float: footnote;",
+        "  footnote-display: block;",
+        f"  font-size: {body_size * 0.8:.2f}pt;",
+        f"  line-height: {leading * 0.78:.3f}pt;",
+        "  text-indent: 0;",
+        f"  text-align: {css_align};",
+        "}",
+        "",
+        "::footnote-call {",
+        "  font-size: 0.7em;",
+        "  vertical-align: super;",
+        "  line-height: 0;",
+        "}",
+        "",
+        "::footnote-marker {",
+        "  font-size: 0.8em;",
+        "  padding-right: 0.35em;",
+        "}",
+        "",
+        "@page {",
+        "  @footnote {",
+        "    border-top: 0.4pt solid currentColor;",
+        "    padding-top: 2pt;",
+        f"    margin-top: {leading * 0.5:.3f}pt;",
+        "  }",
+        "}",
+        "",
+    ])
+
+    # Table of contents. `target-counter(attr(href), page)` resolves to the page
+    # the entry's chapter actually starts on, so the figures are the typeset
+    # ones rather than whatever the author last typed; `leader('.')` fills the
+    # gap. Entries that resolve to no chapter (subsections, which carry no id)
+    # simply print without a number.
+    lines.extend([
+        ".toc p {",
+        "  text-indent: 0;",
+        "  text-align: left;",
+        f"  margin-bottom: {leading * 0.15:.3f}pt;",
+        "}",
+        "",
+        ".toc .xref {",
+        "  text-decoration: none;",
+        "  color: inherit;",
+        "}",
+        "",
+        ".toc .xref::after {",
+        "  content: leader('.') target-counter(attr(href), page);",
         "}",
         "",
     ])
@@ -352,7 +450,14 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # v3: bleed is declared with the CSS `bleed` property instead of being added
     # to `size`. A v2 stylesheet renders a trim+2*bleed page whose TrimBox sits
     # on its MediaBox -- geometrically plausible, and rejected by Ghostscript.
-    version=3,
+    # v4: four emitted declarations the renderer had been silently discarding --
+    # `@page :recto/:verso` (not CSS; WeasyPrint drops the whole rule, taking the
+    # running heads and mirrored margins with it), `page-break-before: recto` (not a
+    # legal value for the legacy alias, so chapters never opened on a recto), and a
+    # missing `text-align`, which left every book ragged-right however emphatically
+    # the DesignSpec said justified. Plus footnote and TOC rules. Every v3
+    # stylesheet mis-renders those four things; none may be served from cache.
+    version=4,
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
     # `profile_name` is optional so that a build which omits it still renders --

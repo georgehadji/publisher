@@ -27,18 +27,37 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+import unicodedata
+import zipfile
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
 import docx
+from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
 
 class IngestError(RuntimeError):
     """Raised when a DOCX cannot be faithfully represented as an AST."""
+
+
+def _fold_diacritics(text: str) -> str:
+    """Casefold and strip combining marks, so "Περιεχόμενα" reaches ΠΕΡΙΕΧΟΜΕΝΑ.
+
+    Applied to BOTH the marker patterns and the line being tested. Greek marks
+    the tonos on the stressed vowel, and `re.IGNORECASE` does not relate "ό" to
+    the "Ο" in ΠΕΡΙΕΧΟΜΕΝΑ -- case-folding maps ό to Ό, not to ο. So the
+    contents marker never matched on a real Greek manuscript: no `toc`
+    front-matter item was ever emitted, and the contents page (with every
+    chapter title printed beneath it) was swallowed into chapter one. Folding
+    first is what makes TOC_PATTERNS mean what they were written to mean.
+    """
+    decomposed = unicodedata.normalize("NFD", text)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return unicodedata.normalize("NFC", stripped).casefold()
 
 
 # A heading candidate is a short, fully upper-case line. In unstyled
@@ -66,14 +85,46 @@ SUBSTANTIVE_PARAGRAPH_CHARS = 300
 # epigraph easily clears the prose threshold -- so length alone cannot find the
 # body; the search for the first substantive section starts here instead.
 TOC_PATTERNS = (
-    re.compile(r"ΠΕΡΙΕΧΟΜΕΝΑ", re.IGNORECASE),
+    re.compile(_fold_diacritics("ΠΕΡΙΕΧΟΜΕΝΑ"), re.IGNORECASE),
     re.compile(r"^\s*(TABLE\s+OF\s+)?CONTENTS\s*$", re.IGNORECASE),
 )
+
+# A numbered section heading: "4.3.1 Κοινότητα στοιχείων ...". The leading
+# backtick/tab alternative absorbs the stray "`\t" prefix Word leaves on entries
+# promoted from a list.
+#
+# WHY THIS OUTRANKS THE Heading STYLES
+# The module docstring warns that Word styles can be "actively wrong"; on the
+# manuscript this was built against, every single `Heading 1`/`Heading 3` in the
+# file sits on a BIBLIOGRAPHY ENTRY and not one real section carries a heading
+# style. Trusting the styles produced chapters titled "Γκοραΐνωφ, Ε. (2018).
+# Άγιος Σεραφείμ του Σάρωφ." while the actual book -- 14 numbered sections with
+# their own numbered subsections -- collapsed into a single 2,239-paragraph
+# chapter. When a document numbers its sections, the numbering IS the structure;
+# it is authorial, explicit, and hierarchical, which no style guess is.
+NUMBERED_HEADING = re.compile(
+    r"^[`\s\u00a0]*(\d+(?:\.\d+)*)\.?[\s\u00a0]+(\S.*)$"
+)
+
+# A numbered heading may legitimately run long -- academic section titles do --
+# so the short-line rule that guards the upper-case heuristic is relaxed here.
+# The cap only exists to stop a body paragraph that happens to open with "1. "
+# from being read as a section.
+MAX_NUMBERED_HEADING_CHARS = 220
+
+# Below this many numbered lines, the document is not "a numbered document" and
+# the legacy upper-case/style heuristics stay in charge. A handful of numbered
+# lines is a list; forty of them, at consistent depths, is a table of contents
+# and a body that agree with each other.
+MIN_NUMBERED_HEADINGS = 8
 
 # Trailing material that is not part of the book's argument. Matched against a
 # heading title, case-insensitively.
 BACK_MATTER_PATTERNS = (
-    re.compile(r"ΟΠΙΣΘΟΦΥΛΛΟ|ΕΞΩ\s+ΜΕΡΟΣ", re.IGNORECASE),
+    re.compile(
+        _fold_diacritics("ΟΠΙΣΘΟΦΥΛΛΟ") + r"|" + _fold_diacritics("ΕΞΩ") + r"\s+" + _fold_diacritics("ΜΕΡΟΣ"),
+        re.IGNORECASE,
+    ),
     re.compile(r"^\s*(BACK\s+COVER|COLOPHON)\s*$", re.IGNORECASE),
 )
 
@@ -85,6 +136,12 @@ class Block:
     text: str
     style: str
     is_heading_candidate: bool
+    # Set only in numbered mode: 1 for a top-level section ("5 ..."), 2 for
+    # "5.1 ...", and so on. 0 means "not a numbered heading".
+    depth: int = 0
+    # Ids of the footnotes anchored in this block, in the order Word placed
+    # their references. Empty for every block that carries no reference.
+    footnote_ids: tuple[str, ...] = ()
 
 
 def _is_upper(text: str) -> bool:
@@ -104,6 +161,60 @@ def _iter_body(document: docx.document.Document) -> Iterator[Paragraph | Table]:
             yield Paragraph(child, document)
         elif child.tag.endswith("}tbl"):
             yield Table(child, document)
+
+
+# Word reserves footnote ids 0 and -1 for the separator rules it draws above the
+# footnote area. They carry a `w:type` and no authorial text; emitting them would
+# put a stray empty note on the page.
+_FOOTNOTE_SEPARATOR_TYPES = {"separator", "continuationSeparator", "continuationNotice"}
+
+
+def read_footnotes(path: str | Path) -> dict[str, str]:
+    """Map footnote id -> its text, read straight from `word/footnotes.xml`.
+
+    python-docx models the document body only: `Document.paragraphs` never
+    reaches the footnote part, so a manuscript's notes are invisible to
+    `_iter_body` and were silently dropped on the way into the AST. The
+    text-integrity gate could not catch it either -- `ast-assemble` compares the
+    AST against the HTML *derived from that AST*, and `_assert_no_text_lost`
+    compares against the blocks this module read. Text no reader ever saw is
+    absent from both sides of both comparisons, so it vanishes with every gate
+    still reporting green. That is exactly why this function exists and why its
+    output is fed to `_assert_no_text_lost` below.
+    """
+    try:
+        with zipfile.ZipFile(str(path)) as zf:
+            if "word/footnotes.xml" not in zf.namelist():
+                return {}
+            raw = zf.read("word/footnotes.xml")
+    except (zipfile.BadZipFile, KeyError) as exc:
+        raise IngestError(f"could not read footnotes from {path}: {exc}") from exc
+
+    # `docx.oxml.parse_xml` carries the same hardened parser the rest of
+    # python-docx uses (no entity resolution) -- see the XXE test in
+    # services/ingest/tests.
+    from docx.oxml import parse_xml
+
+    root = parse_xml(raw)
+    notes: dict[str, str] = {}
+    for note in root.findall(qn("w:footnote")):
+        note_id = note.get(qn("w:id"))
+        if note_id is None or note.get(qn("w:type")) in _FOOTNOTE_SEPARATOR_TYPES:
+            continue
+        text = "".join(t.text or "" for t in note.iter(qn("w:t"))).strip()
+        if text:
+            notes[note_id] = text
+    return notes
+
+
+def _footnote_ids_in(paragraph: Paragraph) -> tuple[str, ...]:
+    """Footnote ids referenced by this paragraph, in document order."""
+    ids = []
+    for ref in paragraph._p.iter(qn("w:footnoteReference")):
+        ref_id = ref.get(qn("w:id"))
+        if ref_id is not None:
+            ids.append(ref_id)
+    return tuple(ids)
 
 
 def read_blocks(path: str | Path) -> list[Block]:
@@ -132,13 +243,233 @@ def read_blocks(path: str | Path) -> list[Block]:
         # 419-character `Heading 1` paragraph noted in the module docstring.
         short = len(text) <= MAX_HEADING_CHARS
         is_heading = short and (_is_upper(text) or style.startswith("Heading"))
-        blocks.append(Block(text, style, is_heading))
+        blocks.append(
+            Block(text, style, is_heading, footnote_ids=_footnote_ids_in(item))
+        )
 
-    return blocks
+    return _apply_numbering(blocks)
+
+
+def _numbered_depth(text: str) -> int:
+    """Depth of a numbered heading line, or 0 when the line is not one."""
+    if len(text) > MAX_NUMBERED_HEADING_CHARS:
+        return 0
+    match = NUMBERED_HEADING.match(text)
+    if not match:
+        return 0
+    return len(match.group(1).split("."))
+
+
+def _toc_outline(blocks: list[Block]) -> tuple[int, int, dict[str, int]] | None:
+    """`(toc_index, body_start_index, {folded title: depth})` from the contents page.
+
+    WHY THE CONTENTS PAGE IS THE AUTHORITY
+    On the manuscript this was built against, the numbering lives ONLY on the
+    contents page: the TOC reads "4.3.1 Κοινότητα στοιχείων ...", while the
+    section it points at is typed in the body as the bare line "Κοινότητα
+    στοιχείων ...". Detecting headings by their numbering therefore finds every
+    section in the wrong place -- it matches the contents entries themselves, and
+    then, in the body, only the numbered LISTS inside the prose ("3. Μεταξύ του
+    δευτέρου και του τρίτου ταξιδιού του Πλάτωνος ..."), which are not sections
+    at all. Reading the outline off the contents page and then matching those
+    titles against the body gets both right, and gets the depth for free: the
+    author already declared the hierarchy by numbering it.
+    """
+    marker = next((i for i, b in enumerate(blocks) if _is_toc_marker(b.text)), None)
+    if marker is None:
+        return None
+
+    prose = next(
+        (
+            i
+            for i in range(marker + 1, len(blocks))
+            if len(blocks[i].text) >= SUBSTANTIVE_PARAGRAPH_CHARS
+        ),
+        None,
+    )
+    if prose is None:
+        return None
+
+    entries: dict[str, int] = {}
+    for block in blocks[marker + 1 : prose]:
+        depth = _numbered_depth(block.text)
+        if depth:
+            match = NUMBERED_HEADING.match(block.text)
+            title = match.group(2) if match else block.text
+        else:
+            # An unnumbered contents line ("Βιβλιογραφία") is still a section.
+            title, depth = block.text, 1
+        folded = _fold_diacritics(title.strip())
+        if folded:
+            entries.setdefault(folded, depth)
+
+    if len(entries) < MIN_NUMBERED_HEADINGS:
+        return None
+
+    # The body's first heading is the short line immediately before its first
+    # paragraph of prose -- and, being a section title, it is one of the entries
+    # above. Without this the contents page appears to run one line too long and
+    # the book's opening section is read as the last contents entry.
+    body_start = prose
+    if prose - 1 > marker and _fold_diacritics(blocks[prose - 1].text) in entries:
+        body_start = prose - 1
+
+    return marker, body_start, entries
+
+
+def _apply_numbering(blocks: list[Block]) -> list[Block]:
+    """Promote section headings, preferring the contents page's own outline.
+
+    Three tiers, most authoritative first:
+      1. the contents page (`_toc_outline`) -- the author's declared hierarchy;
+      2. numbering in the body, when the document numbers its sections there;
+      3. neither, in which case the legacy upper-case/style heuristics keep the
+         blocks unchanged -- what every non-numbered manuscript, and every
+         fixture in services/ingest/tests, relies on.
+    """
+    outline = _toc_outline(blocks)
+    if outline is not None:
+        marker, body_start, entries = outline
+        promoted: list[Block] = []
+        for i, block in enumerate(blocks):
+            depth = 0
+            if i == marker:
+                depth = 1                      # opens the contents section
+            elif i >= body_start and len(block.text) <= MAX_NUMBERED_HEADING_CHARS:
+                # Matched with AND without a leading number: this manuscript is
+                # inconsistent about it -- section 1 is typed "Πρόλογος" while
+                # section 2 is typed "2. Εισαγωγή" -- and both name the same
+                # contents entry. Trying the bare title second is also what keeps
+                # a numbered LIST inside the prose from matching: "3. Μεταξύ του
+                # δευτέρου ..." strips to a title the contents page never names.
+                match = NUMBERED_HEADING.match(block.text)
+                for candidate in (
+                    _fold_diacritics(block.text),
+                    _fold_diacritics(match.group(2).strip()) if match else "",
+                ):
+                    if candidate and candidate in entries:
+                        depth = entries[candidate]
+                        break
+            # Between the marker and body_start lie the contents entries
+            # themselves: left as plain blocks so they stay inside the contents
+            # section and are emitted as one `toc` item.
+            promoted.append(
+                Block(block.text, block.style, bool(depth), depth, block.footnote_ids)
+            )
+        return promoted
+
+    depths = [_numbered_depth(b.text) for b in blocks]
+    if sum(1 for d in depths if d) < MIN_NUMBERED_HEADINGS:
+        return blocks
+
+    promoted = []
+    for block, depth in zip(blocks, depths):
+        if not depth and _is_toc_marker(block.text):
+            depth = 1
+        promoted.append(
+            Block(block.text, block.style, bool(depth), depth, block.footnote_ids)
+        )
+    return promoted
 
 
 def _paragraph(text: str) -> dict:
     return {"type": "paragraph", "content": [{"type": "text", "text": text}]}
+
+
+# depth -> (heading level, role). Depth 1 is a chapter and never reaches here.
+_HEADING_ROLE = {2: "section", 3: "subsection"}
+
+
+def _heading(text: str, depth: int) -> dict:
+    return {
+        "type": "heading",
+        "attrs": {
+            "level": min(depth, 6),
+            "role": _HEADING_ROLE.get(depth, "subsubsection"),
+        },
+        "content": [{"type": "text", "text": text}],
+    }
+
+
+def _footnote(text: str, number: int) -> dict:
+    return {
+        "type": "footnote",
+        "attrs": {"number": number},
+        "content": [{"type": "text", "text": text}],
+    }
+
+
+def _section_content(
+    blocks: list[Block], footnotes: dict[str, str], counter: list[int]
+) -> list[dict]:
+    """Block nodes for one section, with each block's footnotes trailing it.
+
+    A `footnote` is a blockNode in ast/1, so it cannot sit inside the paragraph
+    that references it; it is emitted immediately after. `float: footnote` in the
+    stylesheet is what actually moves the text to the foot of the page it lands
+    on, and WeasyPrint auto-generates the call where the element sat -- i.e. at
+    the end of the referencing paragraph rather than mid-sentence. That is the
+    one fidelity cost of the schema's block-level footnote; the alternative was
+    splitting paragraphs at every reference, which would fabricate paragraph
+    boundaries the manuscript does not have.
+    """
+    content: list[dict] = []
+    for block in blocks:
+        if block.depth >= 2:
+            content.append(_heading(block.text, block.depth))
+        else:
+            content.append(_paragraph(block.text))
+        for note_id in block.footnote_ids:
+            text = footnotes.get(note_id)
+            if text:
+                counter[0] += 1
+                content.append(_footnote(text, counter[0]))
+    return content
+
+
+def _toc_entry(block: Block, target: str | None) -> dict:
+    """One contents line, linked to the section it names when we found it.
+
+    The link is what earns the entry a real page number: the stylesheet prints
+    `target-counter(attr(href), page)` after it, so the figure is the page the
+    section actually landed on rather than one carried over from Word.
+    """
+    text_node = {"type": "text", "text": block.text}
+    if target is None:
+        return {"type": "paragraph", "content": [text_node]}
+    return {
+        "type": "paragraph",
+        "content": [
+            {
+                "type": "crossReference",
+                "attrs": {"target": target, "display": "page"},
+                "content": [text_node],
+            }
+        ],
+    }
+
+
+def _toc_target(text: str, targets: dict[str, str]) -> str | None:
+    """The chapter id a contents line points at, by number or by title.
+
+    Only chapters carry an `attrs.id`, so only top-level entries can be linked.
+    A subsection entry ("7.1.2 ...") resolves to nothing and prints without a
+    page number rather than pointing at the wrong page.
+    """
+    number = _section_number(text)
+    if number and number in targets:
+        return targets[number]
+    match = NUMBERED_HEADING.match(text) if len(text) <= MAX_NUMBERED_HEADING_CHARS else None
+    bare = match.group(2).strip() if match else text.strip()
+    return targets.get(_fold_diacritics(bare))
+
+
+def _section_number(text: str) -> str | None:
+    """The "4.3.1" of a numbered line, used to pair a TOC entry to a section."""
+    if len(text) > MAX_NUMBERED_HEADING_CHARS:
+        return None
+    match = NUMBERED_HEADING.match(text)
+    return match.group(1) if match else None
 
 
 def _group_headings(blocks: list[Block]) -> list[tuple[str, list[str]]]:
@@ -201,14 +532,50 @@ def _group_headings(blocks: list[Block]) -> list[tuple[str, list[str]]]:
 
 
 def _is_back_matter(title: str) -> bool:
-    return any(p.search(title) for p in BACK_MATTER_PATTERNS)
+    folded = _fold_diacritics(title)
+    return any(p.search(folded) for p in BACK_MATTER_PATTERNS)
 
 
 def _is_toc_marker(title: str) -> bool:
-    return any(p.search(title) for p in TOC_PATTERNS)
+    # Folded on both sides: the patterns are written in capitals without tonos,
+    # and a real contents page is typed "Περιεχόμενα". See _fold_diacritics.
+    folded = _fold_diacritics(title)
+    return any(p.search(folded) for p in TOC_PATTERNS)
 
 
-def _find_body_start(sections: list[tuple[str, list[str]]]) -> int:
+def _group_sections(blocks: list[Block]) -> list[tuple[str, list[Block]]]:
+    """Split numbered-mode blocks into (title, body_blocks) sections.
+
+    Only a DEPTH-1 heading opens a section. Deeper numbered headings ("7.1.2")
+    stay inside the section they belong to, carried as Blocks so the AST builder
+    can emit them as `heading` nodes rather than flattening them to paragraphs.
+    Unlike `_group_headings`, consecutive headings are never merged into one
+    title: in a numbered document "7.1" following "7" is a subsection, not the
+    second line of a display title.
+    """
+    sections: list[tuple[str, list[Block]]] = []
+    title = ""
+    body: list[Block] = []
+
+    def close() -> None:
+        nonlocal title, body
+        if title or body:
+            sections.append((title, body))
+        title = ""
+        body = []
+
+    for block in blocks:
+        if block.is_heading_candidate and block.depth == 1:
+            close()
+            title = block.text
+            continue
+        body.append(block)
+
+    close()
+    return sections
+
+
+def _find_body_start(sections: list[tuple[str, list[Block]]]) -> int:
     """Index of the first section that belongs to the book's body.
 
     Everything before it -- title page, dedication, epigraphs, table of
@@ -223,8 +590,8 @@ def _find_body_start(sections: list[tuple[str, list[str]]]) -> int:
             break
 
     for i in range(start, len(sections)):
-        _, paragraphs = sections[i]
-        if any(len(p) >= SUBSTANTIVE_PARAGRAPH_CHARS for p in paragraphs):
+        _, section_blocks = sections[i]
+        if any(len(b.text) >= SUBSTANTIVE_PARAGRAPH_CHARS for b in section_blocks):
             return i
 
     # No section anywhere clears the prose bar. Treat the first heading as the
@@ -232,7 +599,9 @@ def _find_body_start(sections: list[tuple[str, list[str]]]) -> int:
     return start
 
 
-def _assert_no_text_lost(blocks: list[Block], ast: dict) -> None:
+def _assert_no_text_lost(
+    blocks: list[Block], ast: dict, footnotes: dict[str, str] | None = None
+) -> None:
     """Post-condition: no DOCX text was dropped on the way into the AST.
 
     Compared on whitespace-stripped text, since the AST stores block text
@@ -263,6 +632,16 @@ def _assert_no_text_lost(blocks: list[Block], ast: dict) -> None:
             f"First dropped block: {missing[0][:120]!r}"
         )
 
+    # Footnote text lives in a separate DOCX part, so it is absent from `blocks`
+    # and the check above cannot see it. Without this clause 477 notes could go
+    # missing with every gate downstream still green -- see read_footnotes.
+    lost_notes = [t for t in (footnotes or {}).values() if t not in haystack]
+    if lost_notes:
+        raise IngestError(
+            f"{len(lost_notes)} of {len(footnotes or {})} footnotes did not reach "
+            f"the AST. First dropped note: {lost_notes[0][:120]!r}"
+        )
+
 
 def docx_to_ast(
     path: str | Path,
@@ -283,32 +662,78 @@ def docx_to_ast(
     if not blocks:
         raise IngestError(f"DOCX contains no text: {source}")
 
-    sections = _group_headings(blocks)
+    footnotes = read_footnotes(source)
+
+    numbered = any(b.depth for b in blocks)
+    if numbered:
+        sections = _group_sections(blocks)
+    else:
+        # Legacy path: upper-case/style heading detection, whose grouping merges
+        # consecutive heading lines into one display title. `_group_headings`
+        # returns plain strings, so lift them back into Blocks for one builder.
+        sections = [
+            (title, [Block(text, "Normal", False) for text in paragraphs])
+            for title, paragraphs in _group_headings(blocks)
+        ]
+
     body_start = _find_body_start(sections)
+
+    # Everything from the contents marker up to the first section with real
+    # prose IS the contents page -- in a numbered document each of its entries
+    # is itself a numbered line, so grouping gives every entry its own empty
+    # section. Merged back into one `toc` item here rather than emitted as two
+    # dozen single-line front-matter blocks.
+    toc_start = next(
+        (i for i, (title, _) in enumerate(sections) if _is_toc_marker(title)),
+        None,
+    )
 
     front_matter: list[dict] = []
     body: list[dict] = []
     back_matter: list[dict] = []
     chapter_number = 0
-    seen_toc = False
+    footnote_counter = [0]
 
-    for index, (section_title, paragraphs) in enumerate(sections):
-        content = [_paragraph(p) for p in paragraphs]
+    # Pass 1: which section number does each chapter carry? The TOC entries are
+    # paired to chapter ids by that number, so a contents line can name the page
+    # its section actually starts on.
+    # Keyed by section number AND by folded title, because a contents entry and
+    # the section it names do not always agree about carrying the number -- see
+    # the note in `_apply_numbering`.
+    targets: dict[str, str] = {}
+    pending = 0
+    for index, (section_title, _) in enumerate(sections):
+        if index < body_start or _is_back_matter(section_title):
+            continue
+        pending += 1
+        chapter_id = f"ch{pending}"
+        number = _section_number(section_title)
+        if number:
+            targets.setdefault(number, chapter_id)
+        match = NUMBERED_HEADING.match(section_title)
+        bare = match.group(2).strip() if match else section_title
+        if bare:
+            targets.setdefault(_fold_diacritics(bare), chapter_id)
 
+    toc_blocks: list[Block] = []
+
+    for index, (section_title, section_blocks) in enumerate(sections):
         if index < body_start:
+            if toc_start is not None and index >= toc_start:
+                # Accumulate; emitted as a single `toc` item after the loop.
+                if section_title:
+                    toc_blocks.append(Block(section_title, "Normal", False))
+                toc_blocks.extend(section_blocks)
+                continue
             # Front matter carries no `attrs.title` -- see module docstring --
             # so its heading survives as a leading paragraph instead.
-            if _is_toc_marker(section_title):
-                seen_toc = True
+            content = _section_content(section_blocks, footnotes, footnote_counter)
             if section_title:
                 content.insert(0, _paragraph(section_title))
-            front_matter.append(
-                {
-                    "type": "toc" if seen_toc else FRONT_MATTER_TYPE,
-                    "content": content,
-                }
-            )
+            front_matter.append({"type": FRONT_MATTER_TYPE, "content": content})
             continue
+
+        content = _section_content(section_blocks, footnotes, footnote_counter)
 
         if _is_back_matter(section_title):
             back_matter.append(
@@ -329,6 +754,12 @@ def docx_to_ast(
                 "content": content,
             }
         )
+
+    if toc_blocks:
+        # Inserted at the contents page's own position in the front matter, not
+        # appended, so the book keeps the order the author typed.
+        entries = [_toc_entry(b, _toc_target(b.text, targets)) for b in toc_blocks]
+        front_matter.append({"type": "toc", "content": entries})
 
     if not body:
         raise IngestError(
@@ -363,7 +794,7 @@ def docx_to_ast(
         },
     }
 
-    _assert_no_text_lost(blocks, ast)
+    _assert_no_text_lost(blocks, ast, footnotes)
 
     all_text = " ".join(b.text for b in blocks)
     ast["integrityHash"] = "sha256:" + hashlib.sha256(

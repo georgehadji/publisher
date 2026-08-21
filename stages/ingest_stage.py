@@ -68,7 +68,13 @@ def _check_zip_limits(source: Path) -> None:
 
 @stage(
     name="ingest",
-    version=1,
+    # v2: `docx_to_ast` now reads word/footnotes.xml, takes its section outline
+    # from the contents page, and emits a linked `toc`. The version lint watches
+    # stages/*.py and so did not ask for this bump -- the change is one directory
+    # over, in services/ingest -- but the ARTIFACT is what the cache keys on, and
+    # a v1 AST for a manuscript with footnotes is missing every one of them.
+    # Replaying one would silently reinstate the loss this bump exists to end.
+    version=2,
     inputs={"docx_path": "raw-docx/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["docx_path"],

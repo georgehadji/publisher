@@ -130,6 +130,17 @@ def _render_content(content: list) -> str:
         elif ntype == "sidebar":
             parts.append(f'<aside class="sidebar">{_render_content(node.get("content", []))}</aside>')
         
+        elif ntype == "footnote":
+            # Rendered inline, immediately after the block that referenced it,
+            # and pulled to the foot of the page by `float: footnote` in the
+            # stylesheet. It must stay HERE in document order: `ast-assemble`
+            # compares this HTML's text stream against the AST's, so moving the
+            # note in the markup -- collecting them at the end, say -- fails the
+            # integrity gate even though nothing was lost.
+            parts.append(
+                f'<span class="footnote">{_render_inline(node.get("content", []))}</span>'
+            )
+
         elif ntype == "pageBreak":
             parts.append('<div class="page-break"></div>')
         
@@ -193,6 +204,25 @@ def _render_inline(content: list) -> str:
         
         elif ntype == "superscript":
             parts.append(f"<sup>{_render_inline(node.get('content', []))}</sup>")
+
+        elif ntype == "crossReference":
+            # `href` is what earns the entry its page number: the stylesheet
+            # prints target-counter(attr(href), page) after it, so the figure is
+            # the page the target actually landed on. Without the anchor there is
+            # nothing for target-counter to resolve.
+            # A <span> carrying an href, deliberately NOT an <a>. CSS attr()
+            # reads the attribute off any element, so target-counter resolves
+            # either way -- but an <a href> also makes WeasyPrint emit a /Link
+            # ANNOTATION, and PDF/X-1a forbids those. Ghostscript does not warn
+            # and downgrade one annotation; it abandons PDF/X for the whole file
+            # ("not permitted in PDF/X, reverting to normal PDF output"), which
+            # `finish` then refuses outright. A press file has no clickable
+            # links to lose.
+            target = (node.get("attrs") or {}).get("target", "")
+            inner = _render_inline(node.get("content", []))
+            parts.append(
+                f'<span class="xref" href="#{_escape_html(target)}">{inner}</span>'
+            )
         
         else:
             parts.append(_escape_html(str(node.get("text", ""))))
@@ -226,7 +256,12 @@ def _escape_html(text: str) -> str:
 
 @stage(
     name="extract",
-    version=1,
+    # v2: renders `footnote` and `crossReference` nodes. v1 hit neither branch
+    # and fell through to its `unknown node type` comment / empty-string default,
+    # so any AST carrying them lost that text on the way into the HTML. Every v1
+    # artifact for a manuscript with footnotes is therefore incomplete and must
+    # not be replayed from cache.
+    version=2,
     inputs={"source": "raw-source/1"},
     outputs={"html": "typescript-html/1"},
     toolchain=[],
