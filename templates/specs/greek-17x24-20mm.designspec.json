@@ -14,14 +14,14 @@
     "headingFont": {
       "family": "Noto Sans"
     },
-    "bodySize": 10.0,
+    "bodySize": 9.0,
     "leading": 14.173,
     "scaleRatio": 1.25,
-    "measure": 67,
+    "measure": 74,
     "bodyAlignment": "justified",
     "paragraphIndent": 1.5,
     "opticalMargins": true,
-    "footnoteSize": 8.0
+    "footnoteSize": 7.0
   },
   "grid": {
     "type": "single",
@@ -86,7 +86,7 @@
   "templateId": "greek-17x24-noto",
   "hyphenation": {
     "language": "el",
-    "zone": 18.0,
+    "zone": 14.0,
     "shortestWord": 5,
     "consecutiveHyphens": 3
   },

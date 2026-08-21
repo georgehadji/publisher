@@ -539,7 +539,12 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "}",
         "",
         ".toc .xref::after {",
-        "  content: leader('.') target-counter(attr(href), page);",
+        # The spaces are load-bearing. `leader('.')` fills whatever room is left
+        # on the line -- and when an entry's title happens to fill the measure
+        # exactly, that room is zero, so the leader renders as nothing and the
+        # page number jams against the last word ("...του Σωκράτους51"). A space
+        # either side guarantees the separation the leader cannot.
+        "  content: ' ' leader('.') ' ' target-counter(attr(href), page);",
         "}",
         "",
     ])
