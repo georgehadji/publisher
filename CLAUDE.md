@@ -6,6 +6,56 @@ DOCX manuscript → print-ready book PDF. Python pipeline, TypeScript API, Rust 
 described *weebot* (a different project, which has its own `weebot/CLAUDE.md`) and was
 being injected into every session here.
 
+## Where things live — folder map and skills
+
+Every top-level folder has a skill under `.claude/skills/` describing what it contains and
+what each file does. **Load the skill for a folder before editing anything in it** — each one
+carries the invariants that folder enforces and the mistakes that have already been made there.
+
+| Folder | Skill | What lives there |
+|---|---|---|
+| `stages/` | **publisher-stages** | The `@stage(...)` declarations — one module per build step (acquire, ingest, extract, ast-assemble, resolve, design-compile, paginate, finish/finish-gs, preflight, package, cover-*). The DAG is derived from these. |
+| `platform/` | **publisher-platform** | The substrate: CAS, build cache, the stage registry + DAG integrity checker, sandbox, `db/schema.sql`, `routing/policy.yaml`, the Rust crates (cas, pagescan), reproducibility, supply-chain. |
+| `services/` | **publisher-services** | The domain logic stages call into: ingest (DOCX→AST), structure (rules/inference/overrides), prepress (geometry, fontvault, ghostscript, preflight), cover, epub, idml, onix, alttext, agents. |
+| `schemas/` | **publisher-schemas** | JSON Schema source of truth + the Pydantic/Zod codegen. A schema ID is an API. |
+| `packages/` | **publisher-packages** | TypeScript surfaces: `api` (Fastify + Postgres REST) and `web` (Next.js review UI). Owns no pipeline logic. |
+| `profiles/` | **publisher-profiles** | Vendor output profiles as YAML data (KDP, IngramSpark, Lulu, generic, Greek) + the loader. |
+| `templates/` | **publisher-templates** | DesignSpec presets — the starter book designs. |
+| `fixtures/` | **publisher-fixtures** | Versioned per-stage fixture sets the generated contract tests run over. |
+| `corpus/` | **publisher-corpus** | Golden + synthetic manuscripts and the raster-diff harness. |
+| `tests/` | **publisher-tests** | Contract tests, collection floor, Postgres-backed integration suite. Also maps the co-located unit tests. |
+| `tools/` | **publisher-tools** | The three CI-blocking lints (schema free-text, stage version bump, service deps). |
+| `scripts/` | **publisher-scripts** | `test.ps1` / `test.sh` — the test runners you must use instead of bare pytest. |
+| `docs/` | **publisher-docs** | Architecture, build plan (D1–D10), remediation/uplift plans and their status, cover design, LLM strategy, agent design, audits. |
+| repo root | **publisher-root** | `tracer_bullet.py`, `worker.py`, `cli.py`, `conftest.py`, Docker/compose, dependency manifests, `.github/workflows/ci.yml`, `.reasonix/`. |
+
+### Go here for this task
+
+| Task | Start at |
+|---|---|
+| Add or change a build step | `stages/<name>_stage.py` → bump `@stage(version=)` → `stages/__init__.py` **and** `platform/stages/integrity.py` |
+| Change what a stage consumes/produces | The `inputs=`/`outputs=` schema IDs in `stages/` — the DAG follows automatically |
+| A stage is unreachable | Fix the producing chain. Never promote an input to `root_inputs`, never set `allow_stub_engines` |
+| Add or edit an artifact schema | `schemas/<name>/` → `cd schemas && node codegen/generate.mjs` → commit the `.gen.*` |
+| DOCX parsing / text loss | `services/ingest/publisher_ingest/docx_to_ast.py` |
+| Chapter/front-matter detection, confidence | `services/structure/publisher_structure/rules.py` |
+| LLM routing, model choice, cache keys | `platform/routing/policy.yaml` + `services/structure/publisher_structure/inference.py` |
+| Human/agent edits to a book | `services/structure/publisher_structure/overrides.py` (never mutate the AST) |
+| Trim, bleed, spine, gutter | `services/prepress/publisher_prepress/geometry.py` + the vendor file in `profiles/` |
+| PDF/X conversion, proof PDFs | `services/prepress/publisher_prepress/ghostscript.py` (one impl, shared by both finish stages) |
+| Preflight rules / delivery gate | `services/prepress/publisher_prepress/preflight.py` |
+| Fonts and licensing | `services/prepress/publisher_prepress/fontvault.py` |
+| Book typography defaults | `templates/__init__.py` (+ the matching `profiles/` entry) |
+| Cover art, models, judging | `services/cover/publisher_cover/` + `stages/cover_stages.py` |
+| EPUB / IDML / ONIX output | `services/epub/`, `services/idml/`, `services/onix/` |
+| Agent behaviour and limits | `services/agents/publisher_agents/runtime.py` |
+| HTTP route, auth, tenancy, uploads | `packages/api/src/routes/` + `src/plugins.ts` + `src/db.ts` |
+| Review UI | `packages/web/src/review/` |
+| Queue, leases, retries, dead-letter | `worker.py` + `platform/db/schema.sql` |
+| Run one build locally | `python tracer_bullet.py` |
+| A test failed / CI is red | **publisher-tests**, then `tools/` for the lints |
+| Why is it built this way | `docs/` — cite sections by identifier (D8, A3, U5, O1, S1) |
+
 ## Architecture — the load-bearing ideas
 
 **The DAG is derived, never hand-wired.** Stages declare themselves with `@stage(...)`
@@ -58,9 +108,14 @@ cross-project log directory and a sibling repo's failures got reported as Publis
   log is 1,200+ lines of progress noise.
 - Prefer `Grep`/targeted `Read` over re-reading large files already seen.
 - Don't switch models mid-task — it voids the prompt cache and re-bills the whole context.
+- Load the folder's skill (table above) before editing in it, rather than reading the whole
+  folder to work out what is there.
 
 ## Docs
 
 `docs/ARCHITECTURE.md` · `BUILD_PLAN.md` (phases, decisions D1–D10) ·
 `ARCHITECTURE_REMEDIATION.md` (A0–A2 landed, A3–A5 open) ·
+`ARCHITECTURE_UPLIFT_PLAN.md` (U1–U4 landed) · `BLOCKING_FIX_PLAN.md` (draft) ·
 `COST_AND_STABILITY_PLAN.md` · `REMEDIATION_PLAN.md` (complete)
+
+Full index with per-document status: the **publisher-docs** skill.
