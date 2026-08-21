@@ -296,6 +296,12 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         f"  text-indent: {paragraph_indent:g}em;",
         "  widows: 2;",
         "  orphans: 2;",
+        # Same reason as the footnote rule below: an unbreakable token longer
+        # than the measure (a URL, a percent-encoded path) is drawn straight
+        # past the outer margin rather than wrapped. Body copy has no such
+        # token in this manuscript, but the failure is silent when it does, so
+        # the guard belongs on both.
+        "  overflow-wrap: break-word;",
         "}",
         "",
         "p.chapter-opening {",
@@ -556,6 +562,20 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         f"  line-height: {leading * 0.78:.3f}pt;",
         "  text-indent: 0;",
         f"  text-align: {css_align};",
+        # A URL is one unbreakable token, and this manuscript cites Greek
+        # Wikipedia with the path percent-encoded -- a single 129-character run
+        # of `%CE%A3%CF%85...` with no space, hyphen or soft-break anywhere in
+        # it. Justification cannot compress it and hyphenation will not touch
+        # it, so the line simply runs off the side of the sheet: measured on
+        # this book, 4 footnotes overhung the outer margin, the worst by 1270pt
+        # -- three page-widths of text drawn past the paper edge and lost.
+        #
+        # `break-word` rather than `anywhere` or `word-break: break-all`: it
+        # only breaks a word that cannot fit on a line of its own, so ordinary
+        # Greek prose keeps breaking on its hyphenation dictionary and only the
+        # URLs are chopped. Verified on a fixture: rightmost glyph 758.7pt ->
+        # 558.9pt against a 585.8pt limit, same line count.
+        "  overflow-wrap: break-word;",
         # The @footnote area is only as wide as the separator rule, so each note
         # states the type area's full width itself. Without this the notes wrap
         # inside a 72pt column, two words to a line.
@@ -737,7 +757,13 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # v7: the folio takes the heading face and the running-head size. It was
     # pinned to the body face at a hard-coded 9pt, so it neither followed the
     # spec's `headingFont` nor noticed the body dropping to 9pt.
-    version=8,
+    # v8: the hyphenation zone tightened, and a Diagnostic when `shortestWord`
+    # is set below the 3+3 break floor where it can have no effect.
+    # v9: `overflow-wrap: break-word` on body and footnote text. Without it an
+    # unbreakable token longer than the measure -- a percent-encoded URL --
+    # is drawn past the outer margin instead of wrapping, so a v8 stylesheet
+    # loses that text off the side of the sheet and must not be replayed.
+    version=9,
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
     # `profile_name` is optional so that a build which omits it still renders --
@@ -883,6 +909,52 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None,
         ))
         print(f"    WARN shortest_word_below_break_floor: shortestWord="
               f"{hyph['shortestWord']} is below the 3+3 break floor of 6")
+
+    # `typography.opticalMargins` is the third field of its kind: read into this
+    # emitter's defaults, never emitted, and so silently false in every book
+    # ever built from a spec that asked for it -- exactly how `bodyAlignment`
+    # and `paragraphIndent` behaved before they were fixed.
+    #
+    # Unlike those two, this one cannot simply be emitted. Optical margin
+    # alignment (InDesign's term) hangs punctuation past the measure so the
+    # TEXT EDGE reads straight rather than the glyph box. The CSS property for
+    # it is `hanging-punctuation`, and WeasyPrint 62.3 does not implement it:
+    # it reports `Ignored 'hanging-punctuation: first last allow-end', unknown
+    # property` and drops the declaration. Switching engines does not rescue
+    # it either -- `preferredEngine: chrome-pagedjs` names Chrome, which has no
+    # `hanging-punctuation` support of its own.
+    #
+    # Nor can it be faked in a stylesheet. Hanging is a LINE-level effect and
+    # CSS selectors cannot address a line: `::first-letter` reaches the start of
+    # a BLOCK, so at best the punctuation opening a paragraph could hang.
+    # Measured on this manuscript, that is 186 of 3247 paragraphs against
+    # roughly 8100 line-ends and 930 line-starts that true optical margins would
+    # move -- about 2% of the effect, applied unevenly. A book where one line in
+    # fifty hangs and the rest do not looks like a mistake, not like optical
+    # margins, so this emitter declines to fake it and says so instead.
+    if (spec.get("typography") or {}).get("opticalMargins"):
+        warnings.append(Diagnostic(
+            code="optical_margins_not_supported",
+            severity="warning",
+            human_message=(
+                "DesignSpec sets typography.opticalMargins=true, but neither "
+                "renderer available to this pipeline supports optical margin "
+                "alignment: `hanging-punctuation` is an unknown property in "
+                "WeasyPrint 62.3 and is unimplemented in Chrome. Punctuation "
+                "sits inside the measure, so the right-hand edge is aligned on "
+                "the glyph box rather than optically. Roughly 34% of body lines "
+                "in a justified Greek text end in a hangable character."
+            ),
+            suggested_fix=(
+                "Set opticalMargins to false so the spec matches the output, or "
+                "accept the mechanical edge. Faking it on paragraph-initial "
+                "punctuation alone would move about 2% of the affected places "
+                "and read as an error rather than as optical alignment."
+            ),
+            source_ref="designspec:typography.opticalMargins",
+        ))
+        print("    WARN optical_margins_not_supported: hanging-punctuation is "
+              "not implemented by this renderer; punctuation will not hang")
 
     verso_source = (spec.get("runningHeads") or {}).get("versoSource")
     if verso_source == "book-title":
