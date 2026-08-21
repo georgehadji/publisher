@@ -436,6 +436,11 @@
                 "subsubsection",
                 "running-head"
               ]
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+              "description": "Anchor for cross-references. A contents entry resolves its page number with target-counter(), so a heading without an id prints without a page number."
             }
           },
           "required": [

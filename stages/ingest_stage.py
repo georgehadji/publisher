@@ -74,7 +74,16 @@ def _check_zip_limits(source: Path) -> None:
     # over, in services/ingest -- but the ARTIFACT is what the cache keys on, and
     # a v1 AST for a manuscript with footnotes is missing every one of them.
     # Replaying one would silently reinstate the loss this bump exists to end.
-    version=2,
+    # v3: subsections and sub-subsections are assigned anchors and registered
+    # as cross-reference targets, and contents entries carry their depth. A v2
+    # AST names no target for any entry below chapter level.
+    # v4: a body heading also matches its contents entry by section number, not
+    # only by title. A v3 AST silently drops any section whose body wording
+    # differs from the contents page by so much as a pair of quotation marks.
+    # v5: that number match is restricted to sub-level numbers ("9.2"). At v4 a
+    # bare "3." matched too, and two numbered list items inside chapter 5's
+    # prose were promoted to chapters of their own.
+    version=5,
     inputs={"docx_path": "raw-docx/1", "blank_leading_pages": "page-count/1",
             "isbn": "isbn/1"},
     outputs={"source": "raw-source/1"},

@@ -70,6 +70,9 @@
     },
     "footnoteRule": {
       "$ref": "#/$defs/footnoteRule"
+    },
+    "footnotes": {
+      "$ref": "#/$defs/footnotes"
     }
   },
   "required": [
@@ -176,6 +179,36 @@
           "minimum": 4,
           "maximum": 18,
           "description": "pt; footnote text size. Defaults to bodySize - 2 when absent."
+        },
+        "chapterSize": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 72,
+          "description": "pt; chapter title size. Defaults to bodySize * 1.8 when absent."
+        },
+        "chapterLeading": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 96,
+          "description": "pt; line height of a chapter title. Defaults to leading * 2 when absent."
+        },
+        "sectionSize": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 48,
+          "description": "pt; h2. Defaults to bodySize * 1.25 when absent."
+        },
+        "subsectionSize": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 48,
+          "description": "pt; h3. Defaults to bodySize * 1.1 when absent."
+        },
+        "subsubsectionSize": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 48,
+          "description": "pt; h4-h6. Defaults to subsectionSize, else bodySize, when absent."
         }
       },
       "required": [
@@ -357,6 +390,23 @@
         "separator": {
           "type": "string",
           "maxLength": 8
+        },
+        "size": {
+          "type": "number",
+          "minimum": 4,
+          "maximum": 18,
+          "description": "pt; running-head text size. Defaults to 9 when absent."
+        },
+        "transform": {
+          "type": "string",
+          "enum": [
+            "none",
+            "uppercase",
+            "lowercase",
+            "small-caps"
+          ],
+          "default": "none",
+          "description": "Casing applied to the running head only, never to the heading it is taken from."
         }
       },
       "additionalProperties": false
@@ -442,6 +492,11 @@
         "licenseRef": {
           "type": "string",
           "maxLength": 128
+        },
+        "file": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Font file for this face, relative to PUBLISHER_FONT_ROOT (default ./.publisher/fonts). Present for tenant_upload faces: it is what lets design-compile emit an @font-face binding the face to a CSS family, and what gives the licence manifest a real content hash instead of a metadata one."
         }
       },
       "required": [
@@ -514,6 +569,11 @@
         "dictionaryVersion": {
           "type": "string",
           "maxLength": 64
+        },
+        "character": {
+          "type": "string",
+          "maxLength": 4,
+          "description": "Character drawn at a hyphenation break. Defaults to U+002D HYPHEN-MINUS. WeasyPrint's own default is U+2010 HYPHEN, which many text faces -- Fedra Serif B Pro among them -- do not carry, so every broken word gets its hyphen from a fallback font."
         }
       },
       "additionalProperties": false
@@ -579,6 +639,18 @@
           "minimum": 0,
           "maximum": 12,
           "description": "pt"
+        }
+      },
+      "additionalProperties": false
+    },
+    "footnotes": {
+      "type": "object",
+      "properties": {
+        "maxHeightPercent": {
+          "type": "number",
+          "minimum": 20,
+          "maximum": 100,
+          "description": "Largest share of the page the footnote area may occupy, as a percentage. Also the guard against a note too tall for its page: without a cap the area overflows and the body text is drawn over it. Defaults to 85."
         }
       },
       "additionalProperties": false

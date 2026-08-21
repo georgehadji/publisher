@@ -7,11 +7,14 @@ In the tracer bullet, this produces a CSS stylesheet for Paged.js / Playwright.
 
 from __future__ import annotations
 import json
+import math
 from pathlib import Path
 
 from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, Diagnostic, ArtifactRef as StageArtifactRef
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
-from publisher_prepress.fontvault import FontLicenseViolation, validate_font_use
+from publisher_prepress.fontvault import (
+    FontLicenseViolation, font_root, register_tenant_font, validate_font_use,
+)
 from profiles import load_profile
 
 
@@ -86,16 +89,48 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     hyphenation = designspec.get("hyphenation") or {}
     hyphen_lang = hyphenation.get("language")
     shortest_word = int(hyphenation.get("shortestWord", 5))
+    hyphen_char = "".join(
+        f"\\{ord(c):04X}" for c in str(hyphenation.get("character", "-"))
+    )
     hyphen_zone = hyphenation.get("zone")
+
+    # How much of a page footnotes may claim. Also a typographic limit, not only
+    # a safety valve: a page that is 95% notes is a page of notes.
+    footnote_max_height = float((designspec.get("footnotes") or {}).get("maxHeightPercent", 85))
 
     _footnote_rule = designspec.get("footnoteRule") or {}
     rule_width = float(_footnote_rule.get("width", 72))
     rule_thickness = float(_footnote_rule.get("thickness", 0.25))
 
-    body_font_family = (typography.get("bodyFont") or {}).get("family", "EB Garamond")
+    # Heading sizes are DECLARED where the DesignSpec declares them and derived
+    # from the body size only as a fallback. The derived ladder (1.8 / 1.25 /
+    # 1.1 x body) is a reasonable default and a poor instruction: it made every
+    # heading a function of `bodySize`, so dropping the body from 10.5pt to 9pt
+    # silently shrank the chapter titles from 18.9pt to 16.2pt as well.
+    chapter_size = float(typography.get("chapterSize", body_size * 1.8))
+    chapter_leading = float(typography.get("chapterLeading", leading * 2))
+    section_size = float(typography.get("sectionSize", body_size * 1.25))
+    subsection_size = float(typography.get("subsectionSize", body_size * 1.1))
+    subsub_size = float(typography.get("subsubsectionSize", subsection_size))
+
+    # A chapter opening must consume a whole number of body lines, or the first
+    # line of every chapter sits at a different height from the first line of
+    # every other page and the two do not align across a spread. Space above
+    # the title is fixed; the space below absorbs the remainder, keeping at
+    # least a third of a line of air.
+    _chapter_used = leading * 2 + chapter_leading
+    _chapter_snapped = math.ceil((_chapter_used + leading * 0.35) / leading) * leading
+    chapter_space_after = _chapter_snapped - _chapter_used
+
+    # Quoted: "Fedra Serif B Pro" unquoted is legal CSS but one stray character
+    # in an uploaded family name is not, and a malformed font-family takes the
+    # whole declaration with it -- silently, into the default serif.
+    body_font_family = _css_family(
+        (typography.get("bodyFont") or {}).get("family", "EB Garamond"))
     heading_font_family = (typography.get("headingFont") or {}).get("family", "")
-    if not heading_font_family:
-        heading_font_family = body_font_family
+    heading_font_family = (
+        _css_family(heading_font_family) if heading_font_family else body_font_family
+    )
     
     top = margins.get("top", 18)
     bottom = margins.get("bottom", 20)
@@ -113,6 +148,9 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     lines = [
         "/* Auto-generated from DesignSpec -- emit_css() */",
         "",
+        # Before everything else: a face has to be bound to its family name
+        # before any rule can ask for it.
+        *_font_face_rules(designspec),
         "@page {",
         f"  size: {w_mm:g}mm {h_mm:g}mm;",
         # Emitted only when there is bleed to declare, so a no-bleed profile's
@@ -151,23 +189,43 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     rh_recto_source = running_heads.get("rectoSource", "chapter-title")
     rh_verso_source = running_heads.get("versoSource", "book-title")
     rh_style = running_heads.get("style", "centered")
+    rh_size = float(running_heads.get("size", 9))
+    rh_transform = running_heads.get("transform", "none")
     verso_from_chapter = rh_verso_source == "chapter-title"
-    
+
+    # `uppercase` is applied by `extract`, not here, and this is deliberate.
+    # WeasyPrint implements `text-transform: uppercase` with Python's
+    # `str.upper()`, which keeps the Greek tonos: "Περιεχόμενα" would print
+    # "ΠΕΡΙΕΧΌΜΕΝΑ" on every recto of the chapter. Greek drops the accent in
+    # capitals, so `extract` writes the correctly-cased string into
+    # `data-caps` and the running head is set from that attribute instead.
+    # The other transforms have no such language trap and stay in CSS.
+    # Where the running head's text comes from. `content(text)` is the element's
+    # own text; `attr(data-caps)` is the caps form `extract` wrote alongside it.
+    rh_source = "attr(data-caps)" if rh_transform == "uppercase" else "content(text)"
+    rh_extra = ""
+    if rh_transform == "lowercase":
+        rh_extra = "    text-transform: lowercase;"
+    elif rh_transform == "small-caps":
+        rh_extra = "    font-variant: small-caps;"
+
     if rh_recto_source != "none" or rh_verso_source != "none":
         lines.extend([
             "@page :right {",
             "  @top-right {",
             f"    content: string(recto-head);",
-            f"    font-size: 9pt;",
-            f"    font-family: {body_font_family};",
+            f"    font-size: {rh_size:g}pt;",
+            f"    font-family: {heading_font_family};",
+            *([rh_extra] if rh_extra else []),
             "  }",
             "}",
             "",
             "@page :left {",
             "  @top-left {",
             f"    content: string(verso-head);",
-            f"    font-size: 9pt;",
-            f"    font-family: {body_font_family};",
+            f"    font-size: {rh_size:g}pt;",
+            f"    font-family: {heading_font_family};",
+            *([rh_extra] if rh_extra else []),
             "  }",
             "}",
             "",
@@ -190,8 +248,11 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
             f"@page {{",
             f"  @{edge}-{align} {{",
             f"    content: counter(page, {folio_style});",
-            f"    font-size: 9pt;",
-            f"    font-family: {body_font_family};",
+            # The folio belongs to the page furniture, not the text: it takes
+            # the heading face and the running head's size, so the two marginal
+            # elements match each other rather than the body.
+            f"    font-size: {rh_size:g}pt;",
+            f"    font-family: {heading_font_family};",
             "  }",
             "}",
             "",
@@ -257,19 +318,19 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "",
         f".chapter-title {{",
         f"  font-family: {heading_font_family};",
-        f"  font-size: {body_size * 1.8}pt;",
-        f"  line-height: {leading * 2}pt;",
+        f"  font-size: {chapter_size:g}pt;",
+        f"  line-height: {chapter_leading:g}pt;",
         f"  text-align: center;",
-        f"  margin-top: {leading * 2}pt;",
-        f"  margin-bottom: {leading}pt;",
+        f"  margin-top: {leading * 2:.3f}pt;",
+        f"  margin-bottom: {chapter_space_after:.3f}pt;",
         # BOTH strings are set here. `verso-head` never was, so the verso
         # running head resolved to an empty string on every left-hand page while
         # the recto carried its title -- the spec's `versoSource` was simply not
         # implemented. `book-title` is still not reachable: design-compile emits
         # CSS from the DesignSpec alone and never sees the manuscript metadata,
         # so that value warns rather than silently printing nothing.
-        "  string-set: recto-head content(text)"
-        + (", verso-head content(text)" if verso_from_chapter else "")
+        "  string-set: recto-head " + rh_source
+        + (f", verso-head {rh_source}" if verso_from_chapter else "")
         + ";",
         "}",
         "",
@@ -418,6 +479,11 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         lines.extend([
             "html {",
             "  hyphens: auto;",
+            # WeasyPrint breaks with U+2010 HYPHEN unless told otherwise, and a
+            # text face that has no U+2010 -- most do not -- silently gets the
+            # glyph from a fallback font. It cost this book a Noto Sans hyphen on
+            # roughly every page of Fedra Serif text. U+002D is in everything.
+            f'  hyphenate-character: "{hyphen_char}";',
             f"  hyphenate-limit-chars: {shortest_word} 3 3;",
             *([f"  hyphenate-limit-zone: {float(hyphen_zone):g}mm;"]
               if hyphen_zone else []),
@@ -446,9 +512,9 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "  break-after: avoid;",
         "}",
         "",
-        f"h2 {{ font-size: {body_size * 1.25:.2f}pt; }}",
-        f"h3 {{ font-size: {body_size * 1.1:.2f}pt; }}",
-        f"h4, h5, h6 {{ font-size: {body_size:.2f}pt; }}",
+        f"h2 {{ font-size: {section_size:g}pt; }}",
+        f"h3 {{ font-size: {subsection_size:g}pt; }}",
+        f"h4, h5, h6 {{ font-size: {subsub_size:g}pt; }}",
         "",
     ])
 
@@ -516,16 +582,29 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         f"    width: {rule_width:g}pt;",
         f"    padding-top: {leading * 0.35:.3f}pt;",
         f"    margin-top: {leading * 0.5:.3f}pt;",
+        # THE OVERLAP FIX. Without a cap, a note taller than the space left on
+        # its page does not break -- WeasyPrint lets the footnote area grow past
+        # the bottom of the type area and then draws the body text over the top
+        # of it. Measured on this book: 40 collisions across 20 pages, entire
+        # 7pt footnote lines printed through 9pt body lines.
+        #
+        # `max-height` is what makes the note breakable: the area stops at the
+        # cap and the remainder continues on the next page. Verified on a
+        # fixture built from the failing case -- overlaps 1 -> 0, page count
+        # unchanged, and the extracted text stream identical character for
+        # character, so nothing is dropped to achieve it.
+        f"    max-height: {footnote_max_height:g}%;",
         "  }",
         "}",
         "",
     ])
 
     # Table of contents. `target-counter(attr(href), page)` resolves to the page
-    # the entry's chapter actually starts on, so the figures are the typeset
+    # the entry's section actually starts on, so the figures are the typeset
     # ones rather than whatever the author last typed; `leader('.')` fills the
-    # gap. Entries that resolve to no chapter (subsections, which carry no id)
-    # simply print without a number.
+    # gap. Subsections and sub-subsections carry anchors of their own now, so
+    # they resolve too; only an entry naming a section that no longer exists in
+    # the body prints without a number.
     lines.extend([
         ".toc p {",
         "  text-indent: 0;",
@@ -553,11 +632,69 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
 
 
 
+# A face's style name mapped to the CSS weight it should answer to. The name is
+# the type designer's ("Book", "Medium"), the number is what `font-weight` in a
+# stylesheet actually selects; without the mapping a spec listing Book/Medium/
+# Bold gives fontconfig three unrelated families and `<strong>` gets a
+# synthesised, smeared bold instead of the drawn one.
+_STYLE_WEIGHT = {
+    "thin": 100, "extralight": 200, "light": 300,
+    "book": 400, "normal": 400, "regular": 400,
+    "medium": 500, "semibold": 600, "demibold": 600,
+    "bold": 700, "extrabold": 800, "black": 900,
+}
+
+
+def _face_css(font: dict) -> tuple[int, str]:
+    """(font-weight, font-style) for a DesignSpec font entry."""
+    style = str(font.get("style", "regular")).lower()
+    italic = "italic" in style or "oblique" in style
+    stem = style.replace("-italic", "").replace("italic", "").strip("- ") or "regular"
+    weight = int(font.get("weight") or _STYLE_WEIGHT.get(stem, 400))
+    return weight, ("italic" if italic else "normal")
+
+
+def _font_face_rules(spec: dict) -> list[str]:
+    """`@font-face` for every spec font that names a file.
+
+    Without these the renderer can only ask fontconfig for a family by name,
+    and an uploaded family whose faces are separate fontconfig families --
+    "Fedra Serif B Pro Book" and "Fedra Serif B Pro Bold" are two, not one --
+    can never be selected by weight. Binding the files to a single CSS family
+    here is what makes `font-weight: bold` reach the drawn Bold.
+    """
+    lines: list[str] = []
+    for font in spec.get("fonts") or []:
+        file_name = font.get("file")
+        if not file_name:
+            continue
+        path = (font_root() / file_name).resolve()
+        weight, style = _face_css(font)
+        lines.extend([
+            "@font-face {",
+            f"  font-family: {_css_family(font.get('family', ''))};",
+            f"  src: url(\"{path.as_uri()}\");",
+            f"  font-weight: {weight};",
+            f"  font-style: {style};",
+            "}",
+            "",
+        ])
+    return lines
+
+
+def _css_family(family: str) -> str:
+    """A family name quoted so a multi-word name survives the stylesheet."""
+    return '"' + family.replace('\\', '').replace('"', '') + '"'
+
+
 def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     """(family, style) pairs referenced by a DesignSpec's typography block."""
     typ = spec.get("typography") or {}
     out = []
-    for key in ("bodyFont", "displayFont", "monoFont"):
+    # `headingFont` was missing from this list, so the one font a spec is most
+    # likely to set to something other than the body face went through the
+    # licence gate unchecked.
+    for key in ("bodyFont", "headingFont", "displayFont", "monoFont"):
         fam = (typ.get(key) or {}).get("family")
         if fam:
             out.append((fam, (typ.get(key) or {}).get("style", "regular")))
@@ -579,7 +716,21 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # missing `text-align`, which left every book ragged-right however emphatically
     # the DesignSpec said justified. Plus footnote and TOC rules. Every v3
     # stylesheet mis-renders those four things; none may be served from cache.
-    version=4,
+    # v5: heading sizes, the chapter leading and the running-head size are
+    # read from the DesignSpec instead of being derived from `bodySize`; the
+    # running head takes its text from `data-caps` when the spec asks for
+    # uppercase; `@font-face` binds uploaded faces to their family; and the
+    # footnote area carries a `max-height`. That last one is a correctness fix,
+    # not a preference: without it a note taller than the space left on its page
+    # overflows and the body text is drawn through it. Every v4 stylesheet
+    # renders those overlaps, so none may be replayed.
+    # v6: `hyphenate-character`. WeasyPrint breaks with U+2010 HYPHEN, which
+    # Fedra Serif B Pro -- and most text faces -- do not carry, so every
+    # hyphenated line in a v5 stylesheet takes its hyphen from a fallback font.
+    # v7: the folio takes the heading face and the running-head size. It was
+    # pinned to the body face at a hard-coded 9pt, so it neither followed the
+    # spec's `headingFont` nor noticed the body dropping to 9pt.
+    version=7,
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
     # `profile_name` is optional so that a build which omits it still renders --
@@ -627,6 +778,22 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None,
 
     # §2.10: refuse to emit a spec naming a font that is not licensed for print.
     # Enforced in the domain layer, not the UI.
+    # Uploaded faces enter the vault here, hashed from their actual bytes, so
+    # the licence check below can see them. A face that names no file is left
+    # alone: it must already be a bundled or server-licensed family.
+    for font in spec.get("fonts") or []:
+        if font.get("source") != "tenant_upload" or not font.get("file"):
+            continue
+        try:
+            register_tenant_font(
+                font.get("family", ""),
+                font.get("style", "regular"),
+                font["file"],
+                font.get("licenseRef", "tenant-attested"),
+            )
+        except FontLicenseViolation as exc:
+            raise StageError(kind=ErrorKind.POLICY_VIOLATION, message=str(exc))
+
     for family, style in _fonts_in_spec(spec):
         try:
             validate_font_use(family, style, "PRINT_PDF")

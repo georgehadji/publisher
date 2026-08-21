@@ -273,8 +273,10 @@ def _numbered_depth(text: str) -> int:
     return len(match.group(1).split("."))
 
 
-def _toc_outline(blocks: list[Block]) -> tuple[int, int, dict[str, int]] | None:
-    """`(toc_index, body_start_index, {folded title: depth})` from the contents page.
+def _toc_outline(
+    blocks: list[Block],
+) -> tuple[int, int, dict[str, int], dict[str, int]] | None:
+    """`(toc_index, body_start, {folded title: depth}, {number: depth})`.
 
     WHY THE CONTENTS PAGE IS THE AUTHORITY
     On the manuscript this was built against, the numbering lives ONLY on the
@@ -304,11 +306,20 @@ def _toc_outline(blocks: list[Block]) -> tuple[int, int, dict[str, int]] | None:
         return None
 
     entries: dict[str, int] = {}
+    # The same outline keyed by section number. Titles are what the author
+    # RETYPES and therefore what they get wrong: this manuscript's contents
+    # reads "9.2 Η «ειρωνεία» του Σωκράτους ..." while the body types the same
+    # heading without the guillemets, and a title match cannot see through the
+    # punctuation. The number is copied, not retyped, so when both sides carry
+    # one it is the more reliable of the two.
+    numbers: dict[str, int] = {}
     for block in blocks[marker + 1 : prose]:
         depth = _numbered_depth(block.text)
         if depth:
             match = NUMBERED_HEADING.match(block.text)
             title = match.group(2) if match else block.text
+            if match:
+                numbers.setdefault(match.group(1), depth)
         else:
             # An unnumbered contents line ("Βιβλιογραφία") is still a section.
             title, depth = block.text, 1
@@ -327,7 +338,7 @@ def _toc_outline(blocks: list[Block]) -> tuple[int, int, dict[str, int]] | None:
     if prose - 1 > marker and _fold_diacritics(blocks[prose - 1].text) in entries:
         body_start = prose - 1
 
-    return marker, body_start, entries
+    return marker, body_start, entries, numbers
 
 
 def _apply_numbering(blocks: list[Block]) -> list[Block]:
@@ -342,7 +353,7 @@ def _apply_numbering(blocks: list[Block]) -> list[Block]:
     """
     outline = _toc_outline(blocks)
     if outline is not None:
-        marker, body_start, entries = outline
+        marker, body_start, entries, numbers = outline
         promoted: list[Block] = []
         for i, block in enumerate(blocks):
             depth = 0
@@ -363,6 +374,23 @@ def _apply_numbering(blocks: list[Block]) -> list[Block]:
                     if candidate and candidate in entries:
                         depth = entries[candidate]
                         break
+                # SUB-level numbers only ("9.2", "4.3.1"), never a bare "3.".
+                # Requiring the number to be one the contents page lists is not
+                # enough on its own: prose numbers its lists from 1, the
+                # contents numbers its chapters from 1, and the two collide.
+                # Dropping the guard promoted two list items out of chapter 5's
+                # prose -- "3. Μεταξύ του δευτέρου και του τρίτου ταξιδιού του
+                # Πλάτωνος ..." became a chapter of its own. A dotted number is
+                # not something running prose produces, so the ambiguity that
+                # made the title match the authority in the first place does not
+                # arise below the top level.
+                if (
+                    not depth
+                    and match
+                    and "." in match.group(1)
+                    and match.group(1) in numbers
+                ):
+                    depth = numbers[match.group(1)]
             # Between the marker and body_start lie the contents entries
             # themselves: left as plain blocks so they stay inside the contents
             # section and are emitted as one `toc` item.
@@ -451,21 +479,38 @@ def _inline_with_footnotes(
     return content
 
 
+def _ids_for(heading_ids: dict[tuple[int, int], str], section: int) -> dict[int, str]:
+    """The anchors assigned to one section, keyed by block index within it."""
+    return {b: v for (s, b), v in heading_ids.items() if s == section}
+
+
 def _section_content(
-    blocks: list[Block], footnotes: dict[str, str], counter: list[int]
+    blocks: list[Block],
+    footnotes: dict[str, str],
+    counter: list[int],
+    heading_ids: dict[int, str] | None = None,
 ) -> list[dict]:
-    """Block nodes for one section, footnotes inline at their reference points."""
+    """Block nodes for one section, footnotes inline at their reference points.
+
+    `heading_ids` maps a block's index within `blocks` to the anchor its
+    heading should carry, as assigned by the pre-pass in `_build_ast` that
+    also teaches the contents page where each subsection lives.
+    """
     content: list[dict] = []
-    for block in blocks:
+    for index, block in enumerate(blocks):
         inline = _inline_with_footnotes(block, footnotes, counter)
         if block.depth >= 2:
+            attrs = {
+                "level": min(block.depth, 6),
+                "role": _HEADING_ROLE.get(block.depth, "subsubsection"),
+            }
+            anchor = (heading_ids or {}).get(index)
+            if anchor:
+                attrs["id"] = anchor
             content.append(
                 {
                     "type": "heading",
-                    "attrs": {
-                        "level": min(block.depth, 6),
-                        "role": _HEADING_ROLE.get(block.depth, "subsubsection"),
-                    },
+                    "attrs": attrs,
                     "content": inline,
                 }
             )
@@ -480,28 +525,40 @@ def _toc_entry(block: Block, target: str | None) -> dict:
     The link is what earns the entry a real page number: the stylesheet prints
     `target-counter(attr(href), page)` after it, so the figure is the page the
     section actually landed on rather than one carried over from Word.
+
+    `attrs.indent` carries the entry's own depth, so a contents page listing
+    subsections and sub-subsections reads as a hierarchy rather than as one
+    flat column of forty lines.
     """
     text_node = {"type": "text", "text": block.text}
+    depth = _numbered_depth(block.text)
+    attrs = {"indent": float(max(depth - 1, 0))} if depth > 1 else None
     if target is None:
-        return {"type": "paragraph", "content": [text_node]}
-    return {
-        "type": "paragraph",
-        "content": [
-            {
-                "type": "crossReference",
-                "attrs": {"target": target, "display": "page"},
-                "content": [text_node],
-            }
-        ],
-    }
+        node = {"type": "paragraph", "content": [text_node]}
+    else:
+        node = {
+            "type": "paragraph",
+            "content": [
+                {
+                    "type": "crossReference",
+                    "attrs": {"target": target, "display": "page"},
+                    "content": [text_node],
+                }
+            ],
+        }
+    if attrs:
+        node["attrs"] = attrs
+    return node
 
 
 def _toc_target(text: str, targets: dict[str, str]) -> str | None:
-    """The chapter id a contents line points at, by number or by title.
+    """The id a contents line points at, by number or by title.
 
-    Only chapters carry an `attrs.id`, so only top-level entries can be linked.
-    A subsection entry ("7.1.2 ...") resolves to nothing and prints without a
-    page number rather than pointing at the wrong page.
+    Chapters, subsections and sub-subsections all register here (see the two
+    target passes in `_build_ast`), so "7.1.2 ..." resolves to the heading it
+    names. Only an entry with no counterpart anywhere in the body -- a line the
+    author left in the contents after deleting the section -- falls through to
+    `None` and prints without a page number, which is the honest answer.
     """
     number = _section_number(text)
     if number and number in targets:
@@ -814,6 +871,38 @@ def docx_to_ast(
         if bare:
             targets.setdefault(_fold_diacritics(bare), chapter_id)
 
+    # Pass 1b: the same for every subsection and sub-subsection INSIDE those
+    # chapters. Until this existed only chapters carried an `attrs.id`, so a
+    # contents line naming "4.3.1" resolved to no target and printed with no
+    # page number -- roughly half the entries on the contents page were bare
+    # titles. The anchor is positional (`ch4-s7`) rather than derived from the
+    # number, so an unnumbered subsection gets one too.
+    #
+    # A separate pass, not folded into the loop above, so that CHAPTERS claim
+    # their keys first: `setdefault` means an early subsection can never
+    # shadow a later chapter that happens to share its title.
+    heading_ids: dict[tuple[int, int], str] = {}
+    pending = 0
+    for index, (section_title, section_blocks) in enumerate(sections):
+        if index < body_start or _is_back_matter(section_title):
+            continue
+        pending += 1
+        chapter_id = f"ch{pending}"
+        nth = 0
+        for block_index, block in enumerate(section_blocks):
+            if block.depth < 2:
+                continue
+            nth += 1
+            heading_id = f"{chapter_id}-s{nth}"
+            heading_ids[(index, block_index)] = heading_id
+            number = _section_number(block.text)
+            if number:
+                targets.setdefault(number, heading_id)
+            match = NUMBERED_HEADING.match(block.text)
+            bare = match.group(2).strip() if match else block.text
+            if bare:
+                targets.setdefault(_fold_diacritics(bare), heading_id)
+
     toc_blocks: list[Block] = []
 
     for index, (section_title, section_blocks) in enumerate(sections):
@@ -826,13 +915,17 @@ def docx_to_ast(
                 continue
             # Front matter carries no `attrs.title` -- see module docstring --
             # so its heading survives as a leading paragraph instead.
-            content = _section_content(section_blocks, footnotes, footnote_counter)
+            content = _section_content(
+                section_blocks, footnotes, footnote_counter, _ids_for(heading_ids, index)
+            )
             if section_title:
                 content.insert(0, _paragraph(section_title))
             front_matter.append({"type": FRONT_MATTER_TYPE, "content": content})
             continue
 
-        content = _section_content(section_blocks, footnotes, footnote_counter)
+        content = _section_content(
+            section_blocks, footnotes, footnote_counter, _ids_for(heading_ids, index)
+        )
 
         if _is_back_matter(section_title):
             back_matter.append(

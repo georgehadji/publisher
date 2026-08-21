@@ -1,6 +1,6 @@
 {
   "schema": "designspec/1",
-  "name": "Greek 17x24 -- Noto, 25mm inner",
+  "name": "Greek 17x24 -- Fedra Serif B Pro, 25mm inner",
   "preferredEngine": "chrome-pagedjs",
   "trimSize": {
     "width": 170.0,
@@ -9,10 +9,10 @@
   },
   "typography": {
     "bodyFont": {
-      "family": "Noto Serif"
+      "family": "Fedra Serif B Pro"
     },
     "headingFont": {
-      "family": "Noto Sans"
+      "family": "Fedra Sans Pro"
     },
     "bodySize": 9.0,
     "leading": 14.173,
@@ -21,7 +21,12 @@
     "bodyAlignment": "justified",
     "paragraphIndent": 1.5,
     "opticalMargins": true,
-    "footnoteSize": 7.0
+    "footnoteSize": 7.0,
+    "chapterSize": 14.0,
+    "chapterLeading": 18.2,
+    "sectionSize": 11.0,
+    "subsectionSize": 10.0,
+    "subsubsectionSize": 10.0
   },
   "grid": {
     "type": "single",
@@ -43,7 +48,9 @@
   "runningHeads": {
     "rectoSource": "chapter-title",
     "versoSource": "chapter-title",
-    "style": "centered"
+    "style": "centered",
+    "size": 6.0,
+    "transform": "uppercase"
   },
   "chapterOpenings": {
     "startsOn": "recto",
@@ -54,36 +61,123 @@
   },
   "fonts": [
     {
-      "family": "Noto Serif",
+      "family": "Fedra Serif B Pro",
       "style": "regular",
-      "source": "bundled_ofl"
+      "weight": 400,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-Book.otf"
     },
     {
-      "family": "Noto Serif",
+      "family": "Fedra Serif B Pro",
       "style": "italic",
-      "source": "bundled_ofl"
+      "weight": 400,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-BookItalic.otf"
     },
     {
-      "family": "Noto Serif",
+      "family": "Fedra Serif B Pro",
+      "style": "medium",
+      "weight": 500,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-Medium.otf"
+    },
+    {
+      "family": "Fedra Serif B Pro",
+      "style": "medium-italic",
+      "weight": 500,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-MediumItalic.otf"
+    },
+    {
+      "family": "Fedra Serif B Pro",
       "style": "bold",
-      "source": "bundled_ofl"
+      "weight": 700,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-Bold.otf"
     },
     {
-      "family": "Noto Sans",
+      "family": "Fedra Serif B Pro",
+      "style": "bold-italic",
+      "weight": 700,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-BoldItalic.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "light",
+      "weight": 300,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-Light.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "light-italic",
+      "weight": 300,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-LightItalic.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
       "style": "regular",
-      "source": "bundled_ofl"
+      "weight": 400,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-Book.otf"
     },
     {
-      "family": "Noto Sans",
+      "family": "Fedra Sans Pro",
+      "style": "italic",
+      "weight": 400,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-BookItalic.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "medium",
+      "weight": 500,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-Medium.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "medium-italic",
+      "weight": 500,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-MediumItalic.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
       "style": "bold",
-      "source": "bundled_ofl"
+      "weight": 700,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-Bold.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "bold-italic",
+      "weight": 700,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-BoldItalic.otf"
     }
   ],
   "colors": {
     "text": "#000000",
     "paper": "#FFFFFF"
   },
-  "templateId": "greek-17x24-noto",
+  "templateId": "greek-17x24-fedra",
   "hyphenation": {
     "language": "el",
     "zone": 14.0,
@@ -93,5 +187,8 @@
   "footnoteRule": {
     "width": 72,
     "thickness": 0.25
+  },
+  "footnotes": {
+    "maxHeightPercent": 85
   }
 }
