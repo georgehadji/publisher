@@ -1,6 +1,6 @@
 ---
 name: publisher-packages
-description: Map of the `packages/` folder — the TypeScript surfaces: `packages/api` (Fastify + Postgres REST API — titles, manuscripts, uploads, builds, SSE, artifacts, webhooks, health, admin metrics) and `packages/web` (Next.js structure-review UI). Use this whenever a task touches an HTTP route, auth/tenancy, idempotency, rate limiting, artifact download, build status or SSE events, webhook validation, or the review UI. Read before editing anything under packages/.
+description: "Map of the `packages/` folder — the TypeScript surfaces: `packages/api` (Fastify + Postgres REST API — titles, manuscripts, uploads, builds, SSE, artifacts, webhooks, health, admin metrics) and `packages/web` (Next.js structure-review UI). Use this whenever a task touches an HTTP route, auth/tenancy, idempotency, rate limiting, artifact download, build status or SSE events, webhook validation, or the review UI. Read before editing anything under packages/."
 ---
 
 # `packages/` — the TypeScript surfaces
@@ -20,18 +20,20 @@ Node 22+, ESM, Fastify 5, `pg`, Zod. Scripts: `build` (tsc), `dev` (`tsx watch`)
 | `src/db.ts` | **The single data-access layer.** Everything touching Postgres or the CAS filesystem lives here so routes stay thin. `loadOwned` centralizes the tenant-ownership check against a table whitelist (never interpolated input) — the one place that check was originally missing was manuscript creation, which a single helper makes structurally impossible to omit. Also `casPath` (validates `^[a-f0-9]{64}$` before `path.join` — S2/N5), `readCasFile` (size ceiling — S6/N4), `casBlobExists`, `DELIVERABLE_SCHEMAS`, `CAS_ROOT`, `pool`. |
 | `src/plugins.ts` | Cross-cutting Fastify plugins registered as one unit so the `onRequest` hooks run in a fixed order: **auth + tenancy (S1) → idempotency (S3) → tenant-keyed rate limit (S7)**, plus helmet security headers (S5) and strict CORS. Exports `isAdminToken`. |
 | `src/types.ts` | Fastify request augmentation — `request.tenantId` (set by the auth hook) and `request.idemKey`. Declared once because the route split made it a cross-file contract. |
-| `src/routes/titles.ts` | `POST/GET /v1/titles`, `GET /v1/titles/:id`, `POST /v1/titles/:id/manuscripts`. |
-| `src/routes/manuscripts.ts` | `PUT /v1/manuscripts/:id/upload` — streams the body straight into the shared CAS (never through the 1 MiB JSON body parser), records `manuscripts.source_sha256`, checks the DOCX/ZIP `PK` magic bytes. Also `GET /v1/manuscripts/:id/structure` and `/v1/documents/:id/overrides`. |
-| `src/routes/builds.ts` | `POST/GET /v1/builds`, `GET /v1/builds/:id`, `GET /v1/builds/:id/preflight`, and `GET /v1/builds/:id/events` (SSE). The SSE endpoint **LISTENs on a dedicated connection** for the worker's `NOTIFY build_<id>` instead of polling two queries every 500 ms per client (N3); wire format `event: stage.progress` / `build.completed|failed` is unchanged. |
+| `src/routes/titles.ts` | `POST /v1/titles`, `GET /v1/titles/:id`, `POST /v1/titles/:id/manuscripts`. **There is no list endpoint** — no `GET /v1/titles`. |
+| `src/routes/manuscripts.ts` | `PUT /v1/manuscripts/:id/upload` — streams the body straight into the shared CAS (never through the 1 MiB JSON body parser), records `manuscripts.source_sha256`, checks the DOCX/ZIP `PK` magic bytes. Also `GET /v1/manuscripts/:id/structure` and **`PATCH`** `/v1/documents/:id/overrides` (it takes an `ops` array body — the write side of the override layer, not a read). |
+| `src/routes/builds.ts` | `POST /v1/builds`, `GET /v1/builds/:id`, `GET /v1/builds/:id/preflight`, `GET /v1/builds/:id/events` (SSE). **No `GET /v1/builds` list endpoint** — every GET is `:id`-scoped. The SSE endpoint **LISTENs on a dedicated connection** for the worker's `NOTIFY build_<id>` instead of polling two queries every 500 ms per client (N3); wire format `event: stage.progress` / `build.completed\|failed` is unchanged. |
 | `src/routes/artifacts.ts` | `GET /v1/builds/:id/artifacts/:kind` (metadata) and `.../download` (byte streaming off the CAS). |
 | `src/routes/webhooks.ts` | `POST/GET /v1/webhooks` with S4 URL validation at creation: https only; rejects hosts resolving to RFC1918, loopback, link-local, multicast, or cloud-metadata addresses. **DNS-rebinding re-checks must also run at delivery time** — the seam is marked in the file. |
 | `src/routes/health.ts` | `GET /v1/health` — actually checks Postgres (short timeout) and CAS readability, returning 503 with a per-check breakdown. It used to return unconditional 200 `ok`, so a load balancer happily routed to an instance whose database was gone. |
 | `src/routes/admin.ts` | `GET /v1/admin/metrics` — stage-level p50/p95 from `build_stages.duration_ms`, data that was always collected and never read. Admin-token gated via `PUBLISHER_ADMIN_TOKENS`; unconfigured means the route is effectively absent. |
-| `package.json`, `tsconfig.json` | `tsconfig.json` **extends the monorepo root** — `Dockerfile.api` must preserve the `repo-root/packages/api/` layout or `../../tsconfig.json` resolves to nothing. |
+| `package.json`, `tsconfig.json` | `tsconfig.json` **extends the monorepo root** (`packages/web` deliberately does not — see **publisher-root**) — `Dockerfile.api` must preserve the `repo-root/packages/api/` layout or `../../tsconfig.json` resolves to nothing. |
 
 ### Environment
 `DATABASE_URL`, `PORT`, `HOST`, `PUBLISHER_API_TOKENS` (`token:tenant`), `PUBLISHER_CORS_ORIGINS`,
-`PUBLISHER_CAS_ROOT`, `PUBLISHER_ADMIN_TOKENS`. The API is both a CAS **reader** (artifact
+`PUBLISHER_CAS_ROOT`, `PUBLISHER_ADMIN_TOKENS`, plus the two size ceilings in `db.ts`:
+`PUBLISHER_UPLOAD_MAX_BYTES` (default 100 MiB) and `PUBLISHER_CAS_READ_MAX_BYTES` (default 64 MiB)
+— a rejected large upload is a config change, not a source patch. The API is both a CAS **reader** (artifact
 downloads) and, since the upload route landed, a CAS **writer** — the compose mount must not be `:ro`.
 
 ## `packages/web` — Next.js review UI

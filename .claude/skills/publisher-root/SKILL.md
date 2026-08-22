@@ -35,14 +35,14 @@ is unreachable, fix the chain — do not promote an input to root and do not set
 | `package.json` | Root workspace scripts: `gen`, `gen:check`, `test`, `lint`, `build` (all `pnpm -r`). Node ≥ 22. |
 | `pnpm-workspace.yaml` | Workspaces: `schemas/*`, `platform/*`, `packages/*`, `services/*`, `infra/*`. |
 | `Cargo.toml` / `Cargo.lock` | Rust workspace: `platform/cas`, `platform/pagescan`. |
-| `tsconfig.json` | The base config every `packages/*` and `platform/*/ts` tsconfig extends. |
+| `tsconfig.json` | Extended by `packages/api` and the three `platform/*/ts` configs. **`packages/web` deliberately does not extend it** — Next 15 needs `module: esnext` / `moduleResolution: bundler` / `jsx: preserve` / `noEmit`, all incompatible with this file's `Node16` + `outDir: dist`. Do not "fix" that inconsistency. |
 | `.npmrc` | pnpm settings. `package-lock.json` / `yarn.lock` are gitignored — an npm/yarn lockfile here would pin a second, conflicting dependency graph. |
 | `README.md` | Public overview + the per-module status table. |
 | `CLAUDE.md` | Project instructions **and the folder/skill navigation map** — start there. |
 | `implementation_audit_report.md` | 2026-08-11 independent audit of the Stage 1–2 uplift (commits `7a4401b..beeff69`). Distinct from the older `docs/implementation_audit_report.md` (2026-07-29). |
 | `.github/workflows/ci.yml` | Three jobs — `python` (full suite + schema lint), `rust` (`cargo test`, `clippy -D warnings`), `contracts` (codegen in sync, generated types execute, **DAG integrity**, generated contract tests, version-bump lint, service-deps lint). Every gate here previously carried `continue-on-error: true`, so all of them were advisory; two could not have failed anyway. They are enforced now — do not re-add `continue-on-error`. |
 | `.reasonix/` | Four small JSON files of desktop-tool topic metadata (titles, created-at, title sources). **Not source, not build state** — nothing in the pipeline reads them. Ignore unless explicitly asked. |
-| `.gitignore` | Note the two non-obvious groups: `*.gen.*` (checked in, but must be regenerated — `gen:check` verifies), and `.publisher/` / `.test-cas-cache/` / `.cas-cache/` (durable CAS blobs + sqlite cache index; content-addressed output, not source). |
+| `.gitignore` | Note the two non-obvious groups: `*.gen.*` — its comment claims "checked in", which is **false**: they are ignored, zero are tracked, and `gen:check` therefore cannot fail (see **publisher-schemas**); and `.publisher/` / `.test-cas-cache/` / `.cas-cache/` (durable CAS blobs + sqlite cache index; content-addressed output, not source). |
 
 ## Commands
 

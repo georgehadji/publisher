@@ -11,7 +11,9 @@ the DAG is derived from, so **a schema ID is an API**, not a label.
 Two rules govern the whole folder:
 
 1. **Schema-first codegen.** JSON Schema → Pydantic (`schemas/py/models.gen.py`) + Zod
-   (`schemas/ts/index.gen.ts`), CI-verified. Never hand-edit the generated files.
+   (`schemas/ts/index.gen.ts`). Never hand-edit them. **Neither exists in a fresh checkout**
+   (`schemas/py/` is not even created until you run codegen) and neither is tracked — see the
+   gen:check warning below before trusting any "in sync" claim.
 2. **The AST schema is one schema, used three ways** — canonical book model, ProseMirror
    schema, and the input to every writer. That is what prevents drift.
 
@@ -27,18 +29,21 @@ Two rules govern the whole folder:
 | `manifest/manifest.schema.json` | `manifest/1` | **BuildManifest** — immutable record of a completed build: every input, stage version, output artifact. |
 | `classification/classification.schema.json` | `classification/1` | **ClassificationResult** — LLM output. **Closed-enum only, no prose, no free text.** |
 | `agent-proposal/agent-proposal.schema.json` | `agent-proposal/1` | **AgentProposal** — an agent's proposed action, expressed as override ops, never AST writes. |
-| `pagemap/pagemap.schema.json` | `pagemap/1` | **PageMap** — per-page layout metadata from `paginate`, consumed by stitch, folio, TOC, index, and `platform/pagescan`. |
-| `cover/art-brief.schema.json` | `cover/art-brief/1` | **ArtBrief** — semantic cover direction. Closed enums everywhere except `concept`/`subject`. |
-| `cover/art-provenance.schema.json` | `cover/art-provenance/1` | **ArtProvenance** — compliance + reproducibility record for generated art. Ships in the delivery package; retailers require AI-generation disclosure. |
-| `cover/cover-verdict.schema.json` | `cover/cover-verdict/1` | **CoverVerdict** — one judge's pairwise vote. Closed enum, deliberately **no rationale field**. |
-| `ts/shared.types.json` | `types/1` | Shared definitions `$ref`-ed by all the above. |
+| `pagemap/pagemap.schema.json` | `pagemap/1` | **PageMap** — per-page layout metadata from `paginate`. Declared a **terminal output**: no stage consumes it. `platform/pagescan` (Rust) reads it but is not a stage; `stitch`/`folio`/`toc`/`index` appear in ARCHITECTURE/OPTIMIZATION plans and are **not implemented**. Do not remove `terminal_outputs=["pagemap"]` expecting a consumer. |
+| `cover/art-brief.schema.json` | `art-brief/1` | **ArtBrief** — semantic cover direction. Closed enums everywhere except `concept`/`subject`. |
+| `cover/art-provenance.schema.json` | `art-provenance/1` | **ArtProvenance** — compliance + reproducibility record for generated art. Ships in the delivery package; retailers require AI-generation disclosure. |
+| `cover/cover-verdict.schema.json` | `cover-verdict/1` | **CoverVerdict** — one judge's pairwise vote. Closed enum, deliberately **no rationale field**. |
+| `ts/shared.types.json` | `types/1` | **Nothing references it.** There is not one cross-file `$ref` in `schemas/`, and `codegen/generate.mjs` skips it (it only reads `*.schema.json`). Its `$defs` are duplicated inline in the individual schemas; codegen recovers shared types by content-hash dedup instead. Editing this file changes nothing. |
 | `codegen/generate.mjs` | — | The two-pass generator. Two-pass because a single pass decided a type's *name* at point of use instead of registering types up front, which produced dangling refs and a literal `z.object({...PROPERTIES...})` placeholder. |
 | `codegen/test.mjs` | — | **Executes** the generated types rather than grepping them. The previous version only ran substring checks and passed while the generated TS had 39 dangling refs and the generated Python was an unimportable SyntaxError. |
 | `package.json` | — | `@publisher/schemas`. Scripts: `gen`, `gen:check`, `test`, `build`. Depends on `zod`. |
 
-Generated outputs (`schemas/ts/index.gen.ts`, `schemas/py/models.gen.py`) match `*.gen.*`
-in `.gitignore`'s "checked in but must be regenerated" section — they are produced by
-codegen and verified by `gen:check`, so regenerate rather than edit.
+**The `.gitignore` comment above `*.gen.*` says "checked in" and is wrong.** Zero `.gen.*`
+files are tracked, none exist in a fresh checkout, and `git add` refuses them. Consequently
+`gen:check` (`git diff --exit-code -- '**/*.gen.*'`) **exits 0 unconditionally** — it inspects
+only tracked files, so it can never detect drift. CI's step regenerates and then runs a bare
+`git diff --exit-code`, which is equally blind to ignored files. Treat codegen freshness as
+*unverified* and rerun `node codegen/test.mjs`, which actually executes the output.
 
 ## Working with schemas
 
@@ -47,7 +52,7 @@ cd schemas && node codegen/generate.mjs      # regenerate types
 cd schemas && node codegen/test.mjs          # execute the generated types
 python cli.py schema validate <file>         # validate an instance
 python tools/lint_schemas.py                 # no free-text in structure-route schemas
-git diff --exit-code -- '**/*.gen.*'         # what CI's gen:check runs
+# NOTE: gen:check cannot fail (see above) — codegen/test.mjs is the real check
 ```
 
 ## Rules that bite
@@ -59,7 +64,8 @@ git diff --exit-code -- '**/*.gen.*'         # what CI's gen:check runs
   DAG changes — re-run `python platform/stages/integrity.py`.
 - **Bump the schema ID version** (`ast/1` → `ast/2`) for a breaking change; every stage
   declaring the old ID must be updated, and their `@stage(version=...)` bumped too.
-- **Regenerate and commit** the `.gen.*` files in the same change, or `gen:check` fails CI.
+- **Regenerate** after any schema edit and run `node codegen/test.mjs`. Do **not** try to
+  commit the `.gen.*` files — they are gitignored, and no gate will catch stale ones for you.
 
 ## Related
 

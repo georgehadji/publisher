@@ -15,10 +15,10 @@ input** — vendor specs are loaded from this folder, never produced by a stage.
 |---|---|
 | `__init__.py` | `load_profile(name)`. Scans every `profiles/` subdirectory for YAML containing the named profile; files may be multi-document (`---` separated) to hold several profiles. Falls back to a CWD-relative `profiles/` when the package path does not resolve. |
 | `generic/6x9.yaml` | `Generic 6x9` — safe defaults for testing. 152.4 × 228.6 mm, 3.0 mm bleed. The tracer bullet's default. |
-| `kdp/us-trade.yaml` | `KDP US Trade 6x9`, v2025.1. 152.4 × 228.6 mm, 3.175 mm bleed. Source: KDP help topic G201834340. |
-| `ingramspark/us-trade.yaml` | `IngramSpark US Trade 6x9`, v2025.1. Same trim, 3.175 mm bleed. |
-| `lulu/us-trade.yaml` | `Lulu US Trade 6x9`, v2025.1. Same trim, 3.175 mm bleed. |
-| `greek/standard-sizes.yaml` | Four Greek trade sizes, multi-document. **Exact whole-centimetre trims** — 17×24 cm is 170×240 mm, not a rounded inch conversion. All four declare 3 mm bleed on every side. |
+| `kdp/us-trade.yaml` | **Three profiles** (multi-document): `KDP US Trade 6x9`, `5.5x8.5`, `8.5x11`, all v2025.1, 3.175 mm bleed. Source: KDP help topic G201834340. |
+| `ingramspark/us-trade.yaml` | **Three profiles** (multi-document): `IngramSpark US Trade 6x9`, `5.5x8.5`, `8.5x11`, v2025.1, 3.175 mm bleed. |
+| `lulu/us-trade.yaml` | `Lulu US Trade 6x9`, v2025.1. 152.4 × 228.6 mm, 3.175 mm bleed. Single profile. |
+| `greek/standard-sizes.yaml` | Four Greek trade sizes, multi-document (12 profiles exist across the folder in total). **Exact whole-centimetre trims** — 17×24 cm is 170×240 mm, not a rounded inch conversion. All four declare 3 mm bleed on every side. |
 
 Pair each Greek profile with the same-named preset in `templates/__init__.py`
 (`GREEK_17X24`, `GREEK_14X21`, `GREEK_12X17`, `GREEK_21X29`).
@@ -39,7 +39,9 @@ Pair each Greek profile with the same-named preset in `templates/__init__.py`
 ## Adding a vendor
 
 1. Add `profiles/<vendor>/<size>.yaml` with `schema: profile/1`.
-2. Validate: `python cli.py schema validate profiles/<vendor>/<size>.yaml`.
+2. **Do not** run `python cli.py schema validate` on it — that command is JSON-only
+   (`json.loads`) and dies with a `JSONDecodeError` on valid YAML. Check the shape against
+   `schemas/profile/profile.schema.json` by hand, or load it with `profiles.load_profile`.
 3. If it needs a matching page design, add a preset in `templates/__init__.py`.
 4. Run `./scripts/test.ps1 -k profiles` (or `scripts/test.sh -k profiles`) —
    `services/prepress/tests/test_profiles.py` covers loading.

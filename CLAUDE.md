@@ -14,7 +14,7 @@ carries the invariants that folder enforces and the mistakes that have already b
 
 | Folder | Skill | What lives there |
 |---|---|---|
-| `stages/` | **publisher-stages** | The `@stage(...)` declarations — one module per build step (acquire, ingest, extract, ast-assemble, resolve, design-compile, paginate, finish/finish-gs, preflight, package, cover-*). The DAG is derived from these. |
+| `stages/` | **publisher-stages** | The 17 `@stage(...)` declarations. **Not one module per stage** — `prepress_stages.py` holds `preflight`/`cover`/`cover-preflight`/`finish-gs`, `cover_stages.py` holds the four `cover-brief/art/judge/compose`, and `ast-assemble` lives in `structure_stage.py`. The DAG is derived from these. |
 | `platform/` | **publisher-platform** | The substrate: CAS, build cache, the stage registry + DAG integrity checker, sandbox, `db/schema.sql`, `routing/policy.yaml`, the Rust crates (cas, pagescan), reproducibility, supply-chain. |
 | `services/` | **publisher-services** | The domain logic stages call into: ingest (DOCX→AST), structure (rules/inference/overrides), prepress (geometry, fontvault, ghostscript, preflight), cover, epub, idml, onix, alttext, agents. |
 | `schemas/` | **publisher-schemas** | JSON Schema source of truth + the Pydantic/Zod codegen. A schema ID is an API. |
@@ -33,10 +33,10 @@ carries the invariants that folder enforces and the mistakes that have already b
 
 | Task | Start at |
 |---|---|
-| Add or change a build step | `stages/<name>_stage.py` → bump `@stage(version=)` → `stages/__init__.py` **and** `platform/stages/integrity.py` |
+| Add or change a build step | Find the module with `grep -n 'name="<stage>"' stages/*.py` (names ≠ filenames) → bump `@stage(version=)` → add new modules to `stages/__init__.py` only (`integrity.py` does `import stages`; it has no list, and re-adding one recreates a duplicate that already drifted once) |
 | Change what a stage consumes/produces | The `inputs=`/`outputs=` schema IDs in `stages/` — the DAG follows automatically |
 | A stage is unreachable | Fix the producing chain. Never promote an input to `root_inputs`, never set `allow_stub_engines` |
-| Add or edit an artifact schema | `schemas/<name>/` → `cd schemas && node codegen/generate.mjs` → commit the `.gen.*` |
+| Add or edit an artifact schema | `schemas/<name>/` → `cd schemas && node codegen/generate.mjs` → `node codegen/test.mjs`. The `.gen.*` files are **gitignored and untracked** — do not try to commit them, and note `gen:check` cannot fail (see **publisher-schemas**) |
 | DOCX parsing / text loss | `services/ingest/publisher_ingest/docx_to_ast.py` |
 | Chapter/front-matter detection, confidence | `services/structure/publisher_structure/rules.py` |
 | LLM routing, model choice, cache keys | `platform/routing/policy.yaml` + `services/structure/publisher_structure/inference.py` |
@@ -46,7 +46,7 @@ carries the invariants that folder enforces and the mistakes that have already b
 | Preflight rules / delivery gate | `services/prepress/publisher_prepress/preflight.py` |
 | Fonts and licensing | `services/prepress/publisher_prepress/fontvault.py` |
 | Book typography defaults | `templates/__init__.py` (+ the matching `profiles/` entry) |
-| Cover art, models, judging | `services/cover/publisher_cover/` + `stages/cover_stages.py` |
+| Cover art, models, judging | `services/cover/publisher_cover/` + `stages/cover_stages.py` (but the `cover` geometry and `cover-preflight` stages are in `stages/prepress_stages.py`) |
 | EPUB / IDML / ONIX output | `services/epub/`, `services/idml/`, `services/onix/` |
 | Agent behaviour and limits | `services/agents/publisher_agents/runtime.py` |
 | HTTP route, auth, tenancy, uploads | `packages/api/src/routes/` + `src/plugins.ts` + `src/db.ts` |
@@ -115,7 +115,8 @@ cross-project log directory and a sibling repo's failures got reported as Publis
 
 `docs/ARCHITECTURE.md` · `BUILD_PLAN.md` (phases, decisions D1–D10) ·
 `ARCHITECTURE_REMEDIATION.md` (A0–A2 landed, A3–A5 open) ·
-`ARCHITECTURE_UPLIFT_PLAN.md` (U1–U4 landed) · `BLOCKING_FIX_PLAN.md` (draft) ·
+`ARCHITECTURE_UPLIFT_PLAN.md` (U1–U4 implemented+tested, U5–U7 implemented, U8–U9 open) ·
+`BLOCKING_FIX_PLAN.md` (D1–D3 landed in c5cfad3) ·
 `COST_AND_STABILITY_PLAN.md` · `REMEDIATION_PLAN.md` (complete)
 
 Full index with per-document status: the **publisher-docs** skill.

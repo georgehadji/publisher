@@ -1,6 +1,6 @@
 ---
 name: publisher-scripts
-description: Map of the `scripts/` folder — the project-local test runners (`test.ps1` for Windows, `test.sh` for POSIX/CI) that must be used instead of bare pytest. Use this whenever you are about to run the test suite, a test result looks like it came from the wrong repo, or a run is inexplicably slow. Read before running pytest in this repo.
+description: Map of the `scripts/` folder — the project-local test runners (`test.ps1` for Windows, `test.sh` for POSIX) that must be used instead of bare pytest — note CI itself runs bare pytest and neither script has the exec bit. Use this whenever you are about to run the test suite, a test result looks like it came from the wrong repo, or a run is inexplicably slow. Read before running pytest in this repo.
 ---
 
 # `scripts/` — the test runners
@@ -10,13 +10,18 @@ Two files, kept deliberately in sync. **Use these instead of a bare `pytest`.**
 | File | Platform |
 |---|---|
 | `test.ps1` | Windows / PowerShell — carries the full rationale in its header comment. |
-| `test.sh` | POSIX / CI — same behaviour, shorter comment, points at `test.ps1`. |
+| `test.sh` | POSIX. **Not what CI runs** — see the warning below. |
 
 ```bash
-./scripts/test.ps1              # whole suite
-./scripts/test.ps1 -k cache     # extra args pass straight through to pytest
-scripts/test.sh                 # POSIX
+bash scripts/test.sh            # POSIX — note the `bash`, see below
+bash scripts/test.sh -k cache   # extra args pass straight through to pytest
+./scripts/test.ps1              # Windows (needs pwsh; not installed on Linux)
 ```
+
+**Neither file carries the exec bit** (both are mode 100644 in the index), so
+`./scripts/test.sh` fails with `Permission denied`. Invoke it as `bash scripts/test.sh`
+until someone runs `chmod +x`. Do not let that failure push you to bare `pytest` — that
+fallback is exactly what these scripts exist to prevent.
 
 ## What they do, and why
 
@@ -40,8 +45,11 @@ Both `cd` to the repo root, create `.publisher/`, export
 
 ## Rules that bite
 
-- **Keep the two scripts in sync.** A change to one that is not mirrored means CI and local
-  runs test different things.
+- **CI does not use either script.** `.github/workflows/ci.yml` runs `python -m pytest
+  --tb=short` and `python -m pytest tests/contracts -v` — bare pytest, without the explicit
+  path list and without `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, collecting via `testpaths`. The
+  protections below are real locally and **absent in CI**. Keep the two scripts in sync with
+  each other, but do not assume editing them changes what CI does.
 - **Read results from `.publisher/test-output.txt`**, not from any global log directory.
 - If you add a top-level test directory, add it to the pytest path list in *both* scripts
   and to `testpaths` in the root `pyproject.toml`.

@@ -1,13 +1,14 @@
 ---
 name: publisher-services
-description: Map of the `services/` folder — the domain logic each stage calls into: ingest (DOCX→AST), structure (rules + LLM inference + override layer), prepress (geometry, fontvault, ghostscript, preflight), cover (art brief, model policy, image-gen port, judge), epub, idml, onix, alttext, and the agent layer. Use this whenever a task touches DOCX parsing, structure inference or classification, override/rebase logic, LLM routing, PDF/X conversion, preflight rules, book geometry, font licensing, cover art generation, or the EPUB/IDML/ONIX writers. Read before editing anything under services/.
+description: "Map of the `services/` folder — the domain logic each stage calls into: ingest (DOCX→AST), structure (rules + LLM inference + override layer), prepress (geometry, fontvault, ghostscript, preflight), cover (art brief, model policy, image-gen port, judge), epub, idml, onix, alttext, and the agent layer. Use this whenever a task touches DOCX parsing, structure inference or classification, override/rebase logic, LLM routing, PDF/X conversion, preflight rules, book geometry, font licensing, cover art generation, or the EPUB/IDML/ONIX writers. Read before editing anything under services/."
 ---
 
 # `services/` — the domain logic
 
 Stages (`stages/`) are thin declarations. **The real work is here.** Each subfolder is an
-installable Python distribution (`publisher-<name>`) with its own `pyproject.toml` and
-co-located `tests/`.
+installable Python distribution (`publisher-<name>`) with its own `pyproject.toml`. Six of
+the nine have co-located `tests/`; **`alttext`, `epub` and `onix` have none** — their writers
+are exercised from `services/idml/tests/test_outputs.py`, which sys.path-inserts them.
 
 **U3 rule:** every `services/*` package must declare in its own `pyproject.toml` any
 `publisher_*` package it imports. `tools/lint_service_deps.py` enforces it in CI. Without
@@ -78,7 +79,7 @@ PYTHONPATH — so a packaging change breaks production silently instead of CI lo
 ### `alttext/` and `agents/`
 | File | What it does |
 |---|---|
-| `alttext/publisher_alttext/__init__.py` | Alt-text generation for figures. **The only schema in the repo with an approved free-text field** — it lives in its own service so the no-prose invariant stays absolute elsewhere. |
+| `alttext/publisher_alttext/__init__.py` | Alt-text generation for figures. It lives in its own service so the no-prose invariant stays absolute elsewhere — but note it has **no schema of its own**: the approved free-text field is `altText` in `schemas/ast/ast.schema.json` (maxLength 2048). |
 | `alttext/publisher_alttext/doctor.py` | Manuscript Doctor: pre-ingest advisory analysis over typescript HTML. Advisory text only — it cannot change a build. |
 | `agents/publisher_agents/runtime.py` | `AgentRuntime`, `AgentRole`, `AgentCall`, `AgentResult`, `TaskBudget`, `ToolRegistry`, `ToolSpec`. **The agent action space is the override log + DesignSpec patches only — never the AST, the PDF, or the preflight verdict.** Every action is attributable and reversible (`actor="agent:compositor@v7"`). Agents run at gate boundaries, never inside deterministic stages. |
 | `agents/publisher_agents/structure_wrangler.py` | Pre-populates the review UI with proposals when rules confidence is low. Output: OverrideSet ops. Gate: human review UI. |
@@ -88,8 +89,11 @@ PYTHONPATH — so a packaging change breaks production silently instead of CI lo
 
 ## Rules that bite
 
-- **No prose into closed-enum schemas.** `tools/lint_schemas.py` fails CI on free-text
-  fields in structure-route schemas. `alttext` is the single allowlisted exception.
+- **No prose into closed-enum schemas.** `tools/lint_schemas.py` fails CI on free-text fields
+  — but read its actual scope before relying on it: `STRUCTURE_ROUTE_SCHEMAS` is a one-entry
+  list (`schemas/classification/classification.schema.json`), and `ALLOWLIST` is a set of
+  provenance *field names* (`sourceRef`, `schema`, `modelId`, `promptVersion`, …). There is no
+  alttext entry — alt-text is "excepted" only because the lint never looks outside classification.
 - **No LLM output in a deterministic stage.** It is frozen into a CAS artifact first.
 - **Declare cross-package deps** in the service's own `pyproject.toml` (U3).
 - **Model slugs are pinned, never aliased.** See `platform/routing/policy.yaml`.

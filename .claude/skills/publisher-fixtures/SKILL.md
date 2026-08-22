@@ -25,8 +25,11 @@ Every set is a `manifest.json` conforming to `fixture-manifest/1`, with the same
 }
 ```
 
-`generatedFrom.toolchain` is what makes a fixture reproducible rather than a snapshot of
-someone's laptop.
+`generatedFrom.toolchain` is what *would* make a fixture reproducible rather than a snapshot
+of someone's laptop — but **only `ast/v1` actually has it**. The other ten omit it (and
+`cover/v1` also omits `createdAt`), so the shape below is the aspiration, not the norm. Note
+also that no `fixture-manifest` schema exists under `schemas/`: nothing validates "conforming
+to `fixture-manifest/1`".
 
 ## The sets
 
@@ -34,19 +37,20 @@ someone's laptop.
 |---|---|---|
 | `manuscripts/v1/manifest.json` | `acquire` | Source manuscript fixtures — the inputs that enter the pipeline. 1 fixture. |
 | `extract/v1/manifest.json` | `extract` | Tracer-bullet fixture for `extract/v1`. 1 fixture. |
-| `ast/v1/manifest.json` | — | Canonical ASTs for contract testing (mini-novel, short-story). 2 fixtures. |
-| `structure/v1/manifest.json` | — | Tracer-bullet fixture for `structure/v1`. 1 fixture. |
+| `ast/v1/manifest.json` | — (no stage declares it) | Canonical ASTs for contract testing (mini-novel, short-story). 2 fixtures. The **only** manifest carrying `generatedFrom`. |
+| `structure/v1/manifest.json` | **`ast-assemble`** | The text-integrity gate's fixture set. Folder name ≠ stage name — there is no stage called `structure`. 1 fixture. |
 | `design-compile/v1/manifest.json` | `design-compile` | DesignSpec → CSS/IDML/Typst emitters. 2 fixtures. |
 | `paginate/v1/manifest.json` | `paginate` | Tracer-bullet fixture for `paginate/v1`. 1 fixture. |
 | `finish/v1/manifest.json` | `finish` | Tracer-bullet fixture for `finish/v1`. 1 fixture. |
 | `finish-gs/v1/manifest.json` | `finish-gs` | Tracer-bullet fixture for `finish-gs/v1`. 1 fixture. |
 | `preflight/v1/manifest.json` | `preflight` | Vendor profile gates. 2 fixtures. |
-| `cover/v1/manifest.json` | `cover` | Tracer-bullet fixture for `cover/v1`. |
+| `cover/v1/manifest.json` | **nobody — orphan** | The `cover` stage declares `fixtures=None`, and no file references `fixtures/cover/v1`. Its manifest has `"fixtures": []`, so it yields zero contract cases. Editing it accomplishes nothing. |
 | `cover-brief/v1/manifest.json` | `cover-brief` | Title metadata + DesignSpec → ArtBrief (COVER_DESIGN.md §2). 1 fixture. |
 
-Stages with `fixtures=None` (`cover-art`, `cover-judge`, `cover-compose`) are deliberately
-excluded — they call external image models, so a fixture set would either be a network
-call or a lie.
+**Eight** stages declare `fixtures=None`: `ingest`, `resolve`, `package`, `cover`,
+`cover-preflight`, `cover-art`, `cover-judge`, `cover-compose`. Only the last three are
+excluded for the external-image-model reason — a fixture set there would be a network call
+or a lie. The other five simply have none.
 
 ## Rules that bite
 

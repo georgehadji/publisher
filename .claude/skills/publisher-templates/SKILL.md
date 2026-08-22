@@ -52,4 +52,6 @@ running heads, chapter openings, ornaments, fonts and colours.
 
 `schemas/designspec/designspec.schema.json` · `profiles/` (the geometry that actually
 binds) · `stages/design_compile_stage.py` (the CSS emitter) ·
-`docs/ARCHITECTURE.md` §2.7 · `docs/BUILD_PLAN.md` §3.7.
+`docs/ARCHITECTURE.md` §2.7 (one DesignSpec → three style compilers) ·
+`docs/BUILD_PLAN.md` §3.8 (`services/design` — DesignSpec and its three compilers; §3.7 is the
+override layer, not this).

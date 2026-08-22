@@ -24,21 +24,26 @@ promoting `doc_path` to root would let a build reach a PDF without the text-inte
 
 | File | What it declares |
 |---|---|
-| `__init__.py` | Imports every stage module — **importing this package is what registers the stages**. It was once empty, which silently emptied the registry and made the generated contract tests produce zero cases. Keep the import list in sync with `platform/stages/integrity.py`. |
-| `acquire_stage.py` | `acquire` v3 · `fixture-manifest/1 → raw-source/1`. Copies a fixture manuscript into CAS. `implements="ingest"` — the fixture alternative, used by the local dev harness. |
-| `ingest_stage.py` | `ingest` v1 · `raw-docx/1 → raw-source/1`. Production front door: uploaded DOCX bytes → AST, via `publisher_ingest.docx_to_ast`. Also `implements="ingest"`. |
-| `extract_stage.py` | `extract` v1 · `raw-source/1 → typescript-html/1`. AST → flat "typescript" HTML. Owns `_ast_to_html`, which `paginate` reuses on purpose. |
-| `structure_stage.py` | `ast-assemble` v3 · `typescript-html/1 + raw-source/1 → ast/1` (+ terminal `integrity-report/1`). **Text-integrity gate.** Takes both sides of the comparison as required non-root inputs, so no path exists that runs with only one. |
-| `resolve_stage.py` | `resolve` v1 · `ast/1 + overrides/1 → doc-effective/1`. Applies the override log. `overrides_path` is an *optional* root input; absence means zero overrides, still routed through `apply_overrides`. |
-| `design_compile_stage.py` | `design-compile` v3 · `designspec/1 + profile/1 → text/css`. Emits CSS `@page` rules. Emits `bleed` as a CSS property so the renderer owns the box arithmetic; also enforces font licensing via `publisher_prepress.fontvault`. |
-| `paginate_stage.py` | `paginate` v4 · `doc-effective/1 + text/css → raw-pdf/1` (+ terminal `pagemap/1`). Neither input is root — that is the DAG bypass fix. |
-| `finish_stage.py` | `finish` v7 · `raw-pdf/1 + profile/1 → pdfx/1` (+ terminal `proof-pdf/1`, `finish-report/1`). Real Ghostscript CMYK/PDF-X-1a conversion via `publisher_prepress.ghostscript`. Stub path reports `"status": "stub"`, never `"passed"`. |
-| `prepress_stages.py` | Four stages in one module: `preflight` v6 (`pdfx/1 → preflight/1`, the delivery gate), `cover` v3 (`page-count/1 + profile/1 → cover-geometry/1`), `cover-preflight` v2 (`cover-raw-pdf/1 → cover-preflight/1`), and `finish-gs` v8 (`implements="finish"`, same I/O as `finish`). |
-| `package_stage.py` | `package` v3 · `preflight/1 → build-report/1`. Terminal. Declaring `preflight_report` as a **required non-root** input is what makes packaging without a preflight verdict structurally impossible. |
-| `cover_stages.py` | The cover art pipeline: `cover-brief` v1 (`title-meta/1 + designspec/1 → art-brief/1`), `cover-art` v1 (`art-brief/1 → cover-art/1 + art-provenance/1`), `cover-judge` v1 (`cover-art/1 → art-ranking/1`), `cover-compose` v1 (`cover-art/1 + cover-geometry/1 + designspec/1 + title-meta/1 → cover-raw-pdf/1`). |
+| `__init__.py` | Imports every stage module — **importing this package is what registers the stages**. It was once empty, which silently emptied the registry and made the generated contract tests produce zero cases. **This is the only list**: `integrity.py`, `tracer_bullet.py` and `worker.py` all just `import stages`. (Its own docstring still says to keep a second list in sync with `integrity.py` — that is stale; the duplicate was deleted after it drifted.) |
+| `acquire_stage.py` | `acquire` · `fixture-manifest/1 → raw-source/1`. Copies a fixture manuscript into CAS. `implements="ingest"` — the fixture alternative, used by the local dev harness. |
+| `ingest_stage.py` | `ingest` · `raw-docx/1 → raw-source/1`. Production front door: uploaded DOCX bytes → AST, via `publisher_ingest.docx_to_ast`. Also `implements="ingest"`. |
+| `extract_stage.py` | `extract` · `raw-source/1 → typescript-html/1`. AST → flat "typescript" HTML. Owns `_ast_to_html`, which `paginate` reuses on purpose. |
+| `structure_stage.py` | `ast-assemble` · `typescript-html/1 + raw-source/1 → ast/1` (+ terminal `integrity-report/1`). **Text-integrity gate.** Takes both sides of the comparison as required non-root inputs, so no path exists that runs with only one. |
+| `resolve_stage.py` | `resolve` · `ast/1 + overrides/1 → doc-effective/1`. Applies the override log. `overrides_path` is an *optional* root input; absence means zero overrides, still routed through `apply_overrides`. |
+| `design_compile_stage.py` | `design-compile` · `designspec/1 + profile/1 → text/css`. Emits CSS `@page` rules. Emits `bleed` as a CSS property so the renderer owns the box arithmetic; also enforces font licensing via `publisher_prepress.fontvault`. |
+| `paginate_stage.py` | `paginate` · `doc-effective/1 + text/css → raw-pdf/1` (+ terminal `pagemap/1`). Neither input is root — that is the DAG bypass fix. |
+| `finish_stage.py` | `finish` · `raw-pdf/1 + profile/1 → pdfx/1` (+ terminal `proof-pdf/1`, `finish-report/1`). Real Ghostscript CMYK/PDF-X-1a conversion via `publisher_prepress.ghostscript`. Stub path reports `"status": "stub"`, never `"passed"`. |
+| `prepress_stages.py` | **Four stages in one module** — grep for the name, not a filename: `preflight` (`pdfx/1 + profile/1 → preflight/1`, the delivery gate), `cover` (`page-count/1 + profile/1 → cover-geometry/1`), `cover-preflight` (`cover-raw-pdf/1 + profile/1 → cover-preflight/1`), and `finish-gs` (`implements="finish"`, same I/O as `finish`). |
+| `package_stage.py` | `package` · `preflight/1 → build-report/1`. Terminal. Declaring `preflight_report` as a **required non-root** input is what makes packaging without a preflight verdict structurally impossible. |
+| `cover_stages.py` | The cover art pipeline: `cover-brief` (`title-meta/1 + designspec/1 → art-brief/1`), `cover-art` (`art-brief/1 → cover-art/1 + art-provenance/1`), `cover-judge` (`cover-art/1 → art-ranking/1`), `cover-compose` (`cover-art/1 + cover-geometry/1 + designspec/1 + title-meta/1 → cover-raw-pdf/1`). |
 | `tests/test_ast_assemble.py` | Mutation test for the integrity gate: delete a paragraph, the build must fail. |
-| `tests/test_bleed_geometry.py` | Bleed must survive `design-compile` → `paginate` → `finish` agreeing on one number. |
+| `tests/test_bleed_geometry.py` | Asserts on `design_compile_stage._emit_css()` output only — it imports no other stage. The chain it reasons about is `design-compile` (grows the page box) → `finish` (insets TrimBox) → `preflight` (measures); only the first is executed here. |
 | `tests/test_ingest_security.py` | U5/S9 DOCX ingest hardening — zip bombs, entry caps, traversal. |
+
+> **Versions are deliberately not listed here.** `tools/lint_stage_versions.py` forces
+> `@stage(version=N)` to change on every touched stage module, so any copy in prose rots on
+> the next stage PR and nothing checks it. Read the current version from the declaration, or
+> from `get_registry()`. The schema IDs below *are* durable — they are the DAG's edges.
 
 ## The derived graph
 
@@ -84,10 +89,10 @@ off the critical path.
 ## Adding a stage — checklist
 
 1. Write the module here; decorate with `@stage(name, version, inputs, outputs, ...)`.
-2. Add the import to `stages/__init__.py` **and** to `platform/stages/integrity.py`.
+2. Add the import to `stages/__init__.py` — **that is the only place**. `platform/stages/integrity.py` does `import stages` and has no list of its own; adding one re-creates the hand-maintained duplicate that already drifted (it once omitted `prepress_stages` entirely).
 3. If the input/output schema is new, add it under `schemas/` (**publisher-schemas**).
 4. Point `fixtures="fixtures/<stage>/v1"` at a fixture set, or `None` (**publisher-fixtures**).
-5. Run `python platform/stages/integrity.py` — non-zero means a real DAG violation.
+5. Run `python platform/stages/integrity.py` — needs the editable installs first (`pip install -e platform/... -e services/...`, see `.github/workflows/ci.yml`). Non-zero means a DAG violation **or** a missing install — read the output rather than assuming.
 6. Run `./scripts/test.ps1` (or `scripts/test.sh`), never bare `pytest`.
 
 ## Related

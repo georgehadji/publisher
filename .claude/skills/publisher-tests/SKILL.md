@@ -9,7 +9,7 @@ description: Map of the `tests/` folder and the whole testing layout — generat
 
 ```bash
 ./scripts/test.ps1          # Windows / PowerShell
-scripts/test.sh             # POSIX / CI
+bash scripts/test.sh        # POSIX (no exec bit -- use `bash`). NOT what CI runs.
 ./scripts/test.ps1 -k cache # extra args pass through to pytest
 ```
 
@@ -49,7 +49,7 @@ explicitly so collection can never wander outside the repo.
 | `integration/test_worker_durability.py` | U1 — an expired lease on a `running` build is reclaimed; a build that exhausts attempts dead-letters to `dead`; a non-`StageError` exception leaves `failed` + `error_kind='INTERNAL'` before re-raising. |
 | `integration/test_real_manuscripts.py` | U2 — upload streams the DOCX into CAS with `source_sha256`; two tenants' builds produce **different** artifacts each containing their own text; a document with no stored source fails `BAD_INPUT` instead of silently building the fixture. |
 | `integration/test_api_hardening.py` | U5/U7 — S3 concurrent identical `POST /v1/builds` with one Idempotency-Key creates exactly one build; S2 `casPath` rejects path traversal; S4 webhook `http://` and private/loopback/metadata hosts refused at creation; `/v1/health` returns 503 with Postgres or CAS down. |
-| `integration/test_api_drives_pipeline.py` | A0.2 seam detectors — no state outlives a single `DagExecutor.execute()` call. Both were *designed* to be impossible against the code at the time; that impossibility is the finding, not a broken test. |
+| `integration/test_api_drives_pipeline.py` | **Four** tests. Two are the A0.2 seam detectors, and they assert the *fixed* behaviour — that state **does** survive a `DagExecutor.execute()` call (a real artifact hash; `cache_hit=True` on a second run against a persistent CAS root). "No state outlives one execute()" was the diagnosed defect, not the assertion. The other two are unrelated guards: `test_build_status_is_not_a_hardcoded_literal` (A0.3 anti-fabrication) and a check that every schema in the API's `DELIVERABLE_SCHEMAS` map is some registered stage's declared output. |
 
 ## Rules that bite
 

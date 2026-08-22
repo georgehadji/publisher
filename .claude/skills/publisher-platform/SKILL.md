@@ -1,6 +1,6 @@
 ---
 name: publisher-platform
-description: Map of the `platform/` folder — the substrate every stage stands on: content-addressed store (CAS), build-graph cache, stage registry + DAG derivation, sandbox, Postgres schema, LLM routing policy, pagescan defect scanner, reproducibility and supply-chain checks. Use this whenever a task touches CAS storage, cache keys, the @stage decorator or registry, DAG integrity, sandboxing hostile input, the database schema, model routing, or the Rust crates. Read before editing anything under platform/.
+description: "Map of the `platform/` folder — the substrate every stage stands on: content-addressed store (CAS), build-graph cache, stage registry + DAG derivation, sandbox, Postgres schema, LLM routing policy, pagescan defect scanner, reproducibility and supply-chain checks. Use this whenever a task touches CAS storage, cache keys, the @stage decorator or registry, DAG integrity, sandboxing hostile input, the database schema, model routing, or the Rust crates. Read before editing anything under platform/."
 ---
 
 # `platform/` — the substrate
@@ -50,7 +50,7 @@ sharded `h[:2]/h[2:4]/h`.
 | File | What it does |
 |---|---|
 | `py/publisher_stages/__init__.py` | **The `@stage` decorator and everything derived from it.** `ErrorKind` (error taxonomy), `Diagnostic`, `StageError`, `ArtifactRef`, `StageResult`, `StageCtx`, `StageDeclaration`, `StageRegistry`, `get_registry()`, `run_stage()`. From one declaration it derives the DAG, contract tests, cache-key inputs, the dev harness, and admission control. |
-| `integrity.py` | DAG integrity checker. **Run it as a script — `python platform/stages/integrity.py` — never `python -m platform.stages.integrity`**: the repo's top-level `platform/` shadows the stdlib `platform` module, so the `-m` form always fails. CI once used `-m` under `continue-on-error`, so the gate reported success without ever running. Imports the same stage set as `stages/__init__.py`; keep both in sync. |
+| `integrity.py` | DAG integrity checker. **Run it as a script — `python platform/stages/integrity.py` — never `python -m platform.stages.integrity`.** The `-m` form fails with `No module named 'platform.stages'; 'platform' is not a package`: `platform/` has no `__init__.py`, so it is only a namespace portion and *loses* to the stdlib `platform` module. (Do not "fix" that by adding `platform/__init__.py` — it would make the repo dir genuinely shadow stdlib `platform` for every import in the process.) CI once used `-m` under `continue-on-error`, so the gate reported success without ever running. It does a bare `import stages` — no list of its own, nothing to keep in sync. Needs the editable installs, or it exits non-zero on `ModuleNotFoundError` rather than on a real violation. |
 | `py/tests/test_registry.py` | Alternative implementations (`implements=`) and DAG derivation. |
 | `py/tests/test_stages.py` | Registry behaviour, declaration validation. |
 | `ts/src/index.ts` | TypeScript registry mirror. |
@@ -58,7 +58,7 @@ sharded `h[:2]/h[2:4]/h`.
 ### `platform/sandbox/` — hostile-input containment
 | File | What it does |
 |---|---|
-| `py/publisher_sandbox/__init__.py` | Tiered isolation (`SandboxTier`: process → gVisor/Firecracker → network-isolated nodes), `SandboxConfig` with object-capability discipline (ro input dir, rw output dir, CPU/mem/time budget, nothing else), `ThreatMonitor`, `SecurityEvent`. Also ships **attack fixtures**: `create_zip_bomb`, `create_xxe_fixture`, `create_billion_laughs`, `create_path_traversal_zip`, `create_fork_bomb_script`. |
+| `py/publisher_sandbox/__init__.py` | `SandboxTier` has **four** members and is **not** a monotonic hardening ladder: `LIGHT` (process isolation), `STANDARD` (namespace/cgroup/seccomp — the default), `HEAVY` (gVisor/Firecracker), `EXTERNAL`. **`EXTERNAL` is the only tier with `network_enabled=True`** (Adobe/LLM calls) — do not reach for it as "most locked down". Plus `SandboxConfig` with object-capability discipline (ro input dir, rw output dir, CPU/mem/time budget, nothing else), `ThreatMonitor`, `SecurityEvent`. Also ships **attack fixtures**: `create_zip_bomb`, `create_xxe_fixture`, `create_billion_laughs`, `create_path_traversal_zip`, `create_fork_bomb_script`. |
 | `py/tests/test_security.py` | Escape attempts *are* the test suite. |
 | `py/tests/test_p5.py` | P5 scale-and-hardening tests. |
 
@@ -69,7 +69,9 @@ Postgres's `docker-entrypoint-initdb.d` on first container start; re-run manuall
 (with attempt/lease/`error_kind` columns for worker durability), `build_stages`,
 `artifacts`, `titles`, `manuscripts`, idempotency replay, webhooks. All `CREATE ... IF NOT
 EXISTS` plus idempotent `ALTER`s so it is safe to re-apply. Every tenant-scoped table
-carries `tenant_id` — that is what keeps the API's `assertTenant()` checks meaningful.
+carries `tenant_id` — that is what keeps the API's ownership checks meaningful. That check is
+`loadOwned()` in `packages/api/src/db.ts`; `assertTenant()` exists nowhere in the code — only in
+this schema's comments and `docs/ARCHITECTURE_REMEDIATION.md`.
 
 ### `platform/routing/policy.yaml`
 **The live LLM route table** — versioned data, not code. Loaded by
@@ -110,3 +112,6 @@ in shipped images.
 `stages/` (the declarations this folder consumes) · `worker.py` / `tracer_bullet.py` (the two
 executors) · `docs/ARCHITECTURE.md` §2.5/§2.8/§2.9 · `docs/BUILD_PLAN.md` §3.3/§3.4/§3.13 ·
 `docs/LLM_STRATEGY.md` (routing) · `docs/COVER_DESIGN.md` §11 (cache-key discipline).
+
+`pagescan` has **no** BUILD_PLAN §3.x section of its own — it is covered inside §3.9 (pagination).
+§3.13 is `packages/orchestrator`, despite the citation in `pagescan/src/lib.rs`.
