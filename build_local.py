@@ -63,7 +63,8 @@ def _cas_path(cas_root: Path, digest: str) -> Path:
 
 def build(docx: Path, profile: str, designspec: Path | None, out_dir: Path,
           cas_root: Path, build_id: str | None = None,
-          blank_leading_pages: int = 0, isbn: str | None = None) -> int:
+          blank_leading_pages: int = 0, isbn: str | None = None,
+          blockquote_footnotes: str | None = None) -> int:
     if not docx.is_file():
         print(f"FAILED: manuscript not found: {docx}")
         return 2
@@ -88,6 +89,7 @@ def build(docx: Path, profile: str, designspec: Path | None, out_dir: Path,
     print(f"  designspec : {designspec or '(built-in default)'}")
     print(f"  blank front: {blank_leading_pages} page(s)")
     print(f"  isbn       : {isbn or '(none)'}")
+    print(f"  blockquoted: {blockquote_footnotes or '(none)'}")
     print(f"  cas root   : {cas_root}")
     print(f"  output     : {out_dir}")
     print()
@@ -97,6 +99,7 @@ def build(docx: Path, profile: str, designspec: Path | None, out_dir: Path,
             "docx_path": str(docx),
             "blank_leading_pages": blank_leading_pages,
             "isbn": isbn,
+            "blockquote_footnotes": blockquote_footnotes,
         },
         # One profile name to all three stages with a say in page geometry:
         # design-compile grows the page box by its bleed, finish insets the
@@ -166,9 +169,14 @@ def main() -> int:
                     help="Reserved blank leaves at the front of the book")
     ap.add_argument("--isbn", default=None,
                     help="Printed on a copyright page after the front matter")
+    ap.add_argument("--blockquote-footnotes", default=None,
+                    help="Comma-separated footnote numbers (1-based, by position "
+                         "among all footnote references) to set as in-body block "
+                         "quotes instead of page-foot notes")
     args = ap.parse_args()
     return build(args.docx, args.profile, args.designspec, args.out,
-                 args.cas_root, args.build_id, args.blank_pages, args.isbn)
+                 args.cas_root, args.build_id, args.blank_pages, args.isbn,
+                 args.blockquote_footnotes)
 
 
 if __name__ == "__main__":

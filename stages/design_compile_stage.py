@@ -385,6 +385,11 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "blockquote {",
         "  margin: 0.5em 1.5em;",
         "  font-style: italic;",
+        # A note diverted here from the footnote flow (paginate's editorial
+        # escape hatch for a footnote too long to sit comfortably as one) is
+        # still body-flow prose and can carry the same unbreakable token `p`
+        # guards against above.
+        "  overflow-wrap: break-word;",
         "}",
         "blockquote.epigraph {",
         "  margin: 1em 2em;",
@@ -796,7 +801,11 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # over-long note to the next page as an unnumbered continuation. A v9
     # stylesheet has no rule for that class, so a split note would render its
     # tail as body text mid-paragraph.
-    version=10,
+    # v11: `overflow-wrap: break-word` on `blockquote`, matching v9's guard on
+    # `p` and `.footnote` -- a note diverted to a block quote by `ingest` is
+    # body-flow prose and can carry the same unbreakable token. A v10
+    # stylesheet has no such rule on `blockquote` at all.
+    version=11,
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
     # `profile_name` is optional so that a build which omits it still renders --

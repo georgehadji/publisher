@@ -440,9 +440,27 @@ def _footnote(text: str, number: int) -> dict:
     }
 
 
+def _blockquote(text: str) -> dict:
+    """A footnote diverted into the body flow instead of the foot of the page.
+
+    `blockquote.content` is `paragraph[]`, unlike `footnote.content`, which is
+    bare inline nodes -- so the note text is wrapped in one paragraph. `role:
+    extract` is the closest of the schema's four roles to a diverted long
+    quotation (as opposed to a pull-quote, a letter, or a prayer).
+    """
+    return {
+        "type": "blockquote",
+        "attrs": {"role": "extract"},
+        "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}],
+    }
+
+
 def _inline_with_footnotes(
-    block: Block, footnotes: dict[str, str], counter: list[int]
-) -> list[dict]:
+    block: Block,
+    footnotes: dict[str, str],
+    counter: list[int],
+    blockquote_numbers: frozenset[int] = frozenset(),
+) -> tuple[list[dict], list[dict]]:
     """Inline content for one block, with each footnote AT ITS REFERENCE POINT.
 
     `footnote` is both a blockNode and an inlineNode in ast/1. Inline is what a
@@ -457,13 +475,28 @@ def _inline_with_footnotes(
     paragraphs matters: the paragraph stays one paragraph, so no boundary the
     manuscript does not have is invented, and `ast-assemble` still sees the same
     text stream on both sides because `_render_inline` walks this list in order.
+
+    `counter` is bumped for every reference regardless of `blockquote_numbers`
+    membership, so a note's number always names its original position among all
+    footnote references in the manuscript -- the same numbering an earlier,
+    unconverted build reported. WeasyPrint's own `::footnote-marker` counter,
+    not this field, sets the printed number, and it counts only the `footnote`
+    nodes actually left in the flow -- so diverting a note here closes the gap
+    it would otherwise leave in the printed sequence, with no `attrs.number`
+    bookkeeping required.
+
+    A note whose number is in `blockquote_numbers` gets no inline node at all:
+    the call disappears along with the float, and the second return value
+    carries a `blockquote` node for the caller to insert as a block sibling
+    right after this one.
     """
     text = block.text
     refs = [(o, i) for o, i in block.footnote_refs if footnotes.get(i)]
     if not refs:
-        return [{"type": "text", "text": text}]
+        return [{"type": "text", "text": text}], []
 
     content: list[dict] = []
+    extracted: list[dict] = []
     cursor = 0
     for offset, note_id in refs:
         # Word can record an offset past the stripped text (a reference sitting
@@ -472,11 +505,14 @@ def _inline_with_footnotes(
         if offset > cursor:
             content.append({"type": "text", "text": text[cursor:offset]})
         counter[0] += 1
-        content.append(_footnote(footnotes[note_id], counter[0]))
+        if counter[0] in blockquote_numbers:
+            extracted.append(_blockquote(footnotes[note_id]))
+        else:
+            content.append(_footnote(footnotes[note_id], counter[0]))
         cursor = offset
     if cursor < len(text):
         content.append({"type": "text", "text": text[cursor:]})
-    return content
+    return content, extracted
 
 
 def _ids_for(heading_ids: dict[tuple[int, int], str], section: int) -> dict[int, str]:
@@ -489,16 +525,22 @@ def _section_content(
     footnotes: dict[str, str],
     counter: list[int],
     heading_ids: dict[int, str] | None = None,
+    blockquote_numbers: frozenset[int] = frozenset(),
 ) -> list[dict]:
     """Block nodes for one section, footnotes inline at their reference points.
 
     `heading_ids` maps a block's index within `blocks` to the anchor its
     heading should carry, as assigned by the pre-pass in `_build_ast` that
     also teaches the contents page where each subsection lives.
+
+    A block whose footnote reference lands in `blockquote_numbers` yields its
+    normal paragraph/heading node (with no call in it) immediately followed by
+    a `blockquote` sibling holding the diverted note text -- see
+    `_inline_with_footnotes`.
     """
     content: list[dict] = []
     for index, block in enumerate(blocks):
-        inline = _inline_with_footnotes(block, footnotes, counter)
+        inline, extracted = _inline_with_footnotes(block, footnotes, counter, blockquote_numbers)
         if block.depth >= 2:
             attrs = {
                 "level": min(block.depth, 6),
@@ -516,6 +558,7 @@ def _section_content(
             )
         else:
             content.append({"type": "paragraph", "content": inline})
+        content.extend(extracted)
     return content
 
 
@@ -805,8 +848,15 @@ def docx_to_ast(
     manuscript_id: str | None = None,
     blank_leading_pages: int = 0,
     isbn: str | None = None,
+    blockquote_footnotes: "frozenset[int] | None" = None,
 ) -> dict:
     """Convert a DOCX manuscript into an `ast/1` document.
+
+    `blockquote_footnotes` names footnotes, by their position among all
+    footnote references in the manuscript (1-based, matching the number a
+    prior all-footnotes build would have printed), to set as in-body block
+    quotes instead of page-foot notes -- an editorial escape hatch for a note
+    too long to sit comfortably as a footnote. See `_inline_with_footnotes`.
 
     Raises `IngestError` if any DOCX text would be lost.
     """
@@ -819,6 +869,7 @@ def docx_to_ast(
         raise IngestError(f"DOCX contains no text: {source}")
 
     footnotes = read_footnotes(source)
+    blockquote_numbers = frozenset(blockquote_footnotes or ())
 
     numbered = any(b.depth for b in blocks)
     if numbered:
@@ -916,7 +967,8 @@ def docx_to_ast(
             # Front matter carries no `attrs.title` -- see module docstring --
             # so its heading survives as a leading paragraph instead.
             content = _section_content(
-                section_blocks, footnotes, footnote_counter, _ids_for(heading_ids, index)
+                section_blocks, footnotes, footnote_counter, _ids_for(heading_ids, index),
+                blockquote_numbers,
             )
             if section_title:
                 content.insert(0, _paragraph(section_title))
@@ -924,7 +976,8 @@ def docx_to_ast(
             continue
 
         content = _section_content(
-            section_blocks, footnotes, footnote_counter, _ids_for(heading_ids, index)
+            section_blocks, footnotes, footnote_counter, _ids_for(heading_ids, index),
+            blockquote_numbers,
         )
 
         if _is_back_matter(section_title):

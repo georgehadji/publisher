@@ -83,15 +83,19 @@ def _check_zip_limits(source: Path) -> None:
     # v5: that number match is restricted to sub-level numbers ("9.2"). At v4 a
     # bare "3." matched too, and two numbered list items inside chapter 5's
     # prose were promoted to chapters of their own.
-    version=5,
+    # v6: an optional `blockquote_footnotes` root input diverts named footnotes
+    # (by their 1-based position among all footnote references) into in-body
+    # block quotes instead of page-foot notes. A v5 AST has no way to ask for
+    # this, so it is additive -- an absent input reproduces v5 exactly.
+    version=6,
     inputs={"docx_path": "raw-docx/1", "blank_leading_pages": "page-count/1",
-            "isbn": "isbn/1"},
+            "isbn": "isbn/1", "blockquote_footnotes": "footnote-selection/1"},
     outputs={"source": "raw-source/1"},
-    root_inputs=["docx_path", "blank_leading_pages", "isbn"],
+    root_inputs=["docx_path", "blank_leading_pages", "isbn", "blockquote_footnotes"],
     # Optional, so a build that says nothing about front leaves stays reachable
     # and gets none. Declared rather than inferred from the parameter default --
     # the same distinction `resolve`'s `overrides_path` makes.
-    optional_root_inputs=["blank_leading_pages", "isbn"],
+    optional_root_inputs=["blank_leading_pages", "isbn", "blockquote_footnotes"],
     implements="ingest",  # alternative to `acquire`; see module docstring
     toolchain=[],
     fixtures=None,
@@ -101,7 +105,8 @@ def _check_zip_limits(source: Path) -> None:
 )
 def ingest(ctx: StageCtx, docx_path: str | None = None,
            blank_leading_pages: int | str | None = None,
-           isbn: str | None = None) -> StageResult:
+           isbn: str | None = None,
+           blockquote_footnotes: str | list | None = None) -> StageResult:
     """
     Convert a tenant's DOCX (bytes stored in CAS by the upload route) into an
     ast/1 document, and store that as `raw-source/1` for the rest of the DAG.
@@ -150,9 +155,25 @@ def ingest(ctx: StageCtx, docx_path: str | None = None,
         )
 
     try:
+        if isinstance(blockquote_footnotes, str):
+            numbers = frozenset(
+                int(n) for n in blockquote_footnotes.split(",") if n.strip()
+            )
+        elif blockquote_footnotes:
+            numbers = frozenset(int(n) for n in blockquote_footnotes)
+        else:
+            numbers = frozenset()
+    except (TypeError, ValueError):
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"blockquote_footnotes must be a comma-separated list of "
+                    f"integers or a list of integers, got {blockquote_footnotes!r}",
+        )
+
+    try:
         ast = docx_to_ast(
             source, manuscript_id=ctx.build_id, blank_leading_pages=leaves,
-            isbn=isbn or None,
+            isbn=isbn or None, blockquote_footnotes=numbers,
         )
     except IngestError as e:
         raise StageError(
