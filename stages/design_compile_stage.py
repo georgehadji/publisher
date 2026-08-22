@@ -555,7 +555,14 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     # disagree. Without this rule the note text renders inline, mid-page, as an
     # ordinary run of body copy.
     lines.extend([
-        ".footnote {",
+        # `.footnote-continued` carries the remainder of a note too tall for the
+        # page it started on. WeasyPrint cannot split a footnote itself -- verified
+        # on 62.3 and on 69.0, with and without a `max-height` cap: the note is
+        # always laid out whole and the excess drawn off the sheet -- so `paginate`
+        # measures the overrun, cuts the note at the last line that fits, and
+        # re-anchors the tail on the following page. These rules make that tail
+        # read as a continuation rather than as a new note.
+        ".footnote, .footnote-continued {",
         "  float: footnote;",
         "  footnote-display: block;",
         f"  font-size: {footnote_size:g}pt;",
@@ -591,6 +598,28 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "::footnote-marker {",
         "  font-size: 0.8em;",
         "  padding-right: 0.35em;",
+        "}",
+        "",
+        # A continuation is the same note, so it takes no call in the body text
+        # and repeats no number at the foot. `content: ""` empties both boxes.
+        #
+        # `counter-increment: footnote -1` is the load-bearing line. Every
+        # `float: footnote` element increments the footnote counter whether or
+        # not its marker is displayed, so without this every note AFTER a split
+        # one is numbered one too high -- and the manuscript's own cross
+        # references would then point at the wrong note. Measured on a
+        # three-note fixture: suppressing the marker alone renumbers the third
+        # note 2 -> 3; decrementing restores it to 2.
+        ".footnote-continued::footnote-call {",
+        '  content: "";',
+        "}",
+        "",
+        ".footnote-continued::footnote-marker {",
+        '  content: "";',
+        "}",
+        "",
+        ".footnote-continued {",
+        "  counter-increment: footnote -1;",
         "}",
         "",
         "@page {",
@@ -763,7 +792,11 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # unbreakable token longer than the measure -- a percent-encoded URL --
     # is drawn past the outer margin instead of wrapping, so a v8 stylesheet
     # loses that text off the side of the sheet and must not be replayed.
-    version=9,
+    # v10: `.footnote-continued` rules, so paginate can carry the tail of an
+    # over-long note to the next page as an unnumbered continuation. A v9
+    # stylesheet has no rule for that class, so a split note would render its
+    # tail as body text mid-paragraph.
+    version=10,
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
     # `profile_name` is optional so that a build which omits it still renders --

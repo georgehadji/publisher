@@ -165,6 +165,289 @@ def _text_outside_page(rendered_pages) -> dict[int, int]:
     return lost
 
 
+SPLIT_PASSES = 6          # loop cap; each pass moves text strictly later
+
+
+def _boxes_named(box, name, out=None):
+    out = [] if out is None else out
+    if type(box).__name__ == name:
+        out.append(box)
+    for child in getattr(box, "children", ()) or ():
+        _boxes_named(child, name, out)
+    return out
+
+
+def _overflowing_notes(page) -> list[tuple[str, int, int]]:
+    """(note id, lines laid out, lines falling outside the type area) per note.
+
+    Measured purely as geometry. An earlier version of this reconstructed the
+    lost text by re-joining the laid-out lines and matching it against the
+    source, and that cannot be made reliable: `overflow-wrap: break-word`
+    breaks a long URL with no hyphen to mark the break, so rejoining inserts a
+    space the source has not got, and this manuscript also uses "-" as a dash
+    welded to a word, so undoing hyphenation eats a real character and fuses
+    two words ("για" + "Το" -> "γιαΤο"). The box tree already knows which note
+    each line belongs to, which needs no text at all.
+
+    The test is the TYPE AREA, not the paper edge, because a note can overrun
+    in either direction. Uncapped, the `@footnote` area grows UPWARD from the
+    bottom of the page and the note's opening lines end up above the top margin
+    (measured on a fixture: a 2500-word note laid out from y=-1737). Capped
+    with `max-height` -- which this pipeline always emits -- the area is pinned
+    and the note's tail runs off the bottom instead. A rule keyed to the paper
+    edge would miss the first case entirely, and would also ignore a note that
+    merely spills into the bottom margin, where it prints but is liable to be
+    trimmed off.
+    """
+    page_box = page._page_box
+    top = page_box.content_box_y()
+    bottom = top + page_box.height
+
+    found: list[tuple[str, int, int]] = []
+    for area in _boxes_named(page_box, "FootnoteAreaBox"):
+        for block in area.children:
+            element = getattr(block, "element", None)
+            note_id = element.get("id") if element is not None else None
+            if not note_id:
+                continue
+            lines = _boxes_named(block, "LineBox")
+            if not lines:
+                continue
+            outside = sum(1 for line in lines
+                          if line.position_y < top - 0.5
+                          or line.position_y + line.height > bottom + 0.5)
+            if outside:
+                found.append((note_id, len(lines), outside))
+    return found
+
+
+_ANCHOR = re.compile(r"^ax\d+$")
+
+# One empty anchor roughly every this many words of body text. A page of this
+# book holds about 480 words, so this puts several on every page.
+ANCHOR_EVERY_WORDS = 80
+
+
+def _note_text_pages(pages) -> dict[str, int]:
+    """Note id -> the page its TEXT is set on.
+
+    Not the same as the note's page anchor. A footnote span lives in the body
+    where its call is, so `page.anchors` reports the page of the CALL -- which
+    is often the page before the one the note is actually set on, once the area
+    is busy. Adjacency has to be judged on where the reader sees the text.
+    """
+    where: dict[str, int] = {}
+    for number, page in enumerate(pages, start=1):
+        for area in _boxes_named(page._page_box, "FootnoteAreaBox"):
+            for block in area.children:
+                element = getattr(block, "element", None)
+                note_id = element.get("id") if element is not None else None
+                if note_id:
+                    where.setdefault(note_id, number)
+    return where
+
+
+def _tag_layout_anchors(html_body: str) -> tuple[str, str]:
+    """Anchor the document so the renderer can be asked where things landed.
+
+    Three things get an id, all sharing ONE counter so that comparing ids
+    compares document order:
+
+    * every paragraph, on its `<p>`;
+    * every footnote, on its `<span>`, as `fn...`;
+    * an empty `<span>` every ~80 words of body text.
+
+    The empty spans are what make a continuation land on the RIGHT page.
+    `page.anchors` can only report elements the renderer actually placed, so
+    without them the only attachment points are paragraph starts -- and a page
+    that a long paragraph merely flows through has none. Measured on this
+    manuscript, that is exactly what happened to note 373: page 512 begins no
+    paragraph, so its third chunk skipped to 513 and the reader turning the
+    page found nothing. An empty inline span occupies no space and draws
+    nothing, so scattering them changes no layout while giving every page an
+    attachment point.
+
+    Ids carry no text, so neither hard gate sees them, and `ast-assemble` has
+    already run by the time paginate builds this HTML.
+    """
+    counter = iter(range(10 ** 9))
+    notes = iter(range(10 ** 9))
+
+    html_body = re.sub(r'<span class="footnote">',
+                       lambda m: f'<span class="footnote" id="fn{next(notes)}">',
+                       html_body)
+    html_body = re.sub(r"<p(?![^>]*\sid=)([ >])",
+                       lambda m: f'<p id="ax{next(counter)}"' + m.group(1),
+                       html_body)
+
+    # Word anchors. Inserted only in body text at the top level of a paragraph:
+    # never inside a tag, and never inside a footnote, whose words are not body
+    # copy and whose own splitting must not be disturbed.
+    out: list[str] = []
+    pos = 0
+    words = 0
+    depth_footnote = 0
+    for token in re.finditer(r"<[^>]+>|[^<]+", html_body):
+        text = token.group(0)
+        if text.startswith("<"):
+            if re.match(r'<span class="footnote(-continued)?"', text):
+                depth_footnote += 1
+            elif text == "</span>" and depth_footnote:
+                depth_footnote -= 1
+            out.append(text)
+            continue
+        if depth_footnote:
+            out.append(text)
+            continue
+        # split on whitespace runs, keeping them, so nothing is reflowed
+        pieces = re.split(r"(\s+)", text)
+        rebuilt = []
+        for piece in pieces:
+            rebuilt.append(piece)
+            if piece and not piece.isspace():
+                words += 1
+                if words % ANCHOR_EVERY_WORDS == 0:
+                    rebuilt.append(f'<span id="ax{next(counter)}"></span>')
+        out.append("".join(rebuilt))
+    return "".join(out), ""
+
+
+def _anchor_index(anchor: str) -> int:
+    return int(anchor[2:])
+
+
+def _insert_after_anchor(html_body: str, anchor: str, fragment: str) -> str | None:
+    """Put `fragment` immediately after the element carrying this id."""
+    opening = re.search(rf'<(p|span) id="{re.escape(anchor)}"[^>]*>', html_body)
+    if opening is None:
+        return None
+    if opening.group(1) == "span":
+        # an empty word anchor: skip its closing tag too
+        tail = html_body[opening.end():]
+        if not tail.startswith("</span>"):
+            return None
+        at = opening.end() + len("</span>")
+    else:
+        at = opening.end()
+    return html_body[:at] + fragment + html_body[at:]
+
+
+def _note_body(html_body: str, note_id: str) -> tuple[str, str, int] | None:
+    """The class, inner text, and home paragraph index of the note with this id.
+
+    The home paragraph is the one the note's call sits in. It is what keeps
+    successive continuations of the same note in reading order: a tail may only
+    be re-anchored to a paragraph that comes strictly after it.
+    """
+    match = re.search(
+        rf'<span class="(footnote|footnote-continued)" id="{re.escape(note_id)}">(.*?)</span>',
+        html_body, re.S)
+    if match is None:
+        return None
+    home = -1
+    for prior in re.finditer(r'id="ax(\d+)"', html_body[:match.start()]):
+        home = int(prior.group(1))
+    return match.group(1), match.group(2), home
+
+
+def _split_overlong_notes(html_body: str, pages) -> tuple[str, int, list[str]]:
+    """Cut every note that overruns its page and re-anchor each tail later.
+
+    Returns the rewritten HTML, the (note, continuation) pairs it created, and
+    the notes that could not be cut -- reported rather than left silently
+    overflowing.
+
+    How much to move is taken from the line counts: a note laid out in `total`
+    lines of which `outside` do not fit keeps the same proportion of its words.
+    That is an estimate, because the first line is short by the width of the
+    marker and the last kept line may be short too -- so the caller re-renders
+    and runs this again. Every pass moves text strictly later and the split
+    itself is lossless by construction (the two halves are a partition of the
+    same word list), so an imprecise estimate costs a pass, never a word.
+
+    Edits are made by id rather than by offset, so cutting several notes in one
+    pass cannot corrupt the positions of the ones cut after it.
+    """
+    skipped: list[str] = []
+    carried: list[tuple[str, str]] = []
+    continuation_seq = 0
+
+    for page_number, page in enumerate(pages, start=1):
+        for note_id, total, outside in _overflowing_notes(page):
+            found = _note_body(html_body, note_id)
+            if found is None:
+                skipped.append(f"page {page_number}: note {note_id} is laid out but "
+                               f"no longer present in the document")
+                continue
+            note_class, body, home = found
+            if "<" in body:
+                skipped.append(f"page {page_number}: note {note_id} carries inline "
+                               f"markup, and splitting it would break the tags")
+                continue
+
+            words = body.split()
+            if len(words) < 2:
+                skipped.append(f"page {page_number}: note {note_id} is a single "
+                               f"word and cannot be divided")
+                continue
+
+            keep_ratio = max(0.0, (total - outside) / total)
+            keep_count = int(len(words) * keep_ratio)
+            # Round down a little: carrying slightly too much costs nothing,
+            # while carrying too little costs another full re-render.
+            keep_count = max(1, min(len(words) - 1, keep_count - 2))
+            keep = " ".join(words[:keep_count])
+            carry = " ".join(words[keep_count:])
+
+            # The tail must hang off an element the renderer puts on a LATER
+            # page, AND one that comes after this note in document order.
+            #
+            # Both halves matter. A page's anchor list includes paragraphs that
+            # merely continue onto it from the page before, so the earliest
+            # anchor on the next page can be the very paragraph this note
+            # already lives in -- and inserting there puts the tail BEFORE the
+            # note it continues. Measured on this manuscript: note 373's second
+            # chunk was re-anchored into its own paragraph, and the note then
+            # read 510 -> 512 -> 511. Requiring `index > home` removes that
+            # whole class of inversion and keeps successive chunks monotonic,
+            # because each new target becomes the next chunk's home.
+            target = None
+            for later in pages[page_number:]:
+                ids = sorted(_anchor_index(a)
+                             for a in (getattr(later, "anchors", {}) or {})
+                             if _ANCHOR.match(a))
+                ids = [i for i in ids if i > home]
+                if ids:
+                    target = f"ax{ids[0]}"
+                    break
+            if target is None:
+                skipped.append(f"page {page_number}: no paragraph begins on any "
+                               f"later page, so note {note_id} has nowhere to "
+                               f"carry to")
+                continue
+
+            continuation_seq += 1
+            cont_id = f"{note_id}c{continuation_seq}"
+            html_body, hits = re.subn(
+                rf'(<span class="{note_class}" id="{re.escape(note_id)}">).*?(</span>)',
+                lambda m: m.group(1) + keep + m.group(2),
+                html_body, count=1, flags=re.S)
+            if not hits:
+                skipped.append(f"page {page_number}: could not rewrite note {note_id}")
+                continue
+            continuation = (f'<span class="footnote-continued" id="{cont_id}">'
+                            f'{carry}</span>')
+            placed = _insert_after_anchor(html_body, target, continuation)
+            if placed is None:
+                skipped.append(f"page {page_number}: anchor {target} vanished "
+                               f"between render and rewrite")
+                continue
+            html_body = placed
+            carried.append((note_id, cont_id))
+
+    return html_body, carried, skipped
+
+
 def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dict:
     """Assemble a `pagemap/1` describing which chapter occupies which page.
 
@@ -243,7 +526,17 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
     # language instead of a hardcoded lang="en". WeasyPrint picks its Pyphen
     # dictionary from that attribute, so every v4 render of a non-English book
     # was hyphenated with ENGLISH patterns -- wrong break points, silently.
-    version=6,   # v5: detect text laid out beyond the page edge (footnote overflow)
+    version=12,  # v6: detect text beyond the page edge; v7: split over-long
+                 # footnotes; v8: keep a split note in reading order. v7 could
+                 # re-anchor a tail into the paragraph the note already lived
+                 # in, putting the continuation BEFORE the text it continues --
+                 # measured on this manuscript, note 373 read 510 -> 512 -> 511.
+                 # Every v7 PDF of a book with a split note is wrong that way.
+                 # v9: word anchors, so a continuation lands on the very next
+                 # page even when no paragraph begins there. Under v8 note 373
+                 # skipped page 512 entirely. v10: report a continuation that
+                 # does not resume on the very next page; v11 judges that from
+                 # where the note TEXT is set, not from its call.
     inputs={"doc_path": "doc-effective/1", "css_path": "text/css"},
     # NEITHER is a root input: `css_path`'s schema (text/css) is produced by
     # `design-compile`; `doc_path`'s (doc-effective/1) by `resolve`, which itself
@@ -271,7 +564,10 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
 
     doc = json.loads(doc_path_p.read_bytes())
     from stages.extract_stage import _ast_to_html
-    html_body = _ast_to_html(doc)
+    # Paragraph ids are added here rather than in `extract` because they exist
+    # only to let this stage ask the renderer which page a paragraph landed on.
+    # They are layout scaffolding, not content, and nothing downstream reads them.
+    html_body, _ = _tag_layout_anchors(_ast_to_html(doc))
 
     css = ""
     if css_path and Path(css_path).exists():
@@ -294,6 +590,10 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
     pdf_bytes = None
     rendered_pages = None
 
+    notes_split = 0
+    split_pairs: list[tuple[str, str]] = []
+    split_skipped: list[str] = []
+
     if renderer == "weasyprint":
         try:
             import weasyprint
@@ -302,10 +602,36 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
             # where each chapter landed; counting tags in the *input* HTML cannot
             # know either, because pagination is what the renderer decides.
             document = weasyprint.HTML(string=full_html).render()
+
+            # Carry the tail of any note too tall for its page onto the next one.
+            #
+            # This has to be a loop, and it has to re-render: a note can only be
+            # cut once the renderer has said where the page ended, and moving a
+            # tail onto the following page changes THAT page's layout, which can
+            # push its own notes over in turn. Each pass moves text strictly
+            # later in the document, so the loop terminates; SPLIT_PASSES is a
+            # backstop, not the expected exit.
+            for _ in range(SPLIT_PASSES):
+                html_body, cut, skipped = _split_overlong_notes(
+                    html_body, document.pages)
+                split_skipped = skipped
+                if not cut:
+                    break
+                split_pairs.extend(cut)
+                notes_split += len(cut)
+                full_html = PAGE_TEMPLATE.format(
+                    css=css, html=html_body, lang=_escape_attr(lang))
+                document = weasyprint.HTML(string=full_html).render()
+                print(f"  [paginate] Split an over-long footnote "
+                      f"({notes_split} so far); re-rendered at "
+                      f"{len(document.pages)} pages")
+
             pdf_bytes = document.write_pdf()
             rendered_pages = document.pages
             print(f"  [paginate] Rendered PDF via weasyprint "
                   f"({len(pdf_bytes)} bytes, {len(rendered_pages)} pages)")
+        except StageError:
+            raise
         except Exception as e:
             print(f"  [paginate] weasyprint failed: {e}")
 
@@ -355,20 +681,63 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
             severity="warning",
             human_message=(
                 f"{total} characters on {len(overflow)} page(s) are laid out beyond "
-                f"the page edge and will not print: page(s) {pages}. This is a "
-                "footnote taller than the page it starts on -- WeasyPrint 62.3 "
-                "lays such a note out in full rather than splitting it, and draws "
-                "the remainder off the sheet."
+                f"the page edge and will not print: page(s) {pages}. An over-long "
+                "footnote is normally cut and carried to the next page, so this "
+                "means the carry could not be completed."
+                + (" Reasons: " + "; ".join(split_skipped) if split_skipped else "")
             ),
             suggested_fix=(
-                "Shorten the note, move the quotation into the body as a block "
-                "quote, or carry it to an appendix. No stylesheet setting fixes "
-                "it: the note is taller than the area any page can offer."
+                "Check the reasons above. A note carrying inline markup is not "
+                "split automatically; a note on the last page has nowhere to "
+                "carry to. Shortening the note, or moving the quotation into the "
+                "body as a block quote, resolves either case."
             ),
             source_ref="paginate:footnote-overflow",
         ))
         print(f"    WARN text_outside_page: {total} chars on {len(overflow)} page(s) "
               f"({pages}) fall outside the page box and will not print")
+        for reason in split_skipped:
+            print(f"      - {reason}")
+
+    if notes_split:
+        print(f"  [paginate] {notes_split} over-long footnote(s) carried onto a "
+              f"following page")
+
+    # A continuation belongs on the page immediately after the one it continues.
+    # It usually lands there, but not always, and the reason is outside this
+    # stage's control: attaching a tail to a page also invites WeasyPrint to
+    # flow its OWN deferred notes onto it, the body shrinks, the anchor the tail
+    # was pinned to slides to the next page, and the note follows. The text is
+    # complete and in reading order either way, so this is reported rather than
+    # fought -- a reader who turns the page and finds nothing needs to be told,
+    # and the fix is editorial (a shorter note) not typographic.
+    if rendered_pages is not None and split_pairs:
+        page_of = _note_text_pages(rendered_pages)
+        gaps = [(parent, child, page_of.get(parent), page_of.get(child))
+                for parent, child in split_pairs
+                if page_of.get(parent) is not None
+                and page_of.get(child) is not None
+                and page_of[child] != page_of[parent] + 1]
+        if gaps:
+            described = "; ".join(
+                f"the part on page {a} resumes on page {c}, not {a + 1}"
+                for _, _, a, c in gaps)
+            warnings.append(Diagnostic(
+                code="footnote_continuation_not_adjacent",
+                severity="warning",
+                human_message=(
+                    f"{len(gaps)} split footnote(s) resume later than the page "
+                    f"immediately after the one they start on: {described}. The "
+                    "text is complete and in order, but a reader turning the "
+                    "page finds the note missing and picks it up further on."
+                ),
+                suggested_fix=(
+                    "Shorten the note, or move the quotation into the body as a "
+                    "block quote, so that it does not need to be carried at all."
+                ),
+                source_ref="paginate:footnote-continuation",
+            ))
+            print(f"    WARN footnote_continuation_not_adjacent: {described}")
 
     return StageResult(
         artifacts=[
@@ -398,6 +767,10 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
             # Characters laid out beyond the page edge. Non-zero means the PDF
             # carries text that will not appear on the printed sheet.
             "text_outside_page_chars": float(sum(overflow.values())),
+            # How many over-long notes had to be cut and carried onto the next
+            # page. Zero is the common case; a sudden rise means the design got
+            # tighter or the manuscript grew notes it cannot hold.
+            "footnotes_split": float(notes_split),
         },
         warnings=warnings,
     )
