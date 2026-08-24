@@ -118,6 +118,7 @@ cross-project log directory and a sibling repo's failures got reported as Publis
 `ARCHITECTURE_UPLIFT_PLAN.md` (U1–U4 implemented+tested, U5–U7 implemented, U8–U9 open) ·
 `BLOCKING_FIX_PLAN.md` (D1–D3 landed in c5cfad3) ·
 `COST_AND_STABILITY_PLAN.md` · `REMEDIATION_PLAN.md` (complete) ·
-`VERIFICATION_PLAN.md` (G1–G8 — gates that cannot fail; **draft, nothing implemented**)
+`VERIFICATION_PLAN.md` (G1–G8 — gates that cannot fail; **draft, nothing implemented**) ·
+`CONTEXT_ARCHITECTURE.md` (C1–C4 — ICM evaluated against this repo; **research memo**)
 
 Full index with per-document status: the **publisher-docs** skill.
