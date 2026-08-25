@@ -83,6 +83,20 @@ it. It exists so a missing renderer fails loudly instead of silently certifying 
 as press-ready. If a chain is unreachable, fix the chain — do not promote an input to root
 and do not set this flag to route around a gate.
 
+**Two render paths, one DAG.** `PUBLISHER_RENDER_ENGINE` (`css` default, or `typst`)
+selects which pair of alternative stages the graph binds: `design-compile` + `paginate`
+(weasyprint) or `design-compile-typst` + `paginate-typst` (pandoc → Typst). Selection is
+registry data, not a branch in the executor. Both consume `doc-effective/1`, so neither
+can reach a PDF without the integrity gate. Bleed differs by necessity: weasyprint declares
+it with CSS `bleed:`, Typst lays out at trim+2×bleed and lets `finish-gs` inset the
+TrimBox — read `stages/typst_stages.py`'s module docstring before changing either.
+
+**The IDML deliverable is terminal on purpose.** `PUBLISHER_EMIT_IDML=1` registers the
+`idml` stage (pandoc ICML → a validated IDML package). InDesign composes text at open
+time, so this stage cannot know the page count: it takes the render path's measured
+pagemap as a frame-count *hint* and lets Smart Text Reflow correct it. Never let anything
+consume `idml/1`, and never derive a spine or a preflight verdict from it.
+
 **Execution tiers.** `tracer_bullet.py` is the local dev harness (one build, stdout,
 stubs allowed). `worker.py` is production: claims builds from Postgres with
 `FOR UPDATE SKIP LOCKED`, real engines only. `packages/api` is Fastify + Postgres and

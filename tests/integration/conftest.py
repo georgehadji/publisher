@@ -190,6 +190,91 @@ def set_manuscript_source(conn, manuscript_id: str, data: bytes) -> str:
     return sha
 
 
+def spawn_worker(db_url: str, *, env: dict | None = None) -> subprocess.Popen:
+    """Launch a real worker.py subprocess against `db_url`.
+
+    Shared by the U1 durability tests (single worker) and the U9 multi-worker
+    tests (several of these against the same DATABASE_URL, exactly like
+    `docker compose up --scale worker=N`) -- the only difference is how many
+    times the caller invokes this.
+    """
+    full_env = {
+        **os.environ,
+        "DATABASE_URL": db_url,
+        "PUBLISHER_CAS_ROOT": str(TEST_CAS_ROOT),
+        **(env or {}),
+    }
+    return subprocess.Popen(
+        [sys.executable, str(REPO_ROOT / "worker.py")],
+        cwd=str(REPO_ROOT),
+        env=full_env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def stop_worker(proc: subprocess.Popen, timeout_s: float = 5) -> None:
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=timeout_s)
+
+
+def wait_for_terminal(db_url: str, build_id: str, timeout_s: int = 90) -> dict:
+    """Poll on a FRESH connection (never the caller's `db` fixture connection,
+    which may itself be inside a transaction) until `build_id` reaches a
+    terminal status. Returns the final row."""
+    deadline = time.monotonic() + timeout_s
+    row = None
+    while time.monotonic() < deadline:
+        conn = psycopg2.connect(db_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, status, attempt, worker_id FROM builds WHERE id = %s", (build_id,)
+                )
+                cols = [d.name for d in cur.description]
+                fetched = cur.fetchone()
+                row = dict(zip(cols, fetched)) if fetched else None
+        finally:
+            conn.close()
+        if row and row["status"] in ("completed", "failed", "dead"):
+            return row
+        time.sleep(0.5)
+    raise AssertionError(f"build {build_id} never reached a terminal state: {row}")
+
+
+def wait_for_all_terminal(db_url: str, build_ids: list[str], timeout_s: int = 120) -> dict[str, dict]:
+    """Poll until every id in `build_ids` has reached a terminal status, or
+    raise naming exactly which ones did not (a starvation signal)."""
+    deadline = time.monotonic() + timeout_s
+    results: dict[str, dict] = {}
+    remaining = set(build_ids)
+    while remaining and time.monotonic() < deadline:
+        conn = psycopg2.connect(db_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, status, attempt, worker_id FROM builds WHERE id = ANY(%s)",
+                    (list(remaining),),
+                )
+                cols = [d.name for d in cur.description]
+                for fetched in cur.fetchall():
+                    row = dict(zip(cols, fetched))
+                    if row["status"] in ("completed", "failed", "dead"):
+                        results[row["id"]] = row
+                        remaining.discard(row["id"])
+        finally:
+            conn.close()
+        if remaining:
+            time.sleep(0.5)
+    if remaining:
+        raise AssertionError(f"builds never reached a terminal state (starved): {sorted(remaining)}")
+    return results
+
+
 @pytest.fixture(scope="module")
 def worker_module():
     """worker.py imported AFTER the CAS root env is pinned (it reads it at import).

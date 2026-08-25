@@ -327,9 +327,18 @@ class StageRegistry:
                     "severity": "error",
                 })
         
+        # Checks 1 and 2 below judge stages against the producer map, which only
+        # contains ACTIVE stages -- so they must only judge active stages too. A
+        # deselected alternative's inputs are satisfied by the other deselected
+        # alternatives it was declared alongside (the weasyprint renderer
+        # consumes the CSS emitter's text/css; both go inactive together when
+        # the Typst path is selected). Checking a deselected stage against the
+        # selected graph reports a violation in a stage that will never run.
+        active = [(n, d) for n, d in self._stages.items() if self._is_active(n)]
+
         # Check 1: unsatisfiable inputs (declared input with no producer,
         # unless declared as a root input)
-        for name, decl in self._stages.items():
+        for name, decl in active:
             root_set = set(decl.root_inputs or [])
             for param_name, schema_id in decl.inputs.items():
                 if param_name in root_set:
@@ -346,11 +355,11 @@ class StageRegistry:
         # Check 2: orphan outputs (declared output with no consumer,
         # unless the stage is declared terminal)
         consumed: set[str] = set()
-        for name, decl in self._stages.items():
+        for name, decl in active:
             for schema_id in decl.inputs.values():
                 consumed.add(schema_id)
-        
-        for name, decl in self._stages.items():
+
+        for name, decl in active:
             terminal_keys = set(decl.terminal_outputs or [])
             for out_key, schema_id in decl.outputs.items():
                 if decl.terminal or out_key in terminal_keys:

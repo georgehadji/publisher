@@ -23,6 +23,10 @@ services:
       interval: 2s
       timeout: 5s
       retries: 15
+    # U8 bulkhead: bound each service's footprint so one container running
+    # hot cannot starve or OOM the others on the same host.
+    mem_limit: 1g
+    cpus: 1.0
 
   worker:
     build:
@@ -31,6 +35,14 @@ services:
     environment:
       DATABASE_URL: postgresql://publisher:publisher@postgres:5432/publisher
       PUBLISHER_CAS_ROOT: /data/cas
+      # Which render path the derived DAG binds: `css` (weasyprint) or `typst`
+      # (pandoc -> Typst). Both toolchains are in the worker image; this only
+      # chooses between them. See README "Render paths".
+      PUBLISHER_RENDER_ENGINE: ${PUBLISHER_RENDER_ENGINE:-css}
+      # Opt in to the InDesign deliverable (terminal `idml` stage; needs pandoc,
+      # already in the image). Off by default: a build must not fail for want of
+      # a file nobody ordered.
+      PUBLISHER_EMIT_IDML: ${PUBLISHER_EMIT_IDML:-}
       # Without this, Python buffers stdout when it is a pipe, so `docker compose
       # logs worker` stayed empty for the whole of a build -- the per-stage prints
       # only appeared if the process exited.
@@ -43,6 +55,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # U8 bulkhead: the worker is the memory risk in this stack -- Weasyprint on
+    # a 900-page manuscript is effectively unbounded RAM (ARCHITECTURE_UPLIFT_PLAN.md
+    # U8), and one such build must not be able to OOM the host and take the API
+    # down with it. A build that legitimately needs more than this dies loudly
+    # (OOMKilled, recorded 'failed' by the next worker's lease reclaim) instead
+    # of silently degrading everything else. Raise this per-host, not by removing it.
+    mem_limit: 3g
+    cpus: 2.0
 
   api:
     build:
@@ -72,6 +92,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # U8 bulkhead: the API never renders anything -- CAS_READ_MAX_BYTES (db.ts)
+    # already bounds a single read, so this only needs to survive a burst of
+    # concurrent requests, not a single huge one.
+    mem_limit: 512m
+    cpus: 1.0
 
 volumes:
   pgdata:

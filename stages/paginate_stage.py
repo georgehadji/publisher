@@ -209,6 +209,9 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
     # to root; fix the chain instead.
     outputs={"pdf": "raw-pdf/1", "pagemap": "pagemap/1"},
     terminal_outputs=["pagemap"],   # delivered via the API, never consumed
+    # Alternative impl of one step: `paginate-typst` renders the same
+    # doc-effective/1 through pandoc + Typst. stages/__init__.py selects one.
+    implements="paginate",
     toolchain=["render-engine"],
     fixtures="fixtures/paginate/v1",
     memory_budget_mb=256,
@@ -237,6 +240,14 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
 
     full_html = PAGE_TEMPLATE.format(css=css, html=html_body)
 
+    # Figures are referenced as `media/<sha256>.<ext>`; the bytes live in CAS and
+    # have to be on disk beside the HTML before the renderer resolves them.
+    from stages.media import materialize_media
+    work = Path(ctx.work_dir)
+    images = materialize_media(html_body, ctx.cas_root, work)
+    if images:
+        print(f"  [paginate] materialized {len(images)} figure(s)")
+
     chapters = _chapters_in_order(html_body)
 
     renderer = _check_available()
@@ -250,7 +261,10 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
             # available. It is the only authority on how many pages there are and
             # where each chapter landed; counting tags in the *input* HTML cannot
             # know either, because pagination is what the renderer decides.
-            document = weasyprint.HTML(string=full_html).render()
+            # base_url is what makes the relative `media/...` srcs resolve; a
+            # string-only HTML() has no base and every figure silently renders
+            # as an empty box.
+            document = weasyprint.HTML(string=full_html, base_url=str(work)).render()
             pdf_bytes = document.write_pdf()
             rendered_pages = document.pages
             print(f"  [paginate] Rendered PDF via weasyprint "

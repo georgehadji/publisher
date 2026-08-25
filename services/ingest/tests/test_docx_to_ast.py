@@ -168,20 +168,27 @@ def test_missing_file_is_an_error(tmp_path):
         docx_to_ast(tmp_path / "nope.docx")
 
 
+def _para(text: str) -> dict:
+    return {"type": "paragraph", "content": [{"type": "text", "text": text}]}
+
+
 def test_body_start_falls_back_to_first_heading_when_nothing_is_substantive():
-    sections = [("", ["x"]), ("A", ["short"]), ("B", ["also short"])]
+    sections = [("", [_para("x")]), ("A", [_para("short")]), ("B", [_para("also short")])]
     assert _find_body_start(sections) == 0
 
 
 def test_grouping_keeps_leading_matter_untitled():
+    """Sections carry AST nodes, not strings: a block now reaches the AST with
+    its marks, figures and footnotes attached, so grouping moves nodes."""
     from publisher_ingest.docx_to_ast import Block
 
+    front, body = _para("front line"), _para("body line")
     blocks = [
-        Block("front line", "Normal", False),
+        Block("front line", "Normal", False, (front,)),
         Block("TITLE", "Normal", True),
-        Block("body line", "Normal", False),
+        Block("body line", "Normal", False, (body,)),
     ]
-    assert _group_headings(blocks) == [("", ["front line"]), ("TITLE", ["body line"])]
+    assert _group_headings(blocks) == [("", [front]), ("TITLE", [body])]
 
 
 # ── U5/S9: XXE verification ────────────────────────────────────

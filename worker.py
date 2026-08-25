@@ -280,12 +280,15 @@ def _initial_inputs_for(conn, build: dict) -> dict:
     # DAG: the build reported `completed` with no preflight verdict and no
     # package -- the second hard gate, bypassed. Resolve the selected name.
     finish_stage = get_registry().selected_implementation("finish")
+    # "design-compile" is a step with two implementations too (CSS and Typst,
+    # selected by PUBLISHER_RENDER_ENGINE) -- same resolution, same reason.
+    design_stage = get_registry().selected_implementation("design-compile")
 
     return {
         "ingest": {"docx_path": str(cas_path)},
         # The same profile drives all three: design-compile grows the page box by
         # its bleed, finish insets the TrimBox by it, preflight measures it.
-        "design-compile": {"designspec_path": None, "profile_name": profile_name},
+        design_stage: {"designspec_path": None, "profile_name": profile_name},
         finish_stage: {"profile_name": profile_name},
         "preflight": {"profile_name": profile_name},
     }

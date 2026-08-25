@@ -49,7 +49,7 @@
         "bodyFont": { "$ref": "#/$defs/fontRef" },
         "headingFont": { "$ref": "#/$defs/fontRef" },
         "bodySize": { "type": "number", "minimum": 6, "maximum": 20, "description": "pt" },
-        "leading": { "type": "number", "minimum": 8, "maximum": 36, "description": "pt" },
+        "leading": { "type": "number", "minimum": 8, "maximum": 36, "default": 14.173, "description": "pt. House default 14.173pt = 5.000mm exactly, so the baseline grid lands on whole millimetres -- which is what makes a spread's baselines back up against each other and what an imposition in millimetres can be checked against." },
         "scaleRatio": { "type": "number", "minimum": 1.0, "maximum": 3.0, "description": "Modular scale ratio for heading sizes" },
         "measure": { "type": "integer", "minimum": 30, "maximum": 90, "description": "Optimal characters per line" },
         "bodyAlignment": { "type": "string", "enum": ["justified", "ragged-right", "ragged-left"], "default": "justified" },
@@ -93,7 +93,11 @@
         },
         "startNumber": { "type": "integer", "minimum": 1, "default": 1 },
         "prefix": { "type": "string", "maxLength": 16 },
-        "suffix": { "type": "string", "maxLength": 16 }
+        "suffix": { "type": "string", "maxLength": 16 },
+        "sizeDelta": { "type": "number", "minimum": -12, "maximum": 12, "default": -1, "description": "Folio size in points RELATIVE to typography.bodySize. A delta, not an absolute size, because the house rule is stated as a relationship ('body minus one') -- an absolute 9.5pt silently stops meaning that the moment body size changes." },
+        "weight": { "type": "string", "enum": ["regular", "medium", "semibold", "bold"], "default": "regular" },
+        "case": { "type": "string", "enum": ["none", "uppercase", "lowercase", "small-caps"], "default": "none" },
+        "tracking": { "type": "number", "minimum": -200, "maximum": 500, "default": 0, "description": "Letterspacing in 1/1000 em -- InDesign's tracking unit, since InDesign is a deliverable this has to survive into. 100 here is InDesign's 100, i.e. 0.1em: CSS gets letter-spacing 0.1em, Typst gets tracking 0.1em." }
       },
       "additionalProperties": false
     },
@@ -108,7 +112,11 @@
           "items": { "type": "string", "enum": ["chapter-opening", "full-bleed", "title-page", "part-opening"] },
           "maxItems": 10
         },
-        "separator": { "type": "string", "maxLength": 8 }
+        "separator": { "type": "string", "maxLength": 8 },
+        "sizeDelta": { "type": "number", "minimum": -12, "maximum": 12, "default": -3, "description": "Running-head size in points RELATIVE to typography.bodySize. See folio.sizeDelta for why this is a delta." },
+        "weight": { "type": "string", "enum": ["regular", "medium", "semibold", "bold"], "default": "bold" },
+        "case": { "type": "string", "enum": ["none", "uppercase", "lowercase", "small-caps"], "default": "uppercase" },
+        "tracking": { "type": "number", "minimum": -200, "maximum": 500, "default": 100, "description": "Letterspacing in 1/1000 em (InDesign tracking units). 100 = 0.1em. All-caps text sets tight without positive tracking, which is why the default is not 0 here while the folio's is." }
       },
       "additionalProperties": false
     },

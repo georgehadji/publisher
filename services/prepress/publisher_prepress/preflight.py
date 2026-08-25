@@ -454,6 +454,13 @@ _PAGE_COUNT_RE = re.compile(rb"/Type\s*/Pages\b[^>]{0,400}?/Count\s+(\d+)", re.D
 _COUNT_RE = re.compile(rb"/Count\s+(\d+)")
 _BASEFONT_RE = re.compile(rb"/BaseFont\s*/([#\w+-]+)")
 _FONTFILE_RE = re.compile(rb"/FontFile[23]?\b")
+# A composite (Type0) font writes /BaseFont TWICE for ONE embedded program:
+# once on the Type0 object, carrying its CMap suffix (`Foo-Regular-Identity-H`),
+# and once on the descendant CIDFont without it (`Foo-Regular`). Counting those
+# as two fonts against one /FontFile3 reports the book's only face as "not
+# embedded" and blocks delivery on a font that IS embedded. Every real Typst or
+# weasyprint PDF of a book is composite, so this is the common case.
+_CMAP_SUFFIX_RE = re.compile(r"-(?:Identity|Uni(?:JIS|GB|CNS|KS)[\w-]*?)-[HV]$")
 
 
 def _count_pages(raw: bytes) -> int | None:
@@ -542,7 +549,10 @@ def probe_pdf(pdf_path: Path) -> dict:
     # each /BaseFont to its own /FontFile needs real object-graph parsing. If
     # every font object has an accompanying font program the set is embedded;
     # otherwise report the shortfall rather than guessing which one is missing.
-    font_names = sorted({m.group(1).decode("latin-1") for m in _BASEFONT_RE.finditer(raw)})
+    font_names = sorted({
+        _CMAP_SUFFIX_RE.sub("", m.group(1).decode("latin-1"))
+        for m in _BASEFONT_RE.finditer(raw)
+    })
     embedded_count = len(_FONTFILE_RE.findall(raw))
     fonts = [
         {"name": name, "embedded": i < embedded_count}

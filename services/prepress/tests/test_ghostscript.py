@@ -113,6 +113,44 @@ def test_to_pdfx_refuses_without_a_binary(tmp_path: Path, monkeypatch):
         to_pdfx(tmp_path / "in.pdf", tmp_path / "out.pdf", tmp_path)
 
 
+def test_icc_is_found_next_to_the_gs_install(tmp_path: Path, monkeypatch):
+    """The search list was Debian-only, so every Windows host failed finish-gs
+    with "no CMYK ICC profile found" while the profile sat in the install tree.
+    Deriving it from the binary is what makes an unusual prefix work at all."""
+    from publisher_prepress.ghostscript import find_cmyk_icc
+
+    binary = tmp_path / "bin" / "gswin64c.exe"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"")
+    profile = tmp_path / "iccprofiles" / "default_cmyk.icc"
+    profile.parent.mkdir(parents=True)
+    profile.write_bytes(b"icc")
+
+    monkeypatch.delenv("PUBLISHER_CMYK_ICC", raising=False)
+    monkeypatch.setattr("publisher_prepress.ghostscript.find_binary",
+                        lambda: str(binary))
+    assert find_cmyk_icc() == profile
+
+
+def test_an_explicit_icc_override_wins(tmp_path: Path, monkeypatch):
+    from publisher_prepress.ghostscript import find_cmyk_icc
+
+    vendor = tmp_path / "LightningSource.icc"
+    vendor.write_bytes(b"icc")
+    monkeypatch.setenv("PUBLISHER_CMYK_ICC", str(vendor))
+    assert find_cmyk_icc() == vendor
+
+
+def test_a_broken_icc_override_raises_rather_than_substituting(tmp_path, monkeypatch):
+    """The OutputIntent names the printing condition the book is proofed for.
+    Quietly using a different profile misstates it on every page."""
+    from publisher_prepress.ghostscript import find_cmyk_icc
+
+    monkeypatch.setenv("PUBLISHER_CMYK_ICC", str(tmp_path / "absent.icc"))
+    with pytest.raises(GhostscriptError, match="not a file"):
+        find_cmyk_icc()
+
+
 def test_to_pdfx_refuses_without_an_icc_profile(tmp_path: Path, monkeypatch):
     """PDF/X-1a requires an OutputIntent destination profile; no profile, no claim."""
     monkeypatch.setattr("publisher_prepress.ghostscript.find_binary", lambda: "/usr/bin/gs")

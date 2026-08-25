@@ -16,6 +16,12 @@ import { loadOwned, pool, readCasFile } from '../db.js';
 // is asserted before use.
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
+// U8 admission control: one tenant queueing unbounded builds must not starve
+// every other tenant or degrade the builds_queued_idx scan
+// (ARCHITECTURE_UPLIFT_PLAN.md U8). This caps in-flight (queued + running)
+// builds per tenant, not lifetime builds.
+const MAX_QUEUED_BUILDS_PER_TENANT = parseInt(process.env.PUBLISHER_MAX_QUEUED_BUILDS_PER_TENANT ?? '50', 10);
+
 export async function registerBuilds(server: FastifyInstance): Promise<void> {
   server.post<{ Body: { documentId: string; designId: string; profileIds: string[]; mode?: string } }>(
     '/v1/builds',
@@ -27,6 +33,16 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
       const manuscript = await loadOwned('manuscripts', documentId, request.tenantId);
       if (!manuscript) {
         return reply.code(404).send({ error: 'not found' });
+      }
+      const inFlight = await pool.query(
+        "SELECT count(*)::int AS count FROM builds WHERE tenant_id = $1 AND status IN ('queued', 'running')",
+        [request.tenantId]
+      );
+      if (inFlight.rows[0].count >= MAX_QUEUED_BUILDS_PER_TENANT) {
+        return reply.code(429).send({
+          error: 'too many in-flight builds for this tenant',
+          limit: MAX_QUEUED_BUILDS_PER_TENANT,
+        });
       }
       const id = `build-${randomBytes(9).toString('base64url')}`;
       // U7: a correlation id joins the HTTP request to the worker's logs. The
