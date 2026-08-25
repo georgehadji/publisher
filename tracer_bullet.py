@@ -396,6 +396,11 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
     # "finish" left it unreachable and dropped preflight/package (hard-gate
     # bypass; see worker.py _initial_inputs_for for the full story).
     finish_stage = registry.selected_implementation("finish")
+    # Same trap, one step earlier: "design-compile" is now a STEP with two
+    # implementations (CSS and Typst). Keying its root inputs by the step name
+    # would leave the selected emitter without a profile -- and an emitter with
+    # no profile lays out at trim with no bleed, which preflight then fails.
+    design_stage = registry.selected_implementation("design-compile")
 
     # Only provide root inputs for stages whose declared inputs
     # are not produced by any other stage.
@@ -407,7 +412,7 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
         # geometry. design-compile grows the page box by its bleed, finish insets
         # the TrimBox by the same amount, preflight measures the result. Give two
         # of them different profiles and the third will correctly fail the build.
-        "design-compile": {"designspec_path": None, "profile_name": profile},
+        design_stage: {"designspec_path": None, "profile_name": profile},
         finish_stage: {"profile_name": profile},
         "preflight": {"profile_name": profile},
     }

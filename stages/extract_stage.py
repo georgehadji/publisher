@@ -123,9 +123,24 @@ def _render_content(content: list) -> str:
         elif ntype == "figure":
             attrs = node.get("attrs", {})
             caption = attrs.get("caption", "")
+            src = _media_src(attrs.get("mediaRef") or {})
             parts.append('<figure>')
+            # The <img> was missing entirely: every figure rendered as an empty
+            # box with a caption under it. Nothing caught it, because a picture
+            # contributes no text for the integrity gate to miss.
+            if src:
+                parts.append(f'<img src="{src}" alt="{_escape_html(attrs.get("altText", ""))}"/>')
             parts.append(f'<figcaption>{_escape_html(caption)}</figcaption>' if caption else '')
             parts.append('</figure>')
+
+        elif ntype == "footnote":
+            # An inline element at block position on purpose: `float: footnote`
+            # (CSS Generated Content for Paged Media) moves it into the page's
+            # footnote area and numbers the call itself. Rendering it as a block
+            # would print the note inline in the text where it happens to sit.
+            parts.append(
+                f'<span class="footnote">{_render_inline(node.get("content", []))}</span>'
+            )
         
         elif ntype == "sidebar":
             parts.append(f'<aside class="sidebar">{_render_content(node.get("content", []))}</aside>')
@@ -222,6 +237,35 @@ def _render_table(node: dict) -> str:
 def _escape_html(text: str) -> str:
     import html as _html
     return _html.escape(text, quote=True)
+
+
+# Extensions for the image types Word actually embeds. The renderers get files
+# on disk, and weasyprint, Typst and InDesign all decide how to decode by
+# extension -- an extensionless blob is refused by all three.
+MEDIA_EXTENSIONS = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/tiff": "tif",
+    "image/bmp": "bmp",
+    "image/svg+xml": "svg",
+    "image/x-emf": "emf",
+    "image/x-wmf": "wmf",
+}
+
+
+def _media_src(ref: dict) -> str:
+    """`media/<sha256>.<ext>` for a figure's mediaRef.
+
+    Content-addressed rather than named: the src is enough for any renderer to
+    pull the bytes back out of CAS, so the HTML carries no path into a work
+    directory that will not exist by the time it is rendered.
+    """
+    digest = ref.get("hash")
+    if not digest:
+        return ""
+    ext = MEDIA_EXTENSIONS.get(ref.get("mediaType", ""), "bin")
+    return f"media/{digest}.{ext}"
 
 
 @stage(

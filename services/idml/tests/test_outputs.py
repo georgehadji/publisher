@@ -1,6 +1,5 @@
 """Tests for secondary output services (P6)."""
 
-import json
 import sys
 import tempfile
 import zipfile
@@ -16,39 +15,52 @@ from pathlib import Path
 # ── IDML tests ──────────────────────────────────────────────────
 
 class TestIDMLWriter:
+    """The writer now takes an ICML story fragment, not a raw AST: story markup
+    is pandoc's job (see stages/idml_stage.py), and geometry/styles are this
+    writer's. These assertions check the package InDesign actually needs --
+    the previous ones passed on a file InDesign rejects."""
+
+    STORY = (
+        '<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Header1">'
+        '<CharacterStyleRange AppliedCharacterStyle="$ID/NormalCharacterStyle">'
+        "<Content>One</Content></CharacterStyleRange></ParagraphStyleRange>"
+    )
+
     def test_write_idml_package(self):
-        from publisher_idml import IDMLWriter
-        ast = self._make_test_ast()
-        
+        from publisher_idml import IDMLWriter, validate_idml
+
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "test.idml"
-            writer = IDMLWriter(ast)
-            result = writer.write(output)
+            result = IDMLWriter(self.STORY, title="T").write(output)
             assert result.exists()
             assert result.suffix == ".idml"
-            
-            # Verify it's a valid ZIP
+            validate_idml(result)
+
             with zipfile.ZipFile(result) as zf:
                 names = zf.namelist()
-                assert "designmap.xml" in names
-                assert "Resources.xml" in names
-                assert "Styles/ParagraphStyles.xml" in names
-    
-    def test_idml_contains_stories(self):
+                assert names[0] == "mimetype"
+                for required in ("META-INF/container.xml", "designmap.xml",
+                                 "Resources/Styles.xml", "Resources/Preferences.xml",
+                                 "Resources/Fonts.xml", "Resources/Graphic.xml",
+                                 "XML/BackingStory.xml", "XML/Tags.xml"):
+                    assert required in names, required
+
+    def test_idml_threads_one_story_through_every_frame(self):
         from publisher_idml import IDMLWriter
-        ast = self._make_test_ast(chapters=2)
-        
+
         with tempfile.TemporaryDirectory() as tmp:
-            writer = IDMLWriter(ast)
-            result = writer.write(Path(tmp) / "test.idml")
-            
+            result = IDMLWriter(self.STORY, page_count=3).write(Path(tmp) / "test.idml")
+
             with zipfile.ZipFile(result) as zf:
                 stories = [n for n in zf.namelist() if n.startswith("Stories/")]
-                assert len(stories) >= 2  # title + body per chapter
-    
+                spreads = [n for n in zf.namelist() if n.startswith("Spreads/")]
+            # One story, many frames -- a book is a single flow, not a story per page.
+            assert len(stories) == 1
+            assert len(spreads) == 3
+
     def test_idml_with_designspec(self):
-        from publisher_idml import IDMLWriter
-        ast = self._make_test_ast()
+        from publisher_idml import IDMLWriter, validate_idml
+
         designspec = {
             "trimSize": {"width": 152.4, "height": 228.6},
             "typography": {
@@ -59,12 +71,14 @@ class TestIDMLWriter:
             },
             "margins": {"top": 16, "bottom": 18, "inside": 14, "outside": 18},
         }
-        
+
         with tempfile.TemporaryDirectory() as tmp:
-            writer = IDMLWriter(ast, designspec=designspec)
-            result = writer.write(Path(tmp) / "test.idml")
-            assert result.exists()
-    
+            result = IDMLWriter(self.STORY, designspec=designspec).write(
+                Path(tmp) / "test.idml")
+            validate_idml(result)
+            with zipfile.ZipFile(result) as zf:
+                assert "Source Serif Pro" in zf.read("Resources/Fonts.xml").decode()
+
     def _make_test_ast(self, chapters: int = 1) -> dict:
         return {
             "schema": "ast/1",

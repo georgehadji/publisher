@@ -26,6 +26,9 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
   server.addContentTypeParser(
     [
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      // Legacy binary Word. The worker converts it to .docx with LibreOffice
+      // before anything parses it (stages/ingest_stage.py `_convert_legacy_doc`).
+      'application/msword',
       'application/octet-stream',
       'application/zip',
     ],
@@ -85,17 +88,24 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
         return reply.code(400).send({ error: 'empty manuscript upload' });
       }
 
-      const head = Buffer.alloc(2);
+      // A manuscript is either a DOCX (ZIP, "PK") or a legacy binary .doc
+      // (OLE2 compound file, D0 CF 11 E0 A1 B1 1A E1). The worker converts the
+      // latter with LibreOffice before parsing; anything else is neither.
+      const head = Buffer.alloc(8);
       const fh = await open(tmp, 'r');
       try {
-        await fh.read(head, 0, 2, 0);
+        await fh.read(head, 0, 8, 0);
       } finally {
         await fh.close();
       }
-      if (head[0] !== 0x50 || head[1] !== 0x4b) {
+      const isDocx = head[0] === 0x50 && head[1] === 0x4b;
+      const isLegacyDoc = head.subarray(0, 8).equals(
+        Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])
+      );
+      if (!isDocx && !isLegacyDoc) {
         await unlink(tmp).catch(() => {});
         return reply.code(400).send({
-          error: 'uploaded bytes are not a DOCX (missing ZIP magic). Convert legacy .doc files to .docx first.',
+          error: 'uploaded bytes are neither a DOCX (ZIP magic) nor a legacy .doc (OLE2 magic).',
         });
       }
 

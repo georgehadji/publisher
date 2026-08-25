@@ -99,3 +99,23 @@ def test_ingest_rejects_corrupt_archive(tmp_path):
         ingest(_ctx(tmp_path), docx_path=path)
     assert exc.value.kind == ErrorKind.BAD_INPUT
     assert "ZIP/DOCX" in exc.value.message
+
+
+def test_legacy_doc_is_routed_to_libreoffice_not_python_docx(tmp_path):
+    """A legacy binary .doc (OLE2) must be recognised as one.
+
+    python-docx cannot read OLE2, so before the LibreOffice conversion existed
+    these bytes died as "not a valid ZIP/DOCX archive" -- an error that names
+    the wrong problem and tells an author to fix a file that is not broken. The
+    outcome depends on whether LibreOffice is installed (INFRA when it is not,
+    BAD_INPUT when it is and the bytes are still garbage), but either way the
+    message has to say .doc, not ZIP.
+    """
+    ole2 = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 512
+    path = _write_docx(tmp_path, ole2)
+
+    with pytest.raises(StageError) as exc:
+        ingest(_ctx(tmp_path), docx_path=path)
+    assert exc.value.kind in (ErrorKind.INFRA, ErrorKind.BAD_INPUT)
+    assert ".doc" in exc.value.message
+    assert "ZIP/DOCX" not in exc.value.message

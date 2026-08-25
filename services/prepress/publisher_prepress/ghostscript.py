@@ -20,6 +20,7 @@ Never one compromise file serving both.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -74,11 +75,29 @@ PDFX_DEF_TEMPLATE = """%!
 [{{Catalog}} <</OutputIntents [ {{OutputIntent_PDFX}} ]>> /PUT pdfmark
 """
 
-# Where Debian/Alpine ghostscript packages keep their bundled ICC profiles.
+# Explicit override, checked first: a vendor-supplied profile (Lightning Source,
+# KDP and IngramSpark each publish one) belongs here rather than in this list.
+_ICC_ENV = "PUBLISHER_CMYK_ICC"
+
+# Where ghostscript keeps its bundled ICC profiles, per packaging. The Windows
+# entries are not decoration: `find_binary` has always known gs is named
+# differently there, but this list was Debian-only, so finish-gs failed on any
+# Windows host with "no CMYK ICC profile found" while the profile sat in the
+# install directory.
 _ICC_SEARCH_GLOBS = (
+    # Debian / Alpine / most Linux packaging
     "/usr/share/ghostscript/*/iccprofiles/default_cmyk.icc",
     "/usr/share/ghostscript/iccprofiles/default_cmyk.icc",
     "/usr/share/color/icc/ghostscript/default_cmyk.icc",
+    # macOS Homebrew
+    "/usr/local/share/ghostscript/*/iccprofiles/default_cmyk.icc",
+    "/opt/homebrew/share/ghostscript/*/iccprofiles/default_cmyk.icc",
+    # Windows: the official MSI, and scoop (whose `gs` is a shim in a different
+    # tree from the app, so the binary's own path leads nowhere useful).
+    "C:/Program Files/gs/*/iccprofiles/default_cmyk.icc",
+    "C:/Program Files (x86)/gs/*/iccprofiles/default_cmyk.icc",
+    "~/scoop/apps/ghostscript/current/iccprofiles/default_cmyk.icc",
+    "~/scoop/apps/ghostscript/*/iccprofiles/default_cmyk.icc",
 )
 
 
@@ -98,11 +117,37 @@ def find_cmyk_icc() -> Optional[Path]:
     A per-vendor profile (Lightning Source, KDP, IngramSpark each publish one)
     is the eventual goal; gs's bundled default_cmyk.icc is a valid, standards-
     conformant stand-in that makes the output genuinely PDF/X-1a today.
+
+    Order: explicit override, then the gs install tree the binary sits in, then
+    the per-platform locations. The binary-relative step is what makes an
+    install in an unusual prefix work without configuration.
     """
+    override = os.environ.get(_ICC_ENV)
+    if override:
+        path = Path(override).expanduser()
+        if path.is_file():
+            return path
+        raise GhostscriptError(
+            f"{_ICC_ENV} points at {override!r}, which is not a file. Refusing to "
+            f"fall back to a different profile: the OutputIntent names the "
+            f"printing condition the book is being proofed for, and silently "
+            f"substituting another one misstates it."
+        )
+
+    binary = find_binary()
+    if binary:
+        # .../bin/gswin64c.exe -> .../iccprofiles, and one level further up for
+        # layouts that put the binary two deep.
+        base = Path(binary).resolve().parent
+        for ancestor in (base, base.parent, base.parent.parent):
+            candidate = ancestor / "iccprofiles" / "default_cmyk.icc"
+            if candidate.is_file():
+                return candidate
+
     for pattern in _ICC_SEARCH_GLOBS:
-        root = Path(pattern).anchor
-        rel = pattern[len(root):]
-        matches = sorted(Path(root).glob(rel))
+        expanded = str(Path(pattern).expanduser())
+        root = Path(expanded).anchor
+        matches = sorted(Path(root).glob(expanded[len(root):])) if root else []
         if matches:
             return matches[0]
     return None

@@ -15,6 +15,48 @@ from publisher_prepress.fontvault import FontLicenseViolation, validate_font_use
 from profiles import load_profile
 
 
+# Defaults for the page-furniture blocks, mirroring
+# schemas/designspec/designspec.schema.json. They live here as well because a
+# DesignSpec reaches this function as a plain dict -- nothing injects schema
+# defaults at runtime -- and a `.get(key)` with no fallback would emit CSS with
+# a missing value the moment a spec omits a field.
+from templates import DEFAULT_LEADING_PT   # noqa: E402 -- the house 5.00mm baseline
+
+_RUNNING_HEAD_DEFAULTS = {"sizeDelta": -3.0, "weight": "bold",
+                          "case": "uppercase", "tracking": 100.0}
+_FOLIO_DEFAULTS = {"sizeDelta": -1.0, "weight": "regular",
+                   "case": "none", "tracking": 0.0}
+
+CSS_WEIGHTS = {"regular": "400", "medium": "500", "semibold": "600", "bold": "700"}
+
+
+def _furniture_css(block: dict, body_size: float, family: str,
+                   defaults: dict) -> list[str]:
+    """CSS declarations for a running head or folio, from the DesignSpec.
+
+    The one place these turn into declarations. They used to be `font-size: 9pt`
+    written out three times, which meant the DesignSpec's typography was ignored
+    outright and a house rule like "running heads are body minus three" could not
+    be expressed at all, let alone changed in one place.
+    """
+    size = body_size + float(block.get("sizeDelta", defaults["sizeDelta"]))
+    weight = block.get("weight", defaults["weight"])
+    case = block.get("case", defaults["case"])
+    # Tracking is authored in InDesign units (1/1000 em) because InDesign is one
+    # of the deliverables; CSS wants em.
+    tracking = float(block.get("tracking", defaults["tracking"])) / 1000.0
+
+    decls = [f"font-family: {family};", f"font-size: {size:g}pt;",
+             f"font-weight: {CSS_WEIGHTS.get(weight, '400')};"]
+    if case in ("uppercase", "lowercase"):
+        decls.append(f"text-transform: {case};")
+    elif case == "small-caps":
+        decls.append("font-variant-caps: small-caps;")
+    if tracking:
+        decls.append(f"letter-spacing: {tracking:g}em;")
+    return decls
+
+
 def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     """Emit CSS @page rules and typographic styles from a DesignSpec.
 
@@ -53,7 +95,7 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     h_mm = trim_size.get("height", 229)
     
     body_size = typography.get("bodySize", 10.5)
-    leading = typography.get("leading", 14.0)
+    leading = typography.get("leading", DEFAULT_LEADING_PT)
     measure = typography.get("measure", 66)
     
     body_font_family = (typography.get("bodyFont") or {}).get("family", "EB Garamond")
@@ -111,20 +153,20 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     rh_style = running_heads.get("style", "centered")
     
     if rh_recto_source != "none" or rh_verso_source != "none":
+        head_css = _furniture_css(running_heads, body_size, body_font_family,
+                                  _RUNNING_HEAD_DEFAULTS)
         lines.extend([
             "@page :recto {",
             "  @top-left {",
-            f"    content: string(recto-head);",
-            f"    font-size: 9pt;",
-            f"    font-family: {body_font_family};",
+            "    content: string(recto-head);",
+            *(f"    {d}" for d in head_css),
             "  }",
             "}",
             "",
             "@page :verso {",
             "  @top-right {",
-            f"    content: string(verso-head);",
-            f"    font-size: 9pt;",
-            f"    font-family: {body_font_family};",
+            "    content: string(verso-head);",
+            *(f"    {d}" for d in head_css),
             "  }",
             "}",
             "",
@@ -144,11 +186,11 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         }
         edge, align = folio_side_map.get(folio_pos, ("bottom", "center"))
         lines.extend([
-            f"@page {{",
+            "@page {",
             f"  @{edge}-{align} {{",
             f"    content: counter(page, {folio_style});",
-            f"    font-size: 9pt;",
-            f"    font-family: {body_font_family};",
+            *(f"    {d}" for d in _furniture_css(folio, body_size,
+                                                 body_font_family, _FOLIO_DEFAULTS)),
             "  }",
             "}",
             "",
@@ -294,6 +336,62 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "  font-style: italic;",
         "  margin-bottom: 0.3em;",
         "}",
+        # A table split across a page break loses its heading row unless the
+        # header group is declared as one; repeating it is the renderer's job,
+        # this only says which rows to repeat.
+        "thead { display: table-header-group; }",
+        "tr { break-inside: avoid; }",
+        "",
+    ])
+
+    # Figures. `break-inside: avoid` keeps a plate and its caption together: a
+    # caption stranded at the top of the next page is the classic tell of a book
+    # nobody looked at before printing.
+    lines.extend([
+        "figure {",
+        "  margin: 1em 0;",
+        "  text-align: center;",
+        "  break-inside: avoid;",
+        "}",
+        "figure img {",
+        # The type area is the constraint: an image wider than the text block
+        # runs into the margins, and one taller than the page is dropped whole
+        # by some renderers rather than scaled to fit.
+        "  max-width: 100%;",
+        "  max-height: 85vh;",
+        "  height: auto;",
+        "}",
+        "figcaption {",
+        f"  font-size: {body_size * 0.85}pt;",
+        "  font-style: italic;",
+        "  margin-top: 0.4em;",
+        "}",
+        "",
+    ])
+
+    # Footnotes. `float: footnote` is CSS Generated Content for Paged Media: the
+    # renderer lifts the span out of the text flow into the page's footnote area
+    # and numbers both the call and the note, which is why the AST carries no
+    # marker text of its own.
+    lines.extend([
+        "@page { @footnotes { border-top: 0.5pt solid currentColor; padding-top: 0.4em; } }",
+        "span.footnote {",
+        "  float: footnote;",
+        "  footnote-style-position: outside;",
+        f"  font-size: {body_size * 0.82}pt;",
+        "  text-align: left;",
+        "  text-indent: 0;",
+        "}",
+        "::footnote-call {",
+        "  content: counter(footnote, decimal);",
+        "  vertical-align: super;",
+        "  font-size: 0.7em;",
+        "  line-height: 0;",
+        "}",
+        "::footnote-marker {",
+        "  content: counter(footnote, decimal) '. ';",
+        "  font-weight: normal;",
+        "}",
         "",
     ])
     
@@ -360,6 +458,9 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # the bleed and fails the build against any profile that requires some.
     root_inputs=["designspec_path", "profile_name"],
     optional_root_inputs=["profile_name"],
+    # Alternative impl of one step: `design-compile-typst` emits text/x-typst
+    # from the same DesignSpec. stages/__init__.py selects one per process.
+    implements="design-compile",
     toolchain=[],
     fixtures="fixtures/design-compile/v1",
     memory_budget_mb=64,
@@ -462,14 +563,14 @@ def _default_designspec() -> dict:
         "typography": {
             "bodyFont": {"family": "EB Garamond"},
             "bodySize": 10.5,
-            "leading": 14.0,
+            "leading": DEFAULT_LEADING_PT,
             "scaleRatio": 1.25,
             "measure": 66,
             "bodyAlignment": "justified",
             "paragraphIndent": 1.5,
             "opticalMargins": True,
         },
-        "grid": {"type": "single", "baselineIncrement": 14.0},
+        "grid": {"type": "single", "baselineIncrement": DEFAULT_LEADING_PT},
         "margins": {"top": 18, "bottom": 20, "inside": 15, "outside": 20},
         "folio": {
             "position": "bottom-center",

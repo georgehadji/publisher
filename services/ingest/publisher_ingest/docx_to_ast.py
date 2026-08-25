@@ -36,6 +36,14 @@ import docx
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
+from .docx_rich import (
+    MediaNotStorable,
+    MediaSink,
+    paragraph_blocks,
+    read_footnotes,
+    table_block,
+)
+
 
 class IngestError(RuntimeError):
     """Raised when a DOCX cannot be faithfully represented as an AST."""
@@ -80,11 +88,17 @@ BACK_MATTER_PATTERNS = (
 
 @dataclass(frozen=True)
 class Block:
-    """One block-level run of text from the DOCX, in document order."""
+    """One block-level run of the DOCX, in document order.
+
+    `text` is the plain prose used for heading detection and the no-loss check;
+    `nodes` is what actually reaches the AST -- a paragraph with its marks
+    intact, plus any figure or footnote the same `w:p` carried.
+    """
 
     text: str
     style: str
     is_heading_candidate: bool
+    nodes: tuple[dict, ...] = ()
 
 
 def _is_upper(text: str) -> bool:
@@ -106,42 +120,71 @@ def _iter_body(document: docx.document.Document) -> Iterator[Paragraph | Table]:
             yield Table(child, document)
 
 
-def read_blocks(path: str | Path) -> list[Block]:
-    """Flatten a DOCX into ordered, non-empty text blocks."""
+def read_blocks(
+    path: str | Path, *, store_media: MediaSink | None = None
+) -> tuple[list[Block], list[str]]:
+    """Read a DOCX into ordered blocks, plus every source string it contained.
+
+    Returns `(blocks, source_texts)`. The second list is what
+    `_assert_no_text_lost` checks against, and it is collected here rather than
+    derived from `blocks` because a table contributes one block but many
+    strings -- one per cell paragraph.
+    """
     document = docx.Document(str(path))
+    part = document.part
+    footnotes = read_footnotes(document)
+    # Numbering runs across the whole document, so the counter is threaded
+    # through every paragraph and cell rather than restarting per block.
+    footnote_refs: list = []
     blocks: list[Block] = []
+    sources: list[str] = []
 
     for item in _iter_body(document):
         if isinstance(item, Table):
-            # Table text still has to survive; the pipeline has no table-aware
-            # layout yet, so cells degrade to paragraphs rather than vanish.
-            for row in item.rows:
-                for cell in row.cells:
-                    for para in cell.paragraphs:
-                        text = para.text.strip()
-                        if text:
-                            blocks.append(Block(text, "table cell", False))
+            node, texts = table_block(
+                item._element, part, footnotes=footnotes,
+                footnote_refs=footnote_refs, sink=store_media,
+            )
+            sources.extend(texts)
+            if node is not None:
+                blocks.append(Block(" ".join(texts), "Table", False, (node,)))
             continue
 
-        text = item.text.strip()
-        if not text:
+        nodes, texts = paragraph_blocks(
+            item._p, part, footnotes=footnotes,
+            footnote_refs=footnote_refs, sink=store_media,
+        )
+        if not nodes:
             continue
+        sources.extend(texts)
 
+        text = texts[0] if texts else ""
         style = item.style.name if item.style is not None else "Normal"
         # `Heading N` is trusted only when it is also short -- see the
         # 419-character `Heading 1` paragraph noted in the module docstring.
         short = len(text) <= MAX_HEADING_CHARS
-        is_heading = short and (_is_upper(text) or style.startswith("Heading"))
-        blocks.append(Block(text, style, is_heading))
+        is_heading = bool(text) and short and (_is_upper(text) or style.startswith("Heading"))
+        blocks.append(Block(text, style, is_heading, tuple(nodes)))
 
-    return blocks
+    return blocks, sources
 
 
 def _paragraph(text: str) -> dict:
     return {"type": "paragraph", "content": [{"type": "text", "text": text}]}
 
 
-def _group_headings(blocks: list[Block]) -> list[tuple[str, list[str]]]:
+def _node_text(node) -> str:
+    """All prose under an AST node, for length-based structural heuristics."""
+    if isinstance(node, list):
+        return "".join(_node_text(n) for n in node)
+    if not isinstance(node, dict):
+        return ""
+    if node.get("type") == "text":
+        return node.get("text", "")
+    return _node_text(node.get("content") or [])
+
+
+def _group_headings(blocks: list[Block]) -> list[tuple[str, list[dict]]]:
     """Split blocks into (title, body_paragraphs) sections.
 
     Consecutive heading candidates collapse into a single title: a display
@@ -150,9 +193,9 @@ def _group_headings(blocks: list[Block]) -> list[tuple[str, list[str]]]:
 
     The leading run before the first heading is returned with an empty title.
     """
-    sections: list[tuple[str, list[str]]] = []
+    sections: list[tuple[str, list[dict]]] = []
     title_parts: list[str] = []
-    body: list[str] = []
+    body: list[dict] = []
     current_title = ""
     seen_heading = False
 
@@ -182,6 +225,11 @@ def _group_headings(blocks: list[Block]) -> list[tuple[str, list[str]]]:
                 # Starting a new heading: close out the previous section.
                 close()
             title_parts.append(block.text)
+            # A heading contributes its text as the section title, so its
+            # paragraph node is redundant -- but a footnote or figure hanging
+            # off that same `w:p` is not, and dropping it is exactly the silent
+            # loss this extractor exists to end. Those open the new section.
+            body.extend(n for n in block.nodes if n.get("type") != "paragraph")
             seen_heading = True
             continue
 
@@ -190,7 +238,7 @@ def _group_headings(blocks: list[Block]) -> list[tuple[str, list[str]]]:
             title_parts.clear()
         elif not seen_heading:
             current_title = ""
-        body.append(block.text)
+        body.extend(block.nodes)
 
     if title_parts:
         current_title = " ".join(title_parts)
@@ -208,7 +256,7 @@ def _is_toc_marker(title: str) -> bool:
     return any(p.search(title) for p in TOC_PATTERNS)
 
 
-def _find_body_start(sections: list[tuple[str, list[str]]]) -> int:
+def _find_body_start(sections: list[tuple[str, list[dict]]]) -> int:
     """Index of the first section that belongs to the book's body.
 
     Everything before it -- title page, dedication, epigraphs, table of
@@ -223,8 +271,8 @@ def _find_body_start(sections: list[tuple[str, list[str]]]) -> int:
             break
 
     for i in range(start, len(sections)):
-        _, paragraphs = sections[i]
-        if any(len(p) >= SUBSTANTIVE_PARAGRAPH_CHARS for p in paragraphs):
+        _, nodes = sections[i]
+        if any(len(_node_text(n)) >= SUBSTANTIVE_PARAGRAPH_CHARS for n in nodes):
             return i
 
     # No section anywhere clears the prose bar. Treat the first heading as the
@@ -232,7 +280,7 @@ def _find_body_start(sections: list[tuple[str, list[str]]]) -> int:
     return start
 
 
-def _assert_no_text_lost(blocks: list[Block], ast: dict) -> None:
+def _assert_no_text_lost(sources: list[str], ast: dict) -> None:
     """Post-condition: no DOCX text was dropped on the way into the AST.
 
     Compared on whitespace-stripped text, since the AST stores block text
@@ -242,11 +290,17 @@ def _assert_no_text_lost(blocks: list[Block], ast: dict) -> None:
 
     def walk(node) -> None:
         if isinstance(node, dict):
-            if node.get("type") == "text":
-                emitted.append(node.get("text", ""))
             title = (node.get("attrs") or {}).get("title")
             if title:
                 emitted.append(title)
+            if isinstance(node.get("content"), list):
+                # One chunk per block, with its text nodes concatenated and NOT
+                # separated: marks split a single sentence into several text
+                # nodes ("Plain and ", "italic", " and "), and a separator
+                # between them destroys the contiguity this check needs. Nesting
+                # means a block's text is also counted inside its parent's
+                # chunk; harmless, since this is a substring test.
+                emitted.append(_node_text(node["content"]))
             for key in ("frontMatter", "body", "backMatter", "content"):
                 walk(node.get(key))
         elif isinstance(node, list):
@@ -254,13 +308,13 @@ def _assert_no_text_lost(blocks: list[Block], ast: dict) -> None:
                 walk(item)
 
     walk(ast)
-    haystack = " ".join(emitted)
+    haystack = "\n".join(emitted)
 
-    missing = [b.text for b in blocks if b.text not in haystack]
+    missing = [s for s in sources if s not in haystack]
     if missing:
         raise IngestError(
-            f"{len(missing)} of {len(blocks)} DOCX blocks did not reach the AST. "
-            f"First dropped block: {missing[0][:120]!r}"
+            f"{len(missing)} of {len(sources)} DOCX text blocks did not reach the "
+            f"AST. First dropped block: {missing[0][:120]!r}"
         )
 
 
@@ -270,8 +324,14 @@ def docx_to_ast(
     title: str | None = None,
     language: str = "el-GR",
     manuscript_id: str | None = None,
+    store_media: MediaSink | None = None,
 ) -> dict:
     """Convert a DOCX manuscript into an `ast/1` document.
+
+    `store_media` receives `(bytes, media_type, original_name)` for each
+    embedded image and returns its sha256; the AST then references the image by
+    that hash. Omit it only for manuscripts known to have no images -- a
+    picture met with no sink raises rather than being silently dropped.
 
     Raises `IngestError` if any DOCX text would be lost.
     """
@@ -279,7 +339,10 @@ def docx_to_ast(
     if not source.exists():
         raise IngestError(f"DOCX not found: {source}")
 
-    blocks = read_blocks(source)
+    try:
+        blocks, sources = read_blocks(source, store_media=store_media)
+    except MediaNotStorable as e:
+        raise IngestError(str(e)) from e
     if not blocks:
         raise IngestError(f"DOCX contains no text: {source}")
 
@@ -292,8 +355,8 @@ def docx_to_ast(
     chapter_number = 0
     seen_toc = False
 
-    for index, (section_title, paragraphs) in enumerate(sections):
-        content = [_paragraph(p) for p in paragraphs]
+    for index, (section_title, section_nodes) in enumerate(sections):
+        content = list(section_nodes)
 
         if index < body_start:
             # Front matter carries no `attrs.title` -- see module docstring --
@@ -363,7 +426,7 @@ def docx_to_ast(
         },
     }
 
-    _assert_no_text_lost(blocks, ast)
+    _assert_no_text_lost(sources, ast)
 
     all_text = " ".join(b.text for b in blocks)
     ast["integrityHash"] = "sha256:" + hashlib.sha256(
