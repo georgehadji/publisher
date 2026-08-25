@@ -4,7 +4,10 @@
 Stage 2 (U5–U7) **implemented** in the same working tree as of 2026-08-10
 (API hardening, boundary hygiene, observability — not yet audit-reviewed,
 verification gates require Postgres at `:55432` / the compose stack's engines).
-U8–U9 remain open. Docker-independent verification was done against a local
+Stage 3 (U8–U9) **partially implemented** as of 2026-08-14: container resource
+limits, per-tenant admission control, 429-aware retry, and both multi-worker
+tests are written — see §3 U8/U9 and §5 for exactly what is proven versus
+still asserted. Docker-independent verification was done against a local
 Postgres (see the workstream sections for the exact gates and their host
 requirements — the SIGKILL/PDF-level gates need the compose stack's engines).
 **Baseline:** architecture audit 2026-08-10 (score 6/10, maturity Early Production)
@@ -404,20 +407,32 @@ No semaphore, thread pool, or queue bound exists anywhere in `services/*` or `pl
 *harmless* — the worker runs one build at a time and no LLM call is live. It becomes the
 first production incident the moment either changes.
 
-- **Worker:** keep one build per process. This is correct for CPU-bound PDF rendering
-  (`paginate` measured at ~135 s, `finish` at ~183 s on the real book) — threads would
-  contend on the GIL and Ghostscript, and `FOR UPDATE SKIP LOCKED` already makes horizontal
-  scale a `docker compose up --scale worker=N` away. **Prove it works** (U9), don't rewrite it.
-- **Per-container resource limits:** `docker-compose.yml` sets none. Weasyprint on a
-  900-page manuscript is unbounded RAM; one build can OOM the host and take the API with
-  it. Add `mem_limit`/`cpus` per service — the Bulkhead pattern, at the container level
-  where this stack can actually enforce it.
-- **Before any live model call:** a bounded work pool around dispatch, sized from
-  `policy.yaml`'s declared rate limits — the policy already carries the numbers, nothing
-  reads them for concurrency. Plus 429-aware retry with `Retry-After` (today
-  `image_gen_port.py:135` retries 5xx only, on blind exponential backoff).
-- **Admission control:** cap queued builds per tenant. Without it one tenant queueing
-  10,000 builds starves every other tenant, and the `builds_queued_idx` scan degrades.
+**Landed (2026-08-14):**
+- **Worker:** kept one build per process, as recommended — not rewritten.
+- **Per-container resource limits** `[VERIFIED]`: `docker-compose.yml` now sets
+  `mem_limit`/`cpus` on `postgres` (1g/1cpu), `worker` (3g/2cpu — the memory-risk service),
+  and `api` (512m/1cpu). Dev-sized defaults with a comment pointing at where to raise them
+  per host; not load-tested against these exact ceilings (see U9).
+- **429-aware retry with `Retry-After`** `[VERIFIED]`: `image_gen_port.py`'s `_call` had a
+  worse bug than blind backoff — `if exc.code < 500: raise` meant a 429 was **never
+  retried at all** (429 < 500). Now honors `Retry-After` (seconds form, capped at 60s) and
+  falls back to the existing exponential backoff only if the header is absent/unparseable.
+  Covered by `services/cover/tests/test_image_gen_port.py::TestOpenRouterRateLimitRetry`
+  (3 tests, passing).
+- **Admission control** `[VERIFIED]`: `POST /v1/builds` now counts a tenant's
+  `queued`+`running` rows and refuses with 429 at
+  `PUBLISHER_MAX_QUEUED_BUILDS_PER_TENANT` (default 50). Covered by
+  `tests/integration/test_bounded_concurrency.py` (written; not run this pass — no local
+  Postgres/Docker available in the environment that authored it, see §5).
+
+**Still deferred, deliberately:**
+- **Bounded work pool sized from `policy.yaml`'s rate limits.** Not built. The only real
+  inference call site (`OpenRouterImageGenAdapter.generate`) is called synchronously, one
+  at a time, from inside a single stage — there is no concurrent dispatch to bound yet, and
+  it stays gated behind `PUBLISHER_ALLOW_SIMULATED_INFERENCE` (U4). Building a semaphore
+  around a call pattern that cannot yet be concurrent is exactly the speculative generality
+  §2's anti-doctrine rules out. Revisit when a second concurrent call site exists — not
+  before.
 
 ---
 
@@ -428,14 +443,28 @@ first production incident the moment either changes.
 show, **never been run with more than one worker** `[HYPOTHESIS — no multi-worker test
 exists in `tests/`]`. The audit could only credit it as a correct-looking mechanism.
 
-- Multi-worker integration test: `--scale worker=3`, 50 queued builds, assert every build
-  completes exactly once, no duplicate `build_stages` rows, no starvation.
-- Chaos case: kill a worker mid-build, assert the lease reclaim from U1 recovers it.
-- Load-test the API for the N3 fix: 50 concurrent SSE clients, assert pool exhaustion does
-  not occur and p95 stays flat.
-- Record the numbers in `docs/PRODUCTION_READINESS.md` against its GA checklist — that
-  document is currently 100% unchecked and these are among the cheapest boxes to tick
-  honestly.
+**Landed (2026-08-14), written but NOT executed this pass — no local Postgres/Docker
+available in the authoring environment; run before trusting the checkmark:**
+- `tests/integration/test_bounded_concurrency.py::test_three_workers_drain_queue_without_starvation`
+  — 3 real `worker.py` subprocesses (not `docker compose --scale`, but the same claim
+  mechanism against the same DB — the thing under test), 12 queued builds, asserts every
+  build reaches a terminal state and no `build_stages` row was written more than once per
+  `(build_id, stage_name)`.
+- `tests/integration/test_bounded_concurrency.py::test_multi_worker_reclaim_has_no_double_processing`
+  — the chaos case: a build stuck at `running` with a pre-expired lease (simulated dead
+  worker), 3 live workers racing for it, asserts exactly one reclaim (`attempt` goes from
+  1 to 2, not higher) and a live `worker_id` on the winner.
+
+**Still open:**
+- Scaled to 50 builds / `docker compose --scale worker=3` specifically, rather than 12
+  builds / subprocesses — the mechanism is identical (same claim query, same DB), but the
+  plan's literal numbers are untested.
+- SSE load test: 50 concurrent clients against the N3 LISTEN/NOTIFY fix, assert pool
+  exhaustion does not occur and p95 stays flat. Not built.
+- `docs/PRODUCTION_READINESS.md` §3's chaos line bundles four scenarios ("kill a worker
+  mid-build, kill the DB primary, fill the disk, saturate the pool"); only the first is
+  covered by the tests above. Left unchecked rather than partially ticked — checking a
+  bundled box for 1-of-4 would misrepresent it.
 
 ---
 
@@ -478,7 +507,10 @@ non-negotiable part: a remediation without a failing-first test is an assertion.
 | U5 | `casPath('../../etc/passwd')` → rejected | ✅ path-joins happily |
 | U6 | `check_integrity()` clean with zero warnings | ✅ 4 orphans + 1 non-schema input |
 | U7 | `/v1/health` with Postgres down → non-200 | ✅ returns `ok` |
-| U9 | 3 workers × 50 builds → each completes exactly once | ⚠️ untested, expected to pass |
+| U8 | `POST /v1/builds` at tenant capacity → 429 | ✅ inserted unconditionally |
+| U8 | OpenRouter 429 response → retried, not raised | ✅ raised immediately (`code < 500`) |
+| U9 | 3 workers × 12 builds → each reaches a terminal state, no duplicate `build_stages` rows | written, not executed this pass (no local Postgres) |
+| U9 | Expired-lease build + 3 live workers → reclaimed exactly once | written, not executed this pass (no local Postgres) |
 
 Existing invariants that must not regress: 384 tests collected / 5 skipped / 0 failures via
 `./scripts/test.ps1` (**never bare `pytest`**), `platform/stages/integrity.py` clean,

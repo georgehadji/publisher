@@ -30,6 +30,21 @@ TIMEOUT_S = 120
 RETRIES = 3
 
 
+def _retry_after_seconds(headers: Any) -> Optional[float]:
+    """Parse a numeric Retry-After (seconds form only -- the HTTP-date form
+    exists but no provider this adapter targets sends it). None if absent or
+    unparseable, so the caller falls back to exponential backoff."""
+    if headers is None:
+        return None
+    value = headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return max(0.0, min(float(value), 60.0))
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class ImageGenRequest:
     model_id: str
@@ -126,7 +141,16 @@ class OpenRouterImageGenAdapter:
             except urllib.error.HTTPError as exc:
                 # All-or-nothing billing (COVER_DESIGN.md §4): a non-2xx means nothing
                 # was charged. Retry infra-class errors only; a 4xx is BAD_INPUT-shaped
-                # and retrying it wastes time without changing the outcome.
+                # and retrying it wastes time without changing the outcome -- EXCEPT
+                # 429, which is retryable by definition (ARCHITECTURE_UPLIFT_PLAN.md
+                # U8): pre-existing code fell into `code < 500: raise` and never
+                # retried a rate limit at all. Honor Retry-After when the provider
+                # sends one; blind exponential backoff into an active limit just
+                # provokes a longer one.
+                if exc.code == 429:
+                    last = exc
+                    time.sleep(_retry_after_seconds(exc.headers) or 2**attempt)
+                    continue
                 if exc.code < 500:
                     raise
                 last = exc

@@ -1,4 +1,12 @@
 {
+  "legacy_20260810-185202_279381000-deepseek-v4-pro-d7004c6316cb-5fe3d5bac6e5-recovery-8ca03ff52b1e695e_849f1838eb87": "manual",
+  "legacy_20260810-185202_279381000-deepseek-v4-pro-d7004c6316cb-recovery-cfc48bf6b91eef5d_5fe3d5bac6e5": "manual",
+  "legacy_20260810-185202_279381000-deepseek-v4-pro-recovery-1cff7c38870a7fa7_d7004c6316cb": "manual",
+  "legacy_20260810-185202_279381000-deepseek-v4-pro_814d060e4d03": "manual",
+  "legacy_20260811-045329_823386700-deepseek-v4-flash-2c4fcdea81f2-82ef3ed83254-recovery-22b9e8ee15efafed_96eb0e56e691": "manual",
+  "legacy_20260811-045329_823386700-deepseek-v4-flash-2c4fcdea81f2-recovery-f59abc27f4dc60fa_82ef3ed83254": "manual",
+  "legacy_20260811-045329_823386700-deepseek-v4-flash-recovery-d05d11bb15fe7d77_2c4fcdea81f2": "manual",
+  "legacy_20260811-045329_823386700-deepseek-v4-flash_2cf26bad1266": "manual",
   "topic_20260729-125335_0b8ef3a3294f5111": "manual",
   "topic_20260730-080945_c996f0919c52e8e8": "manual"
 }
