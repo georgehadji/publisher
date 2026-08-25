@@ -5,21 +5,31 @@
   "description": "Canonical semantic book model — derived from DOCX, consumed by all renderers.",
   "type": "object",
   "properties": {
-    "schema": { "$ref": "#/$defs/schemaRef" },
-    "metadata": { "$ref": "#/$defs/metadata" },
+    "schema": {
+      "$ref": "#/$defs/schemaRef"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
     "frontMatter": {
       "type": "array",
-      "items": { "$ref": "#/$defs/frontMatterNode" },
+      "items": {
+        "$ref": "#/$defs/frontMatterNode"
+      },
       "description": "Half-title, title, copyright, dedication, epigraph, TOC, foreword, preface, acknowledgments, prologue"
     },
     "body": {
       "type": "array",
-      "items": { "$ref": "#/$defs/bodyNode" },
+      "items": {
+        "$ref": "#/$defs/bodyNode"
+      },
       "description": "Parts and chapters"
     },
     "backMatter": {
       "type": "array",
-      "items": { "$ref": "#/$defs/backMatterNode" },
+      "items": {
+        "$ref": "#/$defs/backMatterNode"
+      },
       "description": "Epilogue, afterword, appendix, notes, bibliography, index, about-the-author, also-by, colophon"
     },
     "integrityHash": {
@@ -32,45 +42,92 @@
       "description": "Provenance of this AST (manuscript version + inference version)"
     }
   },
-  "required": ["schema", "body", "integrityHash", "sourceRef"],
+  "required": [
+    "schema",
+    "body",
+    "integrityHash",
+    "sourceRef"
+  ],
   "additionalProperties": false,
   "$defs": {
     "schemaRef": {
       "type": "string",
-      "enum": ["ast/1"],
+      "enum": [
+        "ast/1"
+      ],
       "description": "Schema version — bump on any breaking change"
     },
     "sourceRef": {
       "type": "object",
       "properties": {
-        "manuscriptId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "manuscriptVersion": { "type": "integer", "minimum": 1 },
-        "inferenceVersion": { "type": "integer", "minimum": 1 },
-        "inferenceModelId": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "manuscriptId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "manuscriptVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "inferenceVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "inferenceModelId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["manuscriptId", "inferenceVersion"],
+      "required": [
+        "manuscriptId",
+        "inferenceVersion"
+      ],
       "additionalProperties": false
     },
     "metadata": {
       "type": "object",
       "properties": {
-        "title": { "type": "string", "maxLength": 1024 },
-        "subtitle": { "type": "string", "maxLength": 1024 },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 1024
+        },
         "contributors": {
           "type": "array",
-          "items": { "$ref": "#/$defs/contributor" },
+          "items": {
+            "$ref": "#/$defs/contributor"
+          },
           "maxItems": 200
         },
-        "language": { "type": "string", "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$" },
-        "isbn": { "type": "string", "pattern": "^(978|979)[0-9]{10}$" },
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$"
+        },
+        "isbn": {
+          "type": "string",
+          "pattern": "^(978|979)[0-9]{10}$"
+        },
         "series": {
           "type": "object",
           "properties": {
-            "name": { "type": "string", "maxLength": 256 },
-            "volume": { "type": "integer", "minimum": 1 }
+            "name": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "volume": {
+              "type": "integer",
+              "minimum": 1
+            }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "additionalProperties": false
         }
       },
@@ -81,178 +138,398 @@
       "properties": {
         "role": {
           "type": "string",
-          "enum": ["author", "editor", "translator", "illustrator", "forewordBy", "introductionBy"]
+          "enum": [
+            "author",
+            "editor",
+            "translator",
+            "illustrator",
+            "forewordBy",
+            "introductionBy"
+          ]
         },
-        "givenName": { "type": "string", "maxLength": 256 },
-        "familyName": { "type": "string", "maxLength": 256 },
-        "displayName": { "type": "string", "maxLength": 256 }
+        "givenName": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "familyName": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 256
+        }
       },
-      "required": ["role", "displayName"],
+      "required": [
+        "role",
+        "displayName"
+      ],
       "additionalProperties": false
     },
     "sourceRefLink": {
       "type": "object",
       "properties": {
-        "docxId": { "type": "string", "maxLength": 128 },
-        "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "docxId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "contentHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
       },
-      "required": ["docxId"],
+      "required": [
+        "docxId"
+      ],
       "additionalProperties": false
     },
     "bodyNode": {
       "oneOf": [
-        { "$ref": "#/$defs/part" },
-        { "$ref": "#/$defs/chapter" }
+        {
+          "$ref": "#/$defs/part"
+        },
+        {
+          "$ref": "#/$defs/chapter"
+        }
       ]
     },
     "part": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["part"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "part"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "number": { "type": "integer", "minimum": 1 },
-            "title": { "type": "string", "maxLength": 512 },
-            "id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$", "maxLength": 64 }
+            "number": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "maxLength": 64
+            }
           },
-          "required": ["title", "id"],
+          "required": [
+            "title",
+            "id"
+          ],
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/chapter" },
+          "items": {
+            "$ref": "#/$defs/chapter"
+          },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "attrs", "content"],
+      "required": [
+        "type",
+        "attrs",
+        "content"
+      ],
       "additionalProperties": false
     },
     "chapter": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["chapter"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "chapter"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "number": { "type": "integer", "minimum": 1 },
-            "title": { "type": "string", "maxLength": 512 },
-            "startsOn": { "type": "string", "enum": ["recto", "verso", "any"] },
-            "id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$", "maxLength": 64 }
+            "number": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "startsOn": {
+              "type": "string",
+              "enum": [
+                "recto",
+                "verso",
+                "any"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "maxLength": 64
+            }
           },
-          "required": ["number", "id"],
+          "required": [
+            "number",
+            "id"
+          ],
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/blockNode" },
+          "items": {
+            "$ref": "#/$defs/blockNode"
+          },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "attrs", "content"],
+      "required": [
+        "type",
+        "attrs",
+        "content"
+      ],
       "additionalProperties": false
     },
     "blockNode": {
       "oneOf": [
-        { "$ref": "#/$defs/paragraph" },
-        { "$ref": "#/$defs/heading" },
-        { "$ref": "#/$defs/blockquote" },
-        { "$ref": "#/$defs/verse" },
-        { "$ref": "#/$defs/list" },
-        { "$ref": "#/$defs/table" },
-        { "$ref": "#/$defs/figure" },
-        { "$ref": "#/$defs/footnote" },
-        { "$ref": "#/$defs/epigraph" },
-        { "$ref": "#/$defs/sceneBreak" },
-        { "$ref": "#/$defs/dialogue" },
-        { "$ref": "#/$defs/sidebar" },
-        { "$ref": "#/$defs/code" },
-        { "$ref": "#/$defs/equation" },
-        { "$ref": "#/$defs/pageBreak"}
+        {
+          "$ref": "#/$defs/paragraph"
+        },
+        {
+          "$ref": "#/$defs/heading"
+        },
+        {
+          "$ref": "#/$defs/blockquote"
+        },
+        {
+          "$ref": "#/$defs/verse"
+        },
+        {
+          "$ref": "#/$defs/list"
+        },
+        {
+          "$ref": "#/$defs/table"
+        },
+        {
+          "$ref": "#/$defs/figure"
+        },
+        {
+          "$ref": "#/$defs/footnote"
+        },
+        {
+          "$ref": "#/$defs/epigraph"
+        },
+        {
+          "$ref": "#/$defs/sceneBreak"
+        },
+        {
+          "$ref": "#/$defs/dialogue"
+        },
+        {
+          "$ref": "#/$defs/sidebar"
+        },
+        {
+          "$ref": "#/$defs/code"
+        },
+        {
+          "$ref": "#/$defs/equation"
+        },
+        {
+          "$ref": "#/$defs/pageBreak"
+        }
       ]
     },
     "paragraph": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["paragraph"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "paragraph"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
             "role": {
               "type": "string",
-              "enum": ["normal", "chapter-opening", "first-paragraph", "last-paragraph", "continued", "attribution", "source"]
+              "enum": [
+                "normal",
+                "chapter-opening",
+                "first-paragraph",
+                "last-paragraph",
+                "continued",
+                "attribution",
+                "source"
+              ]
             },
-            "indent": { "type": "number", "minimum": 0 },
-            "alignment": { "type": "string", "enum": ["left", "center", "right", "justify"] },
-            "language": { "type": "string", "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$" }
+            "indent": {
+              "type": "number",
+              "minimum": 0
+            },
+            "alignment": {
+              "type": "string",
+              "enum": [
+                "left",
+                "center",
+                "right",
+                "justify"
+              ]
+            },
+            "language": {
+              "type": "string",
+              "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$"
+            }
           },
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/inlineNode" },
+          "items": {
+            "$ref": "#/$defs/inlineNode"
+          },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "heading": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["heading"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "heading"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "level": { "type": "integer", "minimum": 1, "maximum": 6 },
-            "role": { "type": "string", "enum": ["section", "subsection", "subsubsection", "running-head"] }
+            "level": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 6
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "section",
+                "subsection",
+                "subsubsection",
+                "running-head"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+              "description": "Anchor for cross-references. A contents entry resolves its page number with target-counter(), so a heading without an id prints without a page number."
+            }
           },
-          "required": ["level"],
+          "required": [
+            "level"
+          ],
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/inlineNode" },
+          "items": {
+            "$ref": "#/$defs/inlineNode"
+          },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "attrs", "content"],
+      "required": [
+        "type",
+        "attrs",
+        "content"
+      ],
       "additionalProperties": false
     },
     "blockquote": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["blockquote"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "blockquote"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "role": { "type": "string", "enum": ["pull-quote", "extract", "letter", "prayer"] },
-            "source": { "type": "string", "maxLength": 256 }
+            "role": {
+              "type": "string",
+              "enum": [
+                "pull-quote",
+                "extract",
+                "letter",
+                "prayer"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "maxLength": 256
+            }
           },
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/paragraph" },
+          "items": {
+            "$ref": "#/$defs/paragraph"
+          },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "verse": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["verse"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "verse"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "role": { "type": "string", "enum": ["poem", "song-lyrics"] }
+            "role": {
+              "type": "string",
+              "enum": [
+                "poem",
+                "song-lyrics"
+              ]
+            }
           },
           "additionalProperties": false
         },
@@ -261,35 +538,68 @@
           "items": {
             "type": "object",
             "properties": {
-              "type": { "type": "string", "enum": ["line"] },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "line"
+                ]
+              },
               "content": {
                 "type": "array",
-                "items": { "$ref": "#/$defs/inlineNode" },
+                "items": {
+                  "$ref": "#/$defs/inlineNode"
+                },
                 "minItems": 1
               }
             },
-            "required": ["type", "content"],
+            "required": [
+              "type",
+              "content"
+            ],
             "additionalProperties": false
           },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "list": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["list"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "list"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "listType": { "type": "string", "enum": ["ordered", "unordered"] },
-            "start": { "type": "integer", "minimum": 1 },
-            "tight": { "type": "boolean" }
+            "listType": {
+              "type": "string",
+              "enum": [
+                "ordered",
+                "unordered"
+              ]
+            },
+            "start": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "tight": {
+              "type": "boolean"
+            }
           },
-          "required": ["listType"],
+          "required": [
+            "listType"
+          ],
           "additionalProperties": false
         },
         "content": {
@@ -297,39 +607,74 @@
           "items": {
             "type": "object",
             "properties": {
-              "type": { "type": "string", "enum": ["list-item"] },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "list-item"
+                ]
+              },
               "content": {
                 "type": "array",
-                "items": { "$ref": "#/$defs/blockNode" },
+                "items": {
+                  "$ref": "#/$defs/blockNode"
+                },
                 "minItems": 1
               },
-              "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+              "sourceRef": {
+                "$ref": "#/$defs/sourceRefLink"
+              }
             },
-            "required": ["type", "content"],
+            "required": [
+              "type",
+              "content"
+            ],
             "additionalProperties": false
           },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "attrs", "content"],
+      "required": [
+        "type",
+        "attrs",
+        "content"
+      ],
       "additionalProperties": false
     },
     "table": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["table"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "table"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "caption": { "type": "string", "maxLength": 512 },
+            "caption": {
+              "type": "string",
+              "maxLength": 512
+            },
             "colgroup": {
               "type": "array",
               "items": {
                 "type": "object",
                 "properties": {
-                  "width": { "type": "string" },
-                  "align": { "type": "string", "enum": ["left", "center", "right"] }
+                  "width": {
+                    "type": "string"
+                  },
+                  "align": {
+                    "type": "string",
+                    "enum": [
+                      "left",
+                      "center",
+                      "right"
+                    ]
+                  }
                 },
                 "additionalProperties": false
               },
@@ -340,208 +685,403 @@
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/tableRow" },
+          "items": {
+            "$ref": "#/$defs/tableRow"
+          },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "tableRow": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["table-row"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "table-row"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "header": { "type": "boolean" }
+            "header": {
+              "type": "boolean"
+            }
           },
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/tableCell" },
+          "items": {
+            "$ref": "#/$defs/tableCell"
+          },
           "minItems": 1
         }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "tableCell": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["table-cell"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "table-cell"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "colspan": { "type": "integer", "minimum": 1, "maximum": 20 },
-            "rowspan": { "type": "integer", "minimum": 1, "maximum": 20 },
-            "align": { "type": "string", "enum": ["left", "center", "right"] }
+            "colspan": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "rowspan": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "align": {
+              "type": "string",
+              "enum": [
+                "left",
+                "center",
+                "right"
+              ]
+            }
           },
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/blockNode" },
+          "items": {
+            "$ref": "#/$defs/blockNode"
+          },
           "minItems": 1
         }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "figure": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["figure"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "figure"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "mediaRef": { "$ref": "#/$defs/mediaRef" },
-            "caption": { "type": "string", "maxLength": 1024 },
-            "altText": { "type": "string", "maxLength": 2048 },
-            "width": { "type": "string" },
-            "placement": { "type": "string", "enum": ["inline", "float-left", "float-right", "full-page"] }
+            "mediaRef": {
+              "$ref": "#/$defs/mediaRef"
+            },
+            "caption": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "altText": {
+              "type": "string",
+              "maxLength": 2048
+            },
+            "width": {
+              "type": "string"
+            },
+            "placement": {
+              "type": "string",
+              "enum": [
+                "inline",
+                "float-left",
+                "float-right",
+                "full-page"
+              ]
+            }
           },
-          "required": ["mediaRef"],
+          "required": [
+            "mediaRef"
+          ],
           "additionalProperties": false
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "attrs"],
+      "required": [
+        "type",
+        "attrs"
+      ],
       "additionalProperties": false
     },
     "mediaRef": {
       "type": "object",
       "properties": {
-        "hash": { "$ref": "#/$defs/sha256" },
-        "mediaType": { "type": "string", "enum": ["image/png", "image/jpeg", "image/svg+xml", "image/tiff"] },
-        "originalName": { "type": "string", "maxLength": 256 }
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "mediaType": {
+          "type": "string",
+          "enum": [
+            "image/png",
+            "image/jpeg",
+            "image/svg+xml",
+            "image/tiff"
+          ]
+        },
+        "originalName": {
+          "type": "string",
+          "maxLength": 256
+        }
       },
-      "required": ["hash", "mediaType"],
+      "required": [
+        "hash",
+        "mediaType"
+      ],
       "additionalProperties": false
     },
     "footnote": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["footnote"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "footnote"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "number": { "type": "integer", "minimum": 1 },
-            "symbol": { "type": "string", "maxLength": 4 }
+            "number": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "symbol": {
+              "type": "string",
+              "maxLength": 4
+            }
           },
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/inlineNode" },
+          "items": {
+            "$ref": "#/$defs/inlineNode"
+          },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "epigraph": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["epigraph"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "epigraph"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "source": { "type": "string", "maxLength": 256 }
+            "source": {
+              "type": "string",
+              "maxLength": 256
+            }
           },
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/paragraph" },
+          "items": {
+            "$ref": "#/$defs/paragraph"
+          },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "sceneBreak": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["sceneBreak"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "sceneBreak"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "ornament": { "type": "string", "enum": ["dinkus", "asterism", "fleuron", "blank-line", "section-symbol"] }
+            "ornament": {
+              "type": "string",
+              "enum": [
+                "dinkus",
+                "asterism",
+                "fleuron",
+                "blank-line",
+                "section-symbol"
+              ]
+            }
           },
           "additionalProperties": false
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false
     },
     "dialogue": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["dialogue"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "dialogue"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "speaker": { "type": "string", "maxLength": 128 }
+            "speaker": {
+              "type": "string",
+              "maxLength": 128
+            }
           },
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/paragraph" },
+          "items": {
+            "$ref": "#/$defs/paragraph"
+          },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "sidebar": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["sidebar"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "sidebar"
+          ]
+        },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/blockNode" },
+          "items": {
+            "$ref": "#/$defs/blockNode"
+          },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "code": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["code"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "code"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "language": { "type": "string", "maxLength": 32 },
-            "numbered": { "type": "boolean" }
+            "language": {
+              "type": "string",
+              "maxLength": 32
+            },
+            "numbered": {
+              "type": "boolean"
+            }
           },
           "additionalProperties": false
         },
-        "content": { "type": "string" },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "content": {
+          "type": "string"
+        },
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "equation": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["equation"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "equation"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "numbered": { "type": "boolean" },
-            "label": { "type": "string", "maxLength": 64 }
+            "numbered": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string",
+              "maxLength": 64
+            }
           },
           "additionalProperties": false
         },
@@ -549,257 +1089,527 @@
           "type": "string",
           "description": "LaTeX or MathML expression"
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "pageBreak": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["pageBreak"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "pageBreak"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "breakType": { "type": "string", "enum": ["page", "column", "section", "recto", "verso"] }
+            "breakType": {
+              "type": "string",
+              "enum": [
+                "page",
+                "column",
+                "section",
+                "recto",
+                "verso"
+              ]
+            }
           },
           "additionalProperties": false
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": {
+          "$ref": "#/$defs/sourceRefLink"
+        }
       },
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false
     },
     "inlineNode": {
       "oneOf": [
-        { "$ref": "#/$defs/text" },
-        { "$ref": "#/$defs/emphasis" },
-        { "$ref": "#/$defs/strong" },
-        { "$ref": "#/$defs/link" },
-        { "$ref": "#/$defs/superscript" },
-        { "$ref": "#/$defs/subscript" },
-        { "$ref": "#/$defs/smallCaps" },
-        { "$ref": "#/$defs/codeInline" },
-        { "$ref": "#/$defs/hardBreak" },
-        { "$ref": "#/$defs/indexEntry" },
-        { "$ref": "#/$defs/crossReference" }
-      ]
+        {
+          "$ref": "#/$defs/text"
+        },
+        {
+          "$ref": "#/$defs/emphasis"
+        },
+        {
+          "$ref": "#/$defs/strong"
+        },
+        {
+          "$ref": "#/$defs/link"
+        },
+        {
+          "$ref": "#/$defs/superscript"
+        },
+        {
+          "$ref": "#/$defs/subscript"
+        },
+        {
+          "$ref": "#/$defs/smallCaps"
+        },
+        {
+          "$ref": "#/$defs/codeInline"
+        },
+        {
+          "$ref": "#/$defs/hardBreak"
+        },
+        {
+          "$ref": "#/$defs/indexEntry"
+        },
+        {
+          "$ref": "#/$defs/crossReference"
+        },
+        {
+          "$ref": "#/$defs/footnote"
+        }
+      ],
+      "description": "Inline-level nodes. `footnote` appears here as well as in blockNode: a footnote REFERENCE is inline by nature -- it occurs at a point inside a sentence -- and modelling it as block-only forced the call to the end of the referencing paragraph, which is not where the author put it."
     },
     "text": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["text"] },
-        "text": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": [
+            "text"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
         "marks": {
           "type": "array",
-          "items": { "$ref": "#/$defs/mark" },
+          "items": {
+            "$ref": "#/$defs/mark"
+          },
           "maxItems": 10
         }
       },
-      "required": ["type", "text"],
+      "required": [
+        "type",
+        "text"
+      ],
       "additionalProperties": false
     },
     "mark": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["emphasis", "strong", "smallCaps", "underline", "strikethrough", "superscript", "subscript", "code", "link"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "emphasis",
+            "strong",
+            "smallCaps",
+            "underline",
+            "strikethrough",
+            "superscript",
+            "subscript",
+            "code",
+            "link"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "href": { "type": "string", "format": "uri" },
-            "title": { "type": "string", "maxLength": 256 }
+            "href": {
+              "type": "string",
+              "format": "uri"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 256
+            }
           },
           "additionalProperties": false
         }
       },
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false
     },
     "emphasis": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["emphasis"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "emphasis"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "role": { "type": "string", "enum": ["emphasis", "title-of-work", "foreign", "thought"] }
+            "role": {
+              "type": "string",
+              "enum": [
+                "emphasis",
+                "title-of-work",
+                "foreign",
+                "thought"
+              ]
+            }
           },
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/inlineNode" },
+          "items": {
+            "$ref": "#/$defs/inlineNode"
+          },
           "minItems": 1
         }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "strong": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["strong"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "strong"
+          ]
+        },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/inlineNode" },
+          "items": {
+            "$ref": "#/$defs/inlineNode"
+          },
           "minItems": 1
         }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "link": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["link"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "link"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "href": { "type": "string", "format": "uri-reference", "maxLength": 2048 },
-            "title": { "type": "string", "maxLength": 256 },
-            "target": { "type": "string", "enum": ["_self", "_blank", "_top"] }
+            "href": {
+              "type": "string",
+              "format": "uri-reference",
+              "maxLength": 2048
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "target": {
+              "type": "string",
+              "enum": [
+                "_self",
+                "_blank",
+                "_top"
+              ]
+            }
           },
-          "required": ["href"],
+          "required": [
+            "href"
+          ],
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/inlineNode" },
+          "items": {
+            "$ref": "#/$defs/inlineNode"
+          },
           "minItems": 1
         }
       },
-      "required": ["type", "attrs", "content"],
+      "required": [
+        "type",
+        "attrs",
+        "content"
+      ],
       "additionalProperties": false
     },
     "superscript": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["superscript"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "superscript"
+          ]
+        },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/inlineNode" },
+          "items": {
+            "$ref": "#/$defs/inlineNode"
+          },
           "minItems": 1
         }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "subscript": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["subscript"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "subscript"
+          ]
+        },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/inlineNode" },
+          "items": {
+            "$ref": "#/$defs/inlineNode"
+          },
           "minItems": 1
         }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "smallCaps": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["smallCaps"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "smallCaps"
+          ]
+        },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/inlineNode" },
+          "items": {
+            "$ref": "#/$defs/inlineNode"
+          },
           "minItems": 1
         }
       },
-      "required": ["type", "content"],
+      "required": [
+        "type",
+        "content"
+      ],
       "additionalProperties": false
     },
     "codeInline": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["codeInline"] },
-        "text": { "type": "string" }
+        "type": {
+          "type": "string",
+          "enum": [
+            "codeInline"
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
       },
-      "required": ["type", "text"],
+      "required": [
+        "type",
+        "text"
+      ],
       "additionalProperties": false
     },
     "hardBreak": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["hardBreak"] }
+        "type": {
+          "type": "string",
+          "enum": [
+            "hardBreak"
+          ]
+        }
       },
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false
     },
     "indexEntry": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["indexEntry"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "indexEntry"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "term": { "type": "string", "maxLength": 128 },
-            "subterm": { "type": "string", "maxLength": 128 },
-            "see": { "type": "string", "maxLength": 128 },
-            "seeAlso": { "type": "string", "maxLength": 128 }
+            "term": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "subterm": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "see": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "seeAlso": {
+              "type": "string",
+              "maxLength": 128
+            }
           },
-          "required": ["term"],
+          "required": [
+            "term"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["type", "attrs"],
+      "required": [
+        "type",
+        "attrs"
+      ],
       "additionalProperties": false
     },
     "crossReference": {
       "type": "object",
       "properties": {
-        "type": { "type": "string", "enum": ["crossReference"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "crossReference"
+          ]
+        },
         "attrs": {
           "type": "object",
           "properties": {
-            "target": { "type": "string", "maxLength": 64 },
-            "display": { "type": "string", "enum": ["number", "title", "page", "number-and-title"] }
+            "target": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "display": {
+              "type": "string",
+              "enum": [
+                "number",
+                "title",
+                "page",
+                "number-and-title"
+              ]
+            }
           },
-          "required": ["target"],
+          "required": [
+            "target"
+          ],
           "additionalProperties": false
         },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/inlineNode" },
+          "items": {
+            "$ref": "#/$defs/inlineNode"
+          },
           "minItems": 1
         }
       },
-      "required": ["type", "attrs", "content"],
+      "required": [
+        "type",
+        "attrs",
+        "content"
+      ],
       "additionalProperties": false
     },
     "frontMatterNode": {
       "oneOf": [
-        { "$ref": "#/$defs/blockNode" },
+        {
+          "$ref": "#/$defs/blockNode"
+        },
         {
           "type": "object",
           "properties": {
-            "type": { "type": "string", "enum": ["halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue"] },
+            "type": {
+              "type": "string",
+              "enum": [
+                "halfTitle",
+                "titlePage",
+                "copyrightPage",
+                "dedication",
+                "toc",
+                "foreword",
+                "preface",
+                "acknowledgments",
+                "prologue"
+              ]
+            },
             "content": {
               "type": "array",
-              "items": { "$ref": "#/$defs/blockNode" },
+              "items": {
+                "$ref": "#/$defs/blockNode"
+              },
               "minItems": 1
             }
           },
-          "required": ["type", "content"],
+          "required": [
+            "type",
+            "content"
+          ],
           "additionalProperties": false
         }
       ]
     },
     "backMatterNode": {
       "oneOf": [
-        { "$ref": "#/$defs/blockNode" },
+        {
+          "$ref": "#/$defs/blockNode"
+        },
         {
           "type": "object",
           "properties": {
-            "type": { "type": "string", "enum": ["epilogue", "afterword", "appendix", "notes", "bibliography", "index", "aboutTheAuthor", "alsoBy", "colophon"] },
+            "type": {
+              "type": "string",
+              "enum": [
+                "epilogue",
+                "afterword",
+                "appendix",
+                "notes",
+                "bibliography",
+                "index",
+                "aboutTheAuthor",
+                "alsoBy",
+                "colophon"
+              ]
+            },
             "content": {
               "type": "array",
-              "items": { "$ref": "#/$defs/blockNode" },
+              "items": {
+                "$ref": "#/$defs/blockNode"
+              },
               "minItems": 1
             }
           },
-          "required": ["type", "content"],
+          "required": [
+            "type",
+            "content"
+          ],
           "additionalProperties": false
         }
       ]

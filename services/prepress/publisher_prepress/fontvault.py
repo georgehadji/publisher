@@ -163,3 +163,54 @@ def hash_font_file(path: str | Path) -> str:
     h = hashlib.sha256()
     h.update(Path(path).read_bytes())
     return h.hexdigest()
+
+
+# ── Tenant-uploaded faces ──────────────────────────────────────
+
+def font_root() -> Path:
+    """Directory holding tenant-uploaded font files.
+
+    Kept out of the repository on purpose. Licensed commercial faces are the
+    normal case for a real book, and committing them would redistribute them to
+    everyone with a clone -- exactly what their licence forbids. `.publisher/`
+    is already the local, git-ignored artifact area.
+    """
+    import os
+    return Path(os.environ.get("PUBLISHER_FONT_ROOT", ".publisher/fonts"))
+
+
+def register_tenant_font(
+    family: str,
+    style: str,
+    file_name: str,
+    license_ref: str,
+    attested_by: str | None = None,
+) -> FontAsset:
+    """Register an uploaded face, hashing the actual file.
+
+    Unlike the bundled OFL entries above, this one gets a REAL content hash --
+    the file is present, so there is no reason to fall back to a hash of its
+    metadata. That makes the build manifest's fontset hash change when the
+    uploaded file changes, which is the property the cache key needs.
+
+    Raises FontLicenseViolation when the file is missing, rather than
+    registering a face the renderer will then silently substitute for.
+    """
+    path = font_root() / file_name
+    if not path.is_file():
+        raise FontLicenseViolation(
+            f"Font '{family} ({style})' declares file '{file_name}', which is not "
+            f"present under {font_root()}. Upload the face or correct the DesignSpec."
+        )
+    asset = FontAsset(
+        family=family,
+        style=style,
+        hash=hash_font_file(path),
+        source="tenant_upload",
+        licenseRef=license_ref,
+        allowedUses=["PRINT_PDF", "EPUB_EMBED", "SERVER_RENDER"],
+        attestationBy=attested_by,
+        attestationAt=datetime.now(timezone.utc).isoformat() if attested_by else None,
+    )
+    register_font(asset)
+    return asset

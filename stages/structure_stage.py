@@ -51,34 +51,73 @@ def _extract_all_text(ast: dict) -> str:
     body -- silently reorders the concatenated text relative to what the HTML
     actually rendered, and the comparison fails on ANY manuscript with non-empty
     back matter even when no text was lost or altered.
+
+    SEPARATORS MUST MATCH TOO, and this is subtler than the order. `_ast_to_html`
+    joins BLOCK elements with a newline but concatenates a block's INLINE children
+    with nothing, so `<p>word<span>note</span>rest</p>` yields "wordnoterest" on
+    the HTML side. Joining every text node with " " -- what this function used to
+    do -- inserts a separator the HTML has not got, and normalization cannot rescue
+    it: collapsing whitespace turns runs into one space, never into none. It went
+    unnoticed only while every text node happened to be block-level, i.e. before a
+    footnote could sit inside a paragraph. Inline children are therefore joined
+    here with "" and blocks with " ", mirroring the renderer exactly.
     """
-    texts: list[str] = []
+    parts: list[str] = []
+
+    def _inline(nodes, sink: list[str]) -> None:
+        for node in nodes or []:
+            if not isinstance(node, dict):
+                continue
+            if node.get("type") == "text":
+                sink.append(node.get("text", ""))
+            else:
+                # emphasis, crossReference, footnote, ... -- rendered inline, so
+                # their text belongs to the block that contains them.
+                _inline(node.get("content"), sink)
 
     def _walk(node):
-        if isinstance(node, dict):
-            if node.get("type") == "text":
-                texts.append(node.get("text", ""))
-            title = (node.get("attrs") or {}).get("title")
-            if title:
-                texts.append(title)
-            for key in ("frontMatter", "body", "backMatter", "content"):
-                val = node.get(key)
-                if isinstance(val, list):
-                    for item in val:
-                        _walk(item)
-                elif isinstance(val, dict):
-                    _walk(val)
-        elif isinstance(node, list):
+        if isinstance(node, list):
             for item in node:
                 _walk(item)
+            return
+        if not isinstance(node, dict):
+            return
+
+        title = (node.get("attrs") or {}).get("title")
+        if title:
+            parts.append(title)
+
+        kind = node.get("type")
+        if kind == "text":
+            # A text node outside any paragraph/heading (a verse `line`, say).
+            parts.append(node.get("text", ""))
+            return
+        if kind in ("paragraph", "heading", "footnote"):
+            sink: list[str] = []
+            _inline(node.get("content"), sink)
+            parts.append("".join(sink))
+            return
+
+        for key in ("frontMatter", "body", "backMatter", "content"):
+            val = node.get(key)
+            if isinstance(val, list):
+                for item in val:
+                    _walk(item)
+            elif isinstance(val, dict):
+                _walk(val)
 
     _walk(ast)
-    return " ".join(t for t in texts if t)
+    return " ".join(t for t in parts if t)
 
 
 @stage(
     name="ast-assemble",
-    version=3,   # v3: integrity-report/1 declared terminal (U6)
+    # v4: `_extract_all_text` now mirrors the renderer's separators -- inline
+    # children concatenated, blocks joined by a space -- instead of joining every
+    # text node with a space. v3 compared a stream the HTML side never produces
+    # as soon as any inline element sits inside a paragraph, so its integrity
+    # hashes are not comparable with v4's and must not be replayed.
+    version=4,   # v3: integrity-report/1 declared terminal (U6)
     inputs={"html": "typescript-html/1", "source": "raw-source/1"},
     outputs={"ast": "ast/1", "integrity-report": "integrity-report/1"},
     terminal_outputs=["integrity-report"],   # delivered via the API, never consumed

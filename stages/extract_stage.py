@@ -8,6 +8,7 @@ For real production, this would use Saxon/XSweet on actual DOCX files.
 
 from __future__ import annotations
 import json
+import unicodedata
 from pathlib import Path
 
 from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef
@@ -15,7 +16,7 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType, ArtifactR
 
 
 HTML_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
+<html lang="{lang}">
 <head>
 <meta charset="UTF-8">
 <title>{title}</title>
@@ -24,6 +25,42 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {body}
 </body>
 </html>"""
+
+
+# Combining marks that Greek DROPS when a word is set in capitals: the tonos
+# and its polytonic ancestors (oxia, varia, perispomeni), the breathings, and
+# the iota subscript. The dialytika (U+0308) is NOT in this set -- it is the
+# one Greek diacritic that survives capitalisation, because it marks a vowel
+# pair that must be read separately and the capitals do not make that clearer.
+_GREEK_CAPS_DROP = {
+    "\u0300",  # varia / grave
+    "\u0301",  # oxia / tonos / acute
+    "\u0313",  # psili
+    "\u0314",  # dasia
+    "\u0342",  # perispomeni
+    "\u0343",  # koronis
+    "\u0345",  # ypogegrammeni
+}
+
+
+def _upper_for_lang(text: str, lang: str) -> str:
+    """Uppercase `text` under the casing rules of `lang`.
+
+    CSS `text-transform: uppercase` is not usable here. WeasyPrint implements
+    it with Python's `str.upper()`, which keeps the tonos: "Περιεχόμενα" comes
+    out "ΠΕΡΙΕΧΌΜΕΝΑ". Accented capitals are a spelling error in Greek -- the
+    accent is dropped in all-caps setting -- and a running head repeats on
+    every page, so the mistake would have appeared several hundred times.
+
+    Only Greek gets the stripping. French, Spanish and German all keep their
+    accents in capitals, so for every other language this is a plain upcase.
+    """
+    upper = text.upper()
+    if not lang.lower().startswith("el"):
+        return upper
+    decomposed = unicodedata.normalize("NFD", upper)
+    kept = "".join(c for c in decomposed if c not in _GREEK_CAPS_DROP)
+    return unicodedata.normalize("NFC", kept)
 
 
 def _ast_to_html(ast: dict) -> str:
@@ -36,10 +73,20 @@ def _ast_to_html(ast: dict) -> str:
     
     # Title from metadata
     title = (ast.get("metadata") or {}).get("title", "Untitled")
+    # Bound here rather than beside the template call at the bottom: the
+    # chapter loop below needs it to build each running head's caps form.
+    language = (ast.get("metadata") or {}).get("language") or "en"
     
     # Process front matter
     front_matter = ast.get("frontMatter") or []
     for item in front_matter:
+        # `frontMatterNode` admits a bare blockNode as well as the typed
+        # {type, content} items -- a reserved blank leaf is a lone `pageBreak`.
+        # Wrapping one in `.front-matter` would give it that class's
+        # `break-before: recto` and turn each reserved leaf into two pages.
+        if "content" not in item:
+            parts.append(_render_content([item]))
+            continue
         parts.append(f'<div class="front-matter {item.get("type", "unknown")}">')
         parts.append(_render_content(item.get("content", [])))
         parts.append("</div>")
@@ -53,7 +100,16 @@ def _ast_to_html(ast: dict) -> str:
         title_text = attrs.get("title", f"Chapter {attrs.get('number', '?')}")
         
         parts.append(f'<div class="{ctype}" id="{cid}" data-number="{attrs.get("number", "")}">')
-        parts.append(f'<h1 class="chapter-title">{_escape_html(title_text)}</h1>')
+        # `data-caps` is the running head's copy of the title, upcased here
+        # rather than in CSS so Greek loses its tonos -- see `_upper_for_lang`.
+        # The stylesheet takes `string-set` from this attribute when the
+        # DesignSpec asks for uppercase heads, and from the element text
+        # otherwise; the printed chapter title itself is never transformed.
+        caps = _upper_for_lang(title_text, language)
+        parts.append(
+            f'<h1 class="chapter-title" data-caps="{_escape_html(caps)}">'
+            f'{_escape_html(title_text)}</h1>'
+        )
         parts.append(_render_content(chapter.get("content", [])))
         parts.append("</div>")
     
@@ -64,7 +120,11 @@ def _ast_to_html(ast: dict) -> str:
         parts.append(_render_content(item.get("content", [])))
         parts.append("</div>")
     
-    return HTML_TEMPLATE.format(title=_escape_html(title), body="\n".join(parts))
+    return HTML_TEMPLATE.format(
+        title=_escape_html(title),
+        body="\n".join(parts),
+        lang=_escape_html(language),
+    )
 
 
 def _render_content(content: list) -> str:
@@ -74,13 +134,29 @@ def _render_content(content: list) -> str:
         ntype = node.get("type", "unknown")
         
         if ntype == "paragraph":
-            role = (node.get("attrs") or {}).get("role", "normal")
+            pattrs = node.get("attrs") or {}
+            role = pattrs.get("role", "normal")
             cls = f"paragraph {role}" if role != "normal" else "paragraph"
-            parts.append(f'<p class="{cls}">{_render_inline(node.get("content", []))}</p>')
+            # `attrs.indent` has been in the AST schema from the start and was
+            # never rendered. A contents page uses it to step its subsection
+            # entries in under the chapter they belong to.
+            indent = pattrs.get("indent")
+            style = f' style="padding-left: {float(indent):g}em"' if indent else ""
+            parts.append(
+                f'<p class="{cls}"{style}>{_render_inline(node.get("content", []))}</p>'
+            )
         
         elif ntype == "heading":
-            level = (node.get("attrs") or {}).get("level", 2)
-            parts.append(f'<h{level}>{_render_inline(node.get("content", []))}</h{level}>')
+            hattrs = node.get("attrs") or {}
+            level = hattrs.get("level", 2)
+            # The anchor is what earns a subsection its page number: the
+            # contents entry that names it prints `target-counter(attr(href),
+            # page)`, which resolves to nothing unless the target exists.
+            hid = hattrs.get("id")
+            anchor = f' id="{_escape_html(hid)}"' if hid else ""
+            parts.append(
+                f'<h{level}{anchor}>{_render_inline(node.get("content", []))}</h{level}>'
+            )
         
         elif ntype == "blockquote":
             parts.append(f'<blockquote>{_render_content(node.get("content", []))}</blockquote>')
@@ -130,6 +206,17 @@ def _render_content(content: list) -> str:
         elif ntype == "sidebar":
             parts.append(f'<aside class="sidebar">{_render_content(node.get("content", []))}</aside>')
         
+        elif ntype == "footnote":
+            # Rendered inline, immediately after the block that referenced it,
+            # and pulled to the foot of the page by `float: footnote` in the
+            # stylesheet. It must stay HERE in document order: `ast-assemble`
+            # compares this HTML's text stream against the AST's, so moving the
+            # note in the markup -- collecting them at the end, say -- fails the
+            # integrity gate even though nothing was lost.
+            parts.append(
+                f'<span class="footnote">{_render_inline(node.get("content", []))}</span>'
+            )
+
         elif ntype == "pageBreak":
             parts.append('<div class="page-break"></div>')
         
@@ -193,6 +280,33 @@ def _render_inline(content: list) -> str:
         
         elif ntype == "superscript":
             parts.append(f"<sup>{_render_inline(node.get('content', []))}</sup>")
+
+        elif ntype == "footnote":
+            # Inline here, at the reference point, so WeasyPrint puts the call
+            # exactly where the author put it. Same markup as the block-level
+            # branch; only the position differs.
+            parts.append(
+                f'<span class="footnote">{_render_inline(node.get("content", []))}</span>'
+            )
+
+        elif ntype == "crossReference":
+            # `href` is what earns the entry its page number: the stylesheet
+            # prints target-counter(attr(href), page) after it, so the figure is
+            # the page the target actually landed on. Without the anchor there is
+            # nothing for target-counter to resolve.
+            # A <span> carrying an href, deliberately NOT an <a>. CSS attr()
+            # reads the attribute off any element, so target-counter resolves
+            # either way -- but an <a href> also makes WeasyPrint emit a /Link
+            # ANNOTATION, and PDF/X-1a forbids those. Ghostscript does not warn
+            # and downgrade one annotation; it abandons PDF/X for the whole file
+            # ("not permitted in PDF/X, reverting to normal PDF output"), which
+            # `finish` then refuses outright. A press file has no clickable
+            # links to lose.
+            target = (node.get("attrs") or {}).get("target", "")
+            inner = _render_inline(node.get("content", []))
+            parts.append(
+                f'<span class="xref" href="#{_escape_html(target)}">{inner}</span>'
+            )
         
         else:
             parts.append(_escape_html(str(node.get("text", ""))))
@@ -226,7 +340,17 @@ def _escape_html(text: str) -> str:
 
 @stage(
     name="extract",
-    version=1,
+    # v2: renders `footnote` and `crossReference` nodes. v1 hit neither branch
+    # and fell through to its `unknown node type` comment / empty-string default,
+    # so any AST carrying them lost that text on the way into the HTML. Every v1
+    # artifact for a manuscript with footnotes is therefore incomplete and must
+    # not be replayed from cache.
+    # v3: chapter titles carry `data-caps` (the running head's correctly-cased
+    # Greek uppercase, which CSS `text-transform` cannot produce), headings carry
+    # their `attrs.id` so a contents entry can resolve a page number against
+    # them, and `attrs.indent` is finally rendered. A v2 HTML has no anchors, so
+    # every subsection line in its contents prints without a page number.
+    version=3,
     inputs={"source": "raw-source/1"},
     outputs={"html": "typescript-html/1"},
     toolchain=[],

@@ -169,7 +169,14 @@ def test_missing_file_is_an_error(tmp_path):
 
 
 def test_body_start_falls_back_to_first_heading_when_nothing_is_substantive():
-    sections = [("", ["x"]), ("A", ["short"]), ("B", ["also short"])]
+    # Sections carry Blocks, not bare strings: a section body has to keep each
+    # block's heading depth and footnote ids for the AST builder to read.
+    from publisher_ingest.docx_to_ast import Block
+
+    def section(title, *texts):
+        return (title, [Block(t, "Normal", False) for t in texts])
+
+    sections = [section("", "x"), section("A", "short"), section("B", "also short")]
     assert _find_body_start(sections) == 0
 
 

@@ -68,10 +68,34 @@ def _check_zip_limits(source: Path) -> None:
 
 @stage(
     name="ingest",
-    version=1,
-    inputs={"docx_path": "raw-docx/1"},
+    # v2: `docx_to_ast` now reads word/footnotes.xml, takes its section outline
+    # from the contents page, and emits a linked `toc`. The version lint watches
+    # stages/*.py and so did not ask for this bump -- the change is one directory
+    # over, in services/ingest -- but the ARTIFACT is what the cache keys on, and
+    # a v1 AST for a manuscript with footnotes is missing every one of them.
+    # Replaying one would silently reinstate the loss this bump exists to end.
+    # v3: subsections and sub-subsections are assigned anchors and registered
+    # as cross-reference targets, and contents entries carry their depth. A v2
+    # AST names no target for any entry below chapter level.
+    # v4: a body heading also matches its contents entry by section number, not
+    # only by title. A v3 AST silently drops any section whose body wording
+    # differs from the contents page by so much as a pair of quotation marks.
+    # v5: that number match is restricted to sub-level numbers ("9.2"). At v4 a
+    # bare "3." matched too, and two numbered list items inside chapter 5's
+    # prose were promoted to chapters of their own.
+    # v6: an optional `blockquote_footnotes` root input diverts named footnotes
+    # (by their 1-based position among all footnote references) into in-body
+    # block quotes instead of page-foot notes. A v5 AST has no way to ask for
+    # this, so it is additive -- an absent input reproduces v5 exactly.
+    version=6,
+    inputs={"docx_path": "raw-docx/1", "blank_leading_pages": "page-count/1",
+            "isbn": "isbn/1", "blockquote_footnotes": "footnote-selection/1"},
     outputs={"source": "raw-source/1"},
-    root_inputs=["docx_path"],
+    root_inputs=["docx_path", "blank_leading_pages", "isbn", "blockquote_footnotes"],
+    # Optional, so a build that says nothing about front leaves stays reachable
+    # and gets none. Declared rather than inferred from the parameter default --
+    # the same distinction `resolve`'s `overrides_path` makes.
+    optional_root_inputs=["blank_leading_pages", "isbn", "blockquote_footnotes"],
     implements="ingest",  # alternative to `acquire`; see module docstring
     toolchain=[],
     fixtures=None,
@@ -79,7 +103,10 @@ def _check_zip_limits(source: Path) -> None:
     queue="q.ingest",
     description="Convert an uploaded DOCX manuscript into the ast/1 source",
 )
-def ingest(ctx: StageCtx, docx_path: str | None = None) -> StageResult:
+def ingest(ctx: StageCtx, docx_path: str | None = None,
+           blank_leading_pages: int | str | None = None,
+           isbn: str | None = None,
+           blockquote_footnotes: str | list | None = None) -> StageResult:
     """
     Convert a tenant's DOCX (bytes stored in CAS by the upload route) into an
     ast/1 document, and store that as `raw-source/1` for the rest of the DAG.
@@ -114,7 +141,40 @@ def ingest(ctx: StageCtx, docx_path: str | None = None) -> StageResult:
     _check_zip_limits(source)
 
     try:
-        ast = docx_to_ast(source, manuscript_id=ctx.build_id)
+        leaves = int(blank_leading_pages or 0)
+    except (TypeError, ValueError):
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"blank_leading_pages must be an integer, got "
+                    f"{blank_leading_pages!r}",
+        )
+    if leaves < 0:
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"blank_leading_pages cannot be negative (got {leaves})",
+        )
+
+    try:
+        if isinstance(blockquote_footnotes, str):
+            numbers = frozenset(
+                int(n) for n in blockquote_footnotes.split(",") if n.strip()
+            )
+        elif blockquote_footnotes:
+            numbers = frozenset(int(n) for n in blockquote_footnotes)
+        else:
+            numbers = frozenset()
+    except (TypeError, ValueError):
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=f"blockquote_footnotes must be a comma-separated list of "
+                    f"integers or a list of integers, got {blockquote_footnotes!r}",
+        )
+
+    try:
+        ast = docx_to_ast(
+            source, manuscript_id=ctx.build_id, blank_leading_pages=leaves,
+            isbn=isbn or None, blockquote_footnotes=numbers,
+        )
     except IngestError as e:
         raise StageError(
             kind=ErrorKind.BAD_INPUT,

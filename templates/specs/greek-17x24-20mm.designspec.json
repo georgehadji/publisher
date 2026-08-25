@@ -1,0 +1,194 @@
+{
+  "schema": "designspec/1",
+  "name": "Greek 17x24 -- Fedra Serif B Pro, 25mm inner",
+  "preferredEngine": "chrome-pagedjs",
+  "trimSize": {
+    "width": 170.0,
+    "height": 240.0,
+    "unit": "mm"
+  },
+  "typography": {
+    "bodyFont": {
+      "family": "Fedra Serif B Pro"
+    },
+    "headingFont": {
+      "family": "Fedra Sans Pro"
+    },
+    "bodySize": 9.0,
+    "leading": 14.173,
+    "scaleRatio": 1.25,
+    "measure": 74,
+    "bodyAlignment": "justified",
+    "paragraphIndent": 1.5,
+    "opticalMargins": true,
+    "footnoteSize": 7.0,
+    "chapterSize": 14.0,
+    "chapterLeading": 18.2,
+    "sectionSize": 11.0,
+    "subsectionSize": 10.0,
+    "subsubsectionSize": 10.0
+  },
+  "grid": {
+    "type": "single",
+    "baselineIncrement": 14.173
+  },
+  "margins": {
+    "top": 20,
+    "bottom": 20,
+    "inside": 25,
+    "outside": 20,
+    "gutter": 0
+  },
+  "folio": {
+    "position": "bottom-center",
+    "style": "arabic",
+    "suppressOn": [],
+    "startNumber": 1
+  },
+  "runningHeads": {
+    "rectoSource": "chapter-title",
+    "versoSource": "chapter-title",
+    "style": "centered",
+    "size": 6.0,
+    "transform": "uppercase"
+  },
+  "chapterOpenings": {
+    "startsOn": "recto",
+    "dropCap": false,
+    "dropCapLines": 3,
+    "titleTreatment": "centered",
+    "firstParagraphStyle": "no-indent"
+  },
+  "fonts": [
+    {
+      "family": "Fedra Serif B Pro",
+      "style": "regular",
+      "weight": 400,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-Book.otf"
+    },
+    {
+      "family": "Fedra Serif B Pro",
+      "style": "italic",
+      "weight": 400,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-BookItalic.otf"
+    },
+    {
+      "family": "Fedra Serif B Pro",
+      "style": "medium",
+      "weight": 500,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-Medium.otf"
+    },
+    {
+      "family": "Fedra Serif B Pro",
+      "style": "medium-italic",
+      "weight": 500,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-MediumItalic.otf"
+    },
+    {
+      "family": "Fedra Serif B Pro",
+      "style": "bold",
+      "weight": 700,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-Bold.otf"
+    },
+    {
+      "family": "Fedra Serif B Pro",
+      "style": "bold-italic",
+      "weight": 700,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSerifBPro-BoldItalic.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "light",
+      "weight": 300,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-Light.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "light-italic",
+      "weight": 300,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-LightItalic.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "regular",
+      "weight": 400,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-Book.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "italic",
+      "weight": 400,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-BookItalic.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "medium",
+      "weight": 500,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-Medium.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "medium-italic",
+      "weight": 500,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-MediumItalic.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "bold",
+      "weight": 700,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-Bold.otf"
+    },
+    {
+      "family": "Fedra Sans Pro",
+      "style": "bold-italic",
+      "weight": 700,
+      "source": "tenant_upload",
+      "licenseRef": "typotheque-tenant-upload",
+      "file": "FedraSansPro-BoldItalic.otf"
+    }
+  ],
+  "colors": {
+    "text": "#000000",
+    "paper": "#FFFFFF"
+  },
+  "templateId": "greek-17x24-fedra",
+  "hyphenation": {
+    "language": "el",
+    "zone": 12.0,
+    "shortestWord": 6,
+    "consecutiveHyphens": 3
+  },
+  "footnoteRule": {
+    "width": 72,
+    "thickness": 0.25
+  },
+  "footnotes": {
+    "maxHeightPercent": 85
+  }
+}

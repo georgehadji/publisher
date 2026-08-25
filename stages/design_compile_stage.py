@@ -7,11 +7,14 @@ In the tracer bullet, this produces a CSS stylesheet for Paged.js / Playwright.
 
 from __future__ import annotations
 import json
+import math
 from pathlib import Path
 
-from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef
+from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, Diagnostic, ArtifactRef as StageArtifactRef
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
-from publisher_prepress.fontvault import FontLicenseViolation, validate_font_use
+from publisher_prepress.fontvault import (
+    FontLicenseViolation, font_root, register_tenant_font, validate_font_use,
+)
 from profiles import load_profile
 
 
@@ -56,16 +59,88 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     leading = typography.get("leading", 14.0)
     measure = typography.get("measure", 66)
     
-    body_font_family = (typography.get("bodyFont") or {}).get("family", "EB Garamond")
+    # DesignSpec's vocabulary -> CSS's. "justified" is the spec's word for what
+    # CSS calls `justify`; passing it through unmapped emits an invalid value
+    # that the renderer drops, which is the same ragged right by another route.
+    _ALIGNMENT_TO_CSS = {
+        "justified": "justify",
+        "ragged-right": "left",
+        "ragged-left": "right",
+    }
+    css_align = _ALIGNMENT_TO_CSS.get(
+        typography.get("bodyAlignment", "justified"), "justify"
+    )
+    paragraph_indent = float(typography.get("paragraphIndent", 1.5))
+
+    # Footnote size, stated absolutely in the spec or derived as two points
+    # below the body. It used to be `body_size * 0.8`, a ratio that drifts with
+    # the body size (8.4pt here, 7.6pt at a 9.5pt body) where the convention
+    # this book follows is a fixed 2pt step.
+    footnote_size = float(typography.get("footnoteSize", body_size - 2))
+
+    # Footnote separator geometry. Book-design convention states it in points
+    # and independently of the measure, so it is read in points here rather
+    # than derived from the type area.
+    # Hyphenation. Another whole DesignSpec block the emitter never emitted:
+    # `hyphenation.language`, `.shortestWord` and `.zone` were readable in the
+    # spec and absent from every stylesheet, so justified Greek was set with no
+    # hyphenation at all -- which is what forces the loose, gappy lines that
+    # full justification otherwise produces in a heavily inflected language.
+    hyphenation = designspec.get("hyphenation") or {}
+    hyphen_lang = hyphenation.get("language")
+    shortest_word = int(hyphenation.get("shortestWord", 5))
+    hyphen_char = "".join(
+        f"\\{ord(c):04X}" for c in str(hyphenation.get("character", "-"))
+    )
+    hyphen_zone = hyphenation.get("zone")
+
+    # How much of a page footnotes may claim. Also a typographic limit, not only
+    # a safety valve: a page that is 95% notes is a page of notes.
+    footnote_max_height = float((designspec.get("footnotes") or {}).get("maxHeightPercent", 85))
+
+    _footnote_rule = designspec.get("footnoteRule") or {}
+    rule_width = float(_footnote_rule.get("width", 72))
+    rule_thickness = float(_footnote_rule.get("thickness", 0.25))
+
+    # Heading sizes are DECLARED where the DesignSpec declares them and derived
+    # from the body size only as a fallback. The derived ladder (1.8 / 1.25 /
+    # 1.1 x body) is a reasonable default and a poor instruction: it made every
+    # heading a function of `bodySize`, so dropping the body from 10.5pt to 9pt
+    # silently shrank the chapter titles from 18.9pt to 16.2pt as well.
+    chapter_size = float(typography.get("chapterSize", body_size * 1.8))
+    chapter_leading = float(typography.get("chapterLeading", leading * 2))
+    section_size = float(typography.get("sectionSize", body_size * 1.25))
+    subsection_size = float(typography.get("subsectionSize", body_size * 1.1))
+    subsub_size = float(typography.get("subsubsectionSize", subsection_size))
+
+    # A chapter opening must consume a whole number of body lines, or the first
+    # line of every chapter sits at a different height from the first line of
+    # every other page and the two do not align across a spread. Space above
+    # the title is fixed; the space below absorbs the remainder, keeping at
+    # least a third of a line of air.
+    _chapter_used = leading * 2 + chapter_leading
+    _chapter_snapped = math.ceil((_chapter_used + leading * 0.35) / leading) * leading
+    chapter_space_after = _chapter_snapped - _chapter_used
+
+    # Quoted: "Fedra Serif B Pro" unquoted is legal CSS but one stray character
+    # in an uploaded family name is not, and a malformed font-family takes the
+    # whole declaration with it -- silently, into the default serif.
+    body_font_family = _css_family(
+        (typography.get("bodyFont") or {}).get("family", "EB Garamond"))
     heading_font_family = (typography.get("headingFont") or {}).get("family", "")
-    if not heading_font_family:
-        heading_font_family = body_font_family
+    heading_font_family = (
+        _css_family(heading_font_family) if heading_font_family else body_font_family
+    )
     
     top = margins.get("top", 18)
     bottom = margins.get("bottom", 20)
     inside = margins.get("inside", 15)
     outside = margins.get("outside", 20)
     gutter = margins.get("gutter", 0)
+
+    # The type area: trim less the two horizontal margins. Footnotes are set to
+    # it explicitly because their containing area is deliberately narrower.
+    measure_mm = w_mm - inside - outside
     
     text_color = colors.get("text", "#000000")
     paper_color = colors.get("paper", "#FFFFFF")
@@ -73,6 +148,9 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     lines = [
         "/* Auto-generated from DesignSpec -- emit_css() */",
         "",
+        # Before everything else: a face has to be bound to its family name
+        # before any rule can ask for it.
+        *_font_face_rules(designspec),
         "@page {",
         f"  size: {w_mm:g}mm {h_mm:g}mm;",
         # Emitted only when there is bleed to declare, so a no-bleed profile's
@@ -89,18 +167,20 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "  @top-right { content: none; }",
         "}",
         "",
-        f"@page :recto {{",
+        # `:right`/`:left`, NOT `:recto`/`:verso`. CSS Paged Media defines only
+        # the former, and WeasyPrint discards the whole rule on the latter
+        # ("Unsupported @page selector"). Every mirrored margin and every running
+        # head lived inside these two blocks, so all of it was silently dropped:
+        # the book rendered with the base @page margins and no running heads at
+        # all, and nothing reported a problem.
+        f"@page :right {{",
         f"  margin-left: {inside}mm;",
         f"  margin-right: {outside}mm;",
-        f"  @top-left {{ content: ''; }}",
-        f"  @top-right {{ content: ''; }}",
         "}",
         "",
-        f"@page :verso {{",
+        f"@page :left {{",
         f"  margin-left: {outside}mm;",
         f"  margin-right: {inside}mm;",
-        f"  @top-left {{ content: ''; }}",
-        f"  @top-right {{ content: ''; }}",
         "}",
         "",
     ]
@@ -109,22 +189,43 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     rh_recto_source = running_heads.get("rectoSource", "chapter-title")
     rh_verso_source = running_heads.get("versoSource", "book-title")
     rh_style = running_heads.get("style", "centered")
-    
+    rh_size = float(running_heads.get("size", 9))
+    rh_transform = running_heads.get("transform", "none")
+    verso_from_chapter = rh_verso_source == "chapter-title"
+
+    # `uppercase` is applied by `extract`, not here, and this is deliberate.
+    # WeasyPrint implements `text-transform: uppercase` with Python's
+    # `str.upper()`, which keeps the Greek tonos: "Περιεχόμενα" would print
+    # "ΠΕΡΙΕΧΌΜΕΝΑ" on every recto of the chapter. Greek drops the accent in
+    # capitals, so `extract` writes the correctly-cased string into
+    # `data-caps` and the running head is set from that attribute instead.
+    # The other transforms have no such language trap and stay in CSS.
+    # Where the running head's text comes from. `content(text)` is the element's
+    # own text; `attr(data-caps)` is the caps form `extract` wrote alongside it.
+    rh_source = "attr(data-caps)" if rh_transform == "uppercase" else "content(text)"
+    rh_extra = ""
+    if rh_transform == "lowercase":
+        rh_extra = "    text-transform: lowercase;"
+    elif rh_transform == "small-caps":
+        rh_extra = "    font-variant: small-caps;"
+
     if rh_recto_source != "none" or rh_verso_source != "none":
         lines.extend([
-            "@page :recto {",
-            "  @top-left {",
+            "@page :right {",
+            "  @top-right {",
             f"    content: string(recto-head);",
-            f"    font-size: 9pt;",
-            f"    font-family: {body_font_family};",
+            f"    font-size: {rh_size:g}pt;",
+            f"    font-family: {heading_font_family};",
+            *([rh_extra] if rh_extra else []),
             "  }",
             "}",
             "",
-            "@page :verso {",
-            "  @top-right {",
+            "@page :left {",
+            "  @top-left {",
             f"    content: string(verso-head);",
-            f"    font-size: 9pt;",
-            f"    font-family: {body_font_family};",
+            f"    font-size: {rh_size:g}pt;",
+            f"    font-family: {heading_font_family};",
+            *([rh_extra] if rh_extra else []),
             "  }",
             "}",
             "",
@@ -147,8 +248,11 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
             f"@page {{",
             f"  @{edge}-{align} {{",
             f"    content: counter(page, {folio_style});",
-            f"    font-size: 9pt;",
-            f"    font-family: {body_font_family};",
+            # The folio belongs to the page furniture, not the text: it takes
+            # the heading face and the running head's size, so the two marginal
+            # elements match each other rather than the body.
+            f"    font-size: {rh_size:g}pt;",
+            f"    font-family: {heading_font_family};",
             "  }",
             "}",
             "",
@@ -180,31 +284,60 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         f"  counter-reset: chapter footnote;",
         "}",
         "",
+        # `bodyAlignment` and `paragraphIndent` are DesignSpec fields that this
+        # emitter read into its defaults and then never emitted -- so every book
+        # rendered at the initial `text-align: start`, ragged down the right-hand
+        # side, however emphatically the spec said "justified". The measure is
+        # the type area's full width; a paragraph that does not fill it is the
+        # renderer disagreeing with the spec, not a design choice.
         "p {",
         "  margin: 0;",
-        "  text-indent: 1.5em;",
+        f"  text-align: {css_align};",
+        f"  text-indent: {paragraph_indent:g}em;",
         "  widows: 2;",
         "  orphans: 2;",
+        # Same reason as the footnote rule below: an unbreakable token longer
+        # than the measure (a URL, a percent-encoded path) is drawn straight
+        # past the outer margin rather than wrapped. Body copy has no such
+        # token in this manuscript, but the failure is silent when it does, so
+        # the guard belongs on both.
+        "  overflow-wrap: break-word;",
         "}",
         "",
         "p.chapter-opening {",
         "  text-indent: 0;",
         "}",
         "",
+        # `break-before`, NOT `page-break-before`. The legacy alias accepts only
+        # auto|always|avoid|left|right, so `page-break-before: recto` was an
+        # invalid value that WeasyPrint dropped on the floor -- chapters opened
+        # wherever the text happened to reach, on odd and even pages alike, while
+        # the DesignSpec said `startsOn: recto` and nothing contradicted it.
+        # `break-before: recto` is CSS Fragmentation and is honoured: WeasyPrint
+        # inserts a blank verso when a chapter would otherwise open on an even
+        # page.
         ".chapter {",
         f"  page: chapter-opening;",
-        f"  page-break-before: {starts_on};",
+        f"  break-before: {starts_on};",
         "  counter-increment: chapter;",
         "}",
         "",
         f".chapter-title {{",
         f"  font-family: {heading_font_family};",
-        f"  font-size: {body_size * 1.8}pt;",
-        f"  line-height: {leading * 2}pt;",
+        f"  font-size: {chapter_size:g}pt;",
+        f"  line-height: {chapter_leading:g}pt;",
         f"  text-align: center;",
-        f"  margin-top: {leading * 2}pt;",
-        f"  margin-bottom: {leading}pt;",
-        f"  string-set: recto-head content(text);",
+        f"  margin-top: {leading * 2:.3f}pt;",
+        f"  margin-bottom: {chapter_space_after:.3f}pt;",
+        # BOTH strings are set here. `verso-head` never was, so the verso
+        # running head resolved to an empty string on every left-hand page while
+        # the recto carried its title -- the spec's `versoSource` was simply not
+        # implemented. `book-title` is still not reachable: design-compile emits
+        # CSS from the DesignSpec alone and never sees the manuscript metadata,
+        # so that value warns rather than silently printing nothing.
+        "  string-set: recto-head " + rh_source
+        + (f", verso-head {rh_source}" if verso_from_chapter else "")
+        + ";",
         "}",
         "",
     ])
@@ -252,6 +385,11 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "blockquote {",
         "  margin: 0.5em 1.5em;",
         "  font-style: italic;",
+        # A note diverted here from the footnote flow (paginate's editorial
+        # escape hatch for a footnote too long to sit comfortably as one) is
+        # still body-flow prose and can carry the same unbreakable token `p`
+        # guards against above.
+        "  overflow-wrap: break-word;",
         "}",
         "blockquote.epigraph {",
         "  margin: 1em 2em;",
@@ -308,7 +446,7 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     # Front/back matter
     lines.extend([
         ".front-matter, .back-matter {",
-        "  page-break-before: recto;",
+        "  break-before: recto;",
         "}",
         ".titlePage {",
         "  text-align: center;",
@@ -320,11 +458,233 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "",
     ])
     
-    # Named pages for chapter openings
+    # Named pages for chapter openings.
+    #
+    # Emitted only when the DesignSpec actually asks for it. This block used to
+    # be unconditional, and because `.chapter` carries `page: chapter-opening`
+    # for every page the chapter SPANS (not merely its first), it blanked the
+    # running heads across the entire book -- while `runningHeads.suppressOn`,
+    # the schema field that exists to express this, was never read at all. The
+    # over-broad scope is a known limitation; making it opt-in at least stops it
+    # firing on specs that never requested it.
+    if "chapter-opening" in (running_heads.get("suppressOn") or []):
+        lines.extend([
+            "@page chapter-opening {",
+            f"  @top-left {{ content: none; }}",
+            f"  @top-right {{ content: none; }}",
+            "}",
+            "",
+        ])
+
+    # Hyphenation rules. `hyphens: auto` is inert without a language on the
+    # document element -- WeasyPrint picks its Pyphen dictionary from `lang`, so
+    # `paginate` sets it from the AST's own metadata.language.
+    #
+    # NOTE ON `consecutiveHyphens`: the spec's cap on consecutive hyphenated
+    # lines (a "hyphen ladder") has NO CSS property WeasyPrint implements --
+    # `hyphenate-limit-lines` is rejected as an unknown property, prefixed or
+    # not. It is deliberately not emitted rather than emitted-and-silently-
+    # dropped, and design-compile raises a warning Diagnostic so the build says
+    # out loud that this part of the spec is not being honoured.
+    if hyphen_lang:
+        lines.extend([
+            "html {",
+            "  hyphens: auto;",
+            # WeasyPrint breaks with U+2010 HYPHEN unless told otherwise, and a
+            # text face that has no U+2010 -- most do not -- silently gets the
+            # glyph from a fallback font. It cost this book a Noto Sans hyphen on
+            # roughly every page of Fedra Serif text. U+002D is in everything.
+            f'  hyphenate-character: "{hyphen_char}";',
+            # The 3 3 are the minimum characters kept before and after the
+            # break. They also impose a FLOOR on the word length: a word needs
+            # 3 + 3 characters before it can split at all, so any
+            # `shortestWord` below 6 is inert. Measured on a 746-page Greek
+            # manuscript, `4 3 3`, `5 3 3` and `6 3 3` at the same zone produce
+            # byte-identical hyphenation (3465 of 30538 lines). A spec asking
+            # for less than 6 gets a Diagnostic rather than silence.
+            f"  hyphenate-limit-chars: {shortest_word} 3 3;",
+            *([f"  hyphenate-limit-zone: {float(hyphen_zone):g}mm;"]
+              if hyphen_zone else []),
+            "}",
+            "",
+            # A hyphenated heading reads as a typographic mistake even when the
+            # body wants hyphenation; same for the contents list, where a broken
+            # entry collides with its leader dots.
+            "h1, h2, h3, h4, h5, h6, .chapter-title, .toc p {",
+            "  hyphens: none;",
+            "}",
+            "",
+        ])
+
+    # Every heading level takes the heading face. Only `.chapter-title` did
+    # before, so `headingFont` reached the chapter openings and nothing else --
+    # the numbered subsection headings that `extract` emits as <h2>/<h3>
+    # inherited the body face from `html` and silently ignored the spec.
     lines.extend([
-        "@page chapter-opening {",
-        f"  @top-left {{ content: none; }}",
-        f"  @top-right {{ content: none; }}",
+        "h1, h2, h3, h4, h5, h6 {",
+        f"  font-family: {heading_font_family};",
+        f"  text-align: left;",
+        "  text-indent: 0;",
+        f"  margin-top: {leading:.3f}pt;",
+        f"  margin-bottom: {leading * 0.35:.3f}pt;",
+        "  break-after: avoid;",
+        "}",
+        "",
+        f"h2 {{ font-size: {section_size:g}pt; }}",
+        f"h3 {{ font-size: {subsection_size:g}pt; }}",
+        f"h4, h5, h6 {{ font-size: {subsub_size:g}pt; }}",
+        "",
+    ])
+
+    # Reserved blank leaves at the front of the book (a bare `pageBreak` in the
+    # front matter). Their own named page so they carry neither folio nor
+    # running head -- a numbered blank is not a blank.
+    lines.extend([
+        ".page-break {",
+        "  page: blank-leaf;",
+        "  break-after: page;",
+        "  height: 0;",
+        "}",
+        "",
+        "@page blank-leaf {",
+        "  @bottom-center { content: none; }",
+        "  @top-left { content: none; }",
+        "  @top-right { content: none; }",
+        "}",
+        "",
+    ])
+
+    # Footnotes (CSS GCPM). `float: footnote` takes the note out of flow and
+    # lays it at the foot of the page its call lands on; WeasyPrint generates
+    # the call and the marker from the same counter, so the two can never
+    # disagree. Without this rule the note text renders inline, mid-page, as an
+    # ordinary run of body copy.
+    lines.extend([
+        # `.footnote-continued` carries the remainder of a note too tall for the
+        # page it started on. WeasyPrint cannot split a footnote itself -- verified
+        # on 62.3 and on 69.0, with and without a `max-height` cap: the note is
+        # always laid out whole and the excess drawn off the sheet -- so `paginate`
+        # measures the overrun, cuts the note at the last line that fits, and
+        # re-anchors the tail on the following page. These rules make that tail
+        # read as a continuation rather than as a new note.
+        ".footnote, .footnote-continued {",
+        "  float: footnote;",
+        "  footnote-display: block;",
+        f"  font-size: {footnote_size:g}pt;",
+        f"  line-height: {leading * 0.78:.3f}pt;",
+        "  text-indent: 0;",
+        f"  text-align: {css_align};",
+        # A URL is one unbreakable token, and this manuscript cites Greek
+        # Wikipedia with the path percent-encoded -- a single 129-character run
+        # of `%CE%A3%CF%85...` with no space, hyphen or soft-break anywhere in
+        # it. Justification cannot compress it and hyphenation will not touch
+        # it, so the line simply runs off the side of the sheet: measured on
+        # this book, 4 footnotes overhung the outer margin, the worst by 1270pt
+        # -- three page-widths of text drawn past the paper edge and lost.
+        #
+        # `break-word` rather than `anywhere` or `word-break: break-all`: it
+        # only breaks a word that cannot fit on a line of its own, so ordinary
+        # Greek prose keeps breaking on its hyphenation dictionary and only the
+        # URLs are chopped. Verified on a fixture: rightmost glyph 758.7pt ->
+        # 558.9pt against a 585.8pt limit, same line count.
+        "  overflow-wrap: break-word;",
+        # The @footnote area is only as wide as the separator rule, so each note
+        # states the type area's full width itself. Without this the notes wrap
+        # inside a 72pt column, two words to a line.
+        f"  width: {measure_mm:g}mm;",
+        "}",
+        "",
+        "::footnote-call {",
+        "  font-size: 0.7em;",
+        "  vertical-align: super;",
+        "  line-height: 0;",
+        "}",
+        "",
+        "::footnote-marker {",
+        "  font-size: 0.8em;",
+        "  padding-right: 0.35em;",
+        "}",
+        "",
+        # A continuation is the same note, so it takes no call in the body text
+        # and repeats no number at the foot. `content: ""` empties both boxes.
+        #
+        # `counter-increment: footnote -1` is the load-bearing line. Every
+        # `float: footnote` element increments the footnote counter whether or
+        # not its marker is displayed, so without this every note AFTER a split
+        # one is numbered one too high -- and the manuscript's own cross
+        # references would then point at the wrong note. Measured on a
+        # three-note fixture: suppressing the marker alone renumbers the third
+        # note 2 -> 3; decrementing restores it to 2.
+        ".footnote-continued::footnote-call {",
+        '  content: "";',
+        "}",
+        "",
+        ".footnote-continued::footnote-marker {",
+        '  content: "";',
+        "}",
+        "",
+        ".footnote-continued {",
+        "  counter-increment: footnote -1;",
+        "}",
+        "",
+        "@page {",
+        "  @footnote {",
+        # The rule is the AREA's top border, and the area is narrowed to the
+        # rule's length; the notes get their full measure back explicitly below.
+        #
+        # The obvious alternative -- a full-width area with a background rule
+        # sized to 72pt -- is a trap. WeasyPrint renders any `linear-gradient`
+        # (and any SVG data-URI) as a TILING PATTERN, and it emitted ~17 of them
+        # per page: 272,412 pattern objects across this book. Ghostscript then
+        # converts every one to CMYK, and `finish` went from 48 seconds to over
+        # ten minutes without completing. Measured on a 17-page fixture:
+        # gradient 10.2s vs border 0.2s of gs time, 289 patterns vs zero.
+        f"    border-top: {rule_thickness:g}pt solid currentColor;",
+        f"    width: {rule_width:g}pt;",
+        f"    padding-top: {leading * 0.35:.3f}pt;",
+        f"    margin-top: {leading * 0.5:.3f}pt;",
+        # THE OVERLAP FIX. Without a cap, a note taller than the space left on
+        # its page does not break -- WeasyPrint lets the footnote area grow past
+        # the bottom of the type area and then draws the body text over the top
+        # of it. Measured on this book: 40 collisions across 20 pages, entire
+        # 7pt footnote lines printed through 9pt body lines.
+        #
+        # `max-height` is what makes the note breakable: the area stops at the
+        # cap and the remainder continues on the next page. Verified on a
+        # fixture built from the failing case -- overlaps 1 -> 0, page count
+        # unchanged, and the extracted text stream identical character for
+        # character, so nothing is dropped to achieve it.
+        f"    max-height: {footnote_max_height:g}%;",
+        "  }",
+        "}",
+        "",
+    ])
+
+    # Table of contents. `target-counter(attr(href), page)` resolves to the page
+    # the entry's section actually starts on, so the figures are the typeset
+    # ones rather than whatever the author last typed; `leader('.')` fills the
+    # gap. Subsections and sub-subsections carry anchors of their own now, so
+    # they resolve too; only an entry naming a section that no longer exists in
+    # the body prints without a number.
+    lines.extend([
+        ".toc p {",
+        "  text-indent: 0;",
+        "  text-align: left;",
+        f"  margin-bottom: {leading * 0.15:.3f}pt;",
+        "}",
+        "",
+        ".toc .xref {",
+        "  text-decoration: none;",
+        "  color: inherit;",
+        "}",
+        "",
+        ".toc .xref::after {",
+        # The spaces are load-bearing. `leader('.')` fills whatever room is left
+        # on the line -- and when an entry's title happens to fill the measure
+        # exactly, that room is zero, so the leader renders as nothing and the
+        # page number jams against the last word ("...του Σωκράτους51"). A space
+        # either side guarantees the separation the leader cannot.
+        "  content: ' ' leader('.') ' ' target-counter(attr(href), page);",
         "}",
         "",
     ])
@@ -333,11 +693,69 @@ def _emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
 
 
 
+# A face's style name mapped to the CSS weight it should answer to. The name is
+# the type designer's ("Book", "Medium"), the number is what `font-weight` in a
+# stylesheet actually selects; without the mapping a spec listing Book/Medium/
+# Bold gives fontconfig three unrelated families and `<strong>` gets a
+# synthesised, smeared bold instead of the drawn one.
+_STYLE_WEIGHT = {
+    "thin": 100, "extralight": 200, "light": 300,
+    "book": 400, "normal": 400, "regular": 400,
+    "medium": 500, "semibold": 600, "demibold": 600,
+    "bold": 700, "extrabold": 800, "black": 900,
+}
+
+
+def _face_css(font: dict) -> tuple[int, str]:
+    """(font-weight, font-style) for a DesignSpec font entry."""
+    style = str(font.get("style", "regular")).lower()
+    italic = "italic" in style or "oblique" in style
+    stem = style.replace("-italic", "").replace("italic", "").strip("- ") or "regular"
+    weight = int(font.get("weight") or _STYLE_WEIGHT.get(stem, 400))
+    return weight, ("italic" if italic else "normal")
+
+
+def _font_face_rules(spec: dict) -> list[str]:
+    """`@font-face` for every spec font that names a file.
+
+    Without these the renderer can only ask fontconfig for a family by name,
+    and an uploaded family whose faces are separate fontconfig families --
+    "Fedra Serif B Pro Book" and "Fedra Serif B Pro Bold" are two, not one --
+    can never be selected by weight. Binding the files to a single CSS family
+    here is what makes `font-weight: bold` reach the drawn Bold.
+    """
+    lines: list[str] = []
+    for font in spec.get("fonts") or []:
+        file_name = font.get("file")
+        if not file_name:
+            continue
+        path = (font_root() / file_name).resolve()
+        weight, style = _face_css(font)
+        lines.extend([
+            "@font-face {",
+            f"  font-family: {_css_family(font.get('family', ''))};",
+            f"  src: url(\"{path.as_uri()}\");",
+            f"  font-weight: {weight};",
+            f"  font-style: {style};",
+            "}",
+            "",
+        ])
+    return lines
+
+
+def _css_family(family: str) -> str:
+    """A family name quoted so a multi-word name survives the stylesheet."""
+    return '"' + family.replace('\\', '').replace('"', '') + '"'
+
+
 def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     """(family, style) pairs referenced by a DesignSpec's typography block."""
     typ = spec.get("typography") or {}
     out = []
-    for key in ("bodyFont", "displayFont", "monoFont"):
+    # `headingFont` was missing from this list, so the one font a spec is most
+    # likely to set to something other than the body face went through the
+    # licence gate unchecked.
+    for key in ("bodyFont", "headingFont", "displayFont", "monoFont"):
         fam = (typ.get(key) or {}).get("family")
         if fam:
             out.append((fam, (typ.get(key) or {}).get("style", "regular")))
@@ -352,7 +770,42 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # v3: bleed is declared with the CSS `bleed` property instead of being added
     # to `size`. A v2 stylesheet renders a trim+2*bleed page whose TrimBox sits
     # on its MediaBox -- geometrically plausible, and rejected by Ghostscript.
-    version=3,
+    # v4: four emitted declarations the renderer had been silently discarding --
+    # `@page :recto/:verso` (not CSS; WeasyPrint drops the whole rule, taking the
+    # running heads and mirrored margins with it), `page-break-before: recto` (not a
+    # legal value for the legacy alias, so chapters never opened on a recto), and a
+    # missing `text-align`, which left every book ragged-right however emphatically
+    # the DesignSpec said justified. Plus footnote and TOC rules. Every v3
+    # stylesheet mis-renders those four things; none may be served from cache.
+    # v5: heading sizes, the chapter leading and the running-head size are
+    # read from the DesignSpec instead of being derived from `bodySize`; the
+    # running head takes its text from `data-caps` when the spec asks for
+    # uppercase; `@font-face` binds uploaded faces to their family; and the
+    # footnote area carries a `max-height`. That last one is a correctness fix,
+    # not a preference: without it a note taller than the space left on its page
+    # overflows and the body text is drawn through it. Every v4 stylesheet
+    # renders those overlaps, so none may be replayed.
+    # v6: `hyphenate-character`. WeasyPrint breaks with U+2010 HYPHEN, which
+    # Fedra Serif B Pro -- and most text faces -- do not carry, so every
+    # hyphenated line in a v5 stylesheet takes its hyphen from a fallback font.
+    # v7: the folio takes the heading face and the running-head size. It was
+    # pinned to the body face at a hard-coded 9pt, so it neither followed the
+    # spec's `headingFont` nor noticed the body dropping to 9pt.
+    # v8: the hyphenation zone tightened, and a Diagnostic when `shortestWord`
+    # is set below the 3+3 break floor where it can have no effect.
+    # v9: `overflow-wrap: break-word` on body and footnote text. Without it an
+    # unbreakable token longer than the measure -- a percent-encoded URL --
+    # is drawn past the outer margin instead of wrapping, so a v8 stylesheet
+    # loses that text off the side of the sheet and must not be replayed.
+    # v10: `.footnote-continued` rules, so paginate can carry the tail of an
+    # over-long note to the next page as an unnumbered continuation. A v9
+    # stylesheet has no rule for that class, so a split note would render its
+    # tail as body text mid-paragraph.
+    # v11: `overflow-wrap: break-word` on `blockquote`, matching v9's guard on
+    # `p` and `.footnote` -- a note diverted to a block quote by `ingest` is
+    # body-flow prose and can carry the same unbreakable token. A v10
+    # stylesheet has no such rule on `blockquote` at all.
+    version=11,
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
     # `profile_name` is optional so that a build which omits it still renders --
@@ -400,6 +853,22 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None,
 
     # §2.10: refuse to emit a spec naming a font that is not licensed for print.
     # Enforced in the domain layer, not the UI.
+    # Uploaded faces enter the vault here, hashed from their actual bytes, so
+    # the licence check below can see them. A face that names no file is left
+    # alone: it must already be a bundled or server-licensed family.
+    for font in spec.get("fonts") or []:
+        if font.get("source") != "tenant_upload" or not font.get("file"):
+            continue
+        try:
+            register_tenant_font(
+                font.get("family", ""),
+                font.get("style", "regular"),
+                font["file"],
+                font.get("licenseRef", "tenant-attested"),
+            )
+        except FontLicenseViolation as exc:
+            raise StageError(kind=ErrorKind.POLICY_VIOLATION, message=str(exc))
+
     for family, style in _fonts_in_spec(spec):
         try:
             validate_font_use(family, style, "PRINT_PDF")
@@ -436,7 +905,116 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None,
     ref = cas.put(css_bytes, media_type=MediaType("text/css"))
     
     print(f"  [design-compile] Generated CSS -> {ref.hash} ({len(css)} bytes)")
-    
+
+    # §3.15: a finding the user needs to know about travels as a Diagnostic, not
+    # as a silence. A spec field the target engine cannot honour is exactly that
+    # -- the alternative is emitting a declaration the renderer discards, which
+    # is how `bodyAlignment`, the hyphenation block and `@page :recto` all came
+    # to be quietly ignored for so long.
+    warnings = []
+    hyph = spec.get("hyphenation") or {}
+    if hyph.get("consecutiveHyphens") is not None:
+        warnings.append(Diagnostic(
+            code="hyphen_ladder_not_enforced",
+            severity="warning",
+            human_message=(
+                f"DesignSpec asks for at most {hyph['consecutiveHyphens']} "
+                "consecutive hyphenated lines, but the chrome-pagedjs/WeasyPrint "
+                "emitter has no property for it -- `hyphenate-limit-lines` is not "
+                "implemented. Hyphenation is applied; the ladder limit is not."
+            ),
+            suggested_fix=(
+                "Accept the ladders, or widen the measure / loosen "
+                "hyphenate-limit-zone so they arise less often."
+            ),
+            source_ref="designspec:hyphenation.consecutiveHyphens",
+        ))
+        print(f"    WARN hyphen_ladder_not_enforced: consecutiveHyphens="
+              f"{hyph['consecutiveHyphens']} cannot be enforced by this engine")
+
+    if hyph.get("shortestWord") is not None and int(hyph["shortestWord"]) < 6:
+        warnings.append(Diagnostic(
+            code="shortest_word_below_break_floor",
+            severity="warning",
+            human_message=(
+                f"DesignSpec sets hyphenation.shortestWord="
+                f"{hyph['shortestWord']}, but the emitter keeps 3 characters on "
+                "each side of a break, so no word shorter than 6 can hyphenate "
+                "whatever this value says. Values below 6 have no effect at all."
+            ),
+            suggested_fix=(
+                "Set shortestWord to 6 or more to make it meaningful, or tune "
+                "hyphenation.zone -- which is the field that actually changes "
+                "how many words break."
+            ),
+            source_ref="designspec:hyphenation.shortestWord",
+        ))
+        print(f"    WARN shortest_word_below_break_floor: shortestWord="
+              f"{hyph['shortestWord']} is below the 3+3 break floor of 6")
+
+    # `typography.opticalMargins` is the third field of its kind: read into this
+    # emitter's defaults, never emitted, and so silently false in every book
+    # ever built from a spec that asked for it -- exactly how `bodyAlignment`
+    # and `paragraphIndent` behaved before they were fixed.
+    #
+    # Unlike those two, this one cannot simply be emitted. Optical margin
+    # alignment (InDesign's term) hangs punctuation past the measure so the
+    # TEXT EDGE reads straight rather than the glyph box. The CSS property for
+    # it is `hanging-punctuation`, and WeasyPrint 62.3 does not implement it:
+    # it reports `Ignored 'hanging-punctuation: first last allow-end', unknown
+    # property` and drops the declaration. Switching engines does not rescue
+    # it either -- `preferredEngine: chrome-pagedjs` names Chrome, which has no
+    # `hanging-punctuation` support of its own.
+    #
+    # Nor can it be faked in a stylesheet. Hanging is a LINE-level effect and
+    # CSS selectors cannot address a line: `::first-letter` reaches the start of
+    # a BLOCK, so at best the punctuation opening a paragraph could hang.
+    # Measured on this manuscript, that is 186 of 3247 paragraphs against
+    # roughly 8100 line-ends and 930 line-starts that true optical margins would
+    # move -- about 2% of the effect, applied unevenly. A book where one line in
+    # fifty hangs and the rest do not looks like a mistake, not like optical
+    # margins, so this emitter declines to fake it and says so instead.
+    if (spec.get("typography") or {}).get("opticalMargins"):
+        warnings.append(Diagnostic(
+            code="optical_margins_not_supported",
+            severity="warning",
+            human_message=(
+                "DesignSpec sets typography.opticalMargins=true, but neither "
+                "renderer available to this pipeline supports optical margin "
+                "alignment: `hanging-punctuation` is an unknown property in "
+                "WeasyPrint 62.3 and is unimplemented in Chrome. Punctuation "
+                "sits inside the measure, so the right-hand edge is aligned on "
+                "the glyph box rather than optically. Roughly 34% of body lines "
+                "in a justified Greek text end in a hangable character."
+            ),
+            suggested_fix=(
+                "Set opticalMargins to false so the spec matches the output, or "
+                "accept the mechanical edge. Faking it on paragraph-initial "
+                "punctuation alone would move about 2% of the affected places "
+                "and read as an error rather than as optical alignment."
+            ),
+            source_ref="designspec:typography.opticalMargins",
+        ))
+        print("    WARN optical_margins_not_supported: hanging-punctuation is "
+              "not implemented by this renderer; punctuation will not hang")
+
+    verso_source = (spec.get("runningHeads") or {}).get("versoSource")
+    if verso_source == "book-title":
+        warnings.append(Diagnostic(
+            code="verso_head_not_available",
+            severity="warning",
+            human_message=(
+                "DesignSpec asks for the book title in the verso running head, "
+                "but design-compile emits CSS from the DesignSpec alone and never "
+                "sees the manuscript's metadata, so there is no string to set. "
+                "Verso running heads will be blank."
+            ),
+            suggested_fix='Use runningHeads.versoSource: "chapter-title".',
+            source_ref="designspec:runningHeads.versoSource",
+        ))
+        print("    WARN verso_head_not_available: versoSource='book-title' has no "
+              "source in the emitter; verso heads will be blank")
+
     return StageResult(
         artifacts=[StageArtifactRef(
             kind="css",   # must exactly equal the declared output key "css"
@@ -445,6 +1023,7 @@ def design_compile(ctx: StageCtx, designspec_path: str | None = None,
             size=len(css_bytes),
         )],
         metrics={"css_size_bytes": len(css_bytes), "rule_count": css.count(" {")},
+        warnings=warnings,
     )
 
 
