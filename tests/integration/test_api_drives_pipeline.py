@@ -25,6 +25,8 @@ from conftest import (
     DATABASE_URL, RUN_ID, TEST_CAS_ROOT, TOKEN,
     _headers, api_server, make_docx,
 )
+# conftest puts tests/ on sys.path, and pytest imports it before this module.
+from proc_control import kill_tree, new_session_kwargs
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_DIR = REPO_ROOT / "packages" / "api"
@@ -73,15 +75,14 @@ def worker_process():
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        **new_session_kwargs(),
     )
     try:
         yield proc
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        # terminate() reaches worker.py but not the Ghostscript it may have
+        # running; that grandchild also inherited this stdout pipe.
+        kill_tree(proc)
 
 
 def _make_document(base_url: str, make_docx, *, heading: str = "DETECTOR NOVEL",

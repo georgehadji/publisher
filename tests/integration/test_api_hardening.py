@@ -38,6 +38,8 @@ from conftest import (
     API_DIR, DATABASE_URL, RUN_ID, TEST_CAS_ROOT, TOKEN,
     _headers, api_server, create_uploaded_manuscript, make_docx,
 )
+# conftest puts tests/ on sys.path, and pytest imports it before this module.
+from proc_control import kill_tree, new_session_kwargs
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -173,6 +175,9 @@ def _spawn_api(env_overrides: dict) -> subprocess.Popen:
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        # tsx.cmd is cmd.exe -> node.exe on Windows. Without its own session the
+        # node process outlives teardown and keeps serving on the port.
+        **new_session_kwargs(),
     )
 
 
@@ -226,11 +231,7 @@ def test_health_degraded_when_postgres_down(api_server):
         assert body.get("status") == "degraded", f"health must degrade with postgres down: {body}"
         assert body.get("checks", {}).get("postgres") == "down", f"postgres check must report down: {body}"
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        kill_tree(proc)
 
 
 # ── U7: /v1/admin/metrics ───────────────────────────────────────

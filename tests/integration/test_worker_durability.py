@@ -38,6 +38,8 @@ import psycopg2.extras
 import pytest
 
 from conftest import RUN_ID, TEST_CAS_ROOT, insert_build, set_manuscript_source
+# conftest puts tests/ on sys.path, and pytest imports it before this module.
+from proc_control import kill_tree, new_session_kwargs
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -54,6 +56,9 @@ def _spawn_worker(db_url: str) -> subprocess.Popen:
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        # Its own session, so teardown can reach a Ghostscript/Typst child that
+        # the worker had running. send_signal() below still targets this pid.
+        **new_session_kwargs(),
     )
 
 
@@ -83,11 +88,7 @@ def test_expired_running_lease_is_reclaimed(db, db_url, make_docx, register_tena
     try:
         row = _wait_for_terminal(db, build_id)
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        kill_tree(proc)
 
     assert row["status"] in ("completed", "failed"), (
         f"reclaimed build must reach a terminal state, got {row['status']}"
@@ -155,6 +156,7 @@ def test_sigterm_stops_worker_cleanly(db, db_url):
         proc.send_signal(signal.SIGTERM)
         code = proc.wait(timeout=10)
     finally:
-        if proc.poll() is None:
-            proc.kill()
+        # Safety net only -- the assertion below is the point of this test, so
+        # the graceful SIGTERM path above is left exactly as it was.
+        kill_tree(proc)
     assert code == 0, f"worker must exit 0 on SIGTERM, got {code}"

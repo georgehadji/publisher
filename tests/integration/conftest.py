@@ -33,6 +33,20 @@ for sub in ("platform/stages/py", "platform/cas/py", "platform/cache/py"):
     if sub not in sys.path:
         sys.path.insert(0, str(REPO_ROOT / sub))
 
+# tests/ is not a package (no __init__.py anywhere under it), so the shared
+# process helpers are reached the way this file already reaches the platform
+# packages: by path, before the import.
+TESTS_ROOT = Path(__file__).resolve().parents[1]
+if str(TESTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TESTS_ROOT))
+
+from proc_control import (  # noqa: E402  -- needs the sys.path insert above
+    kill_tree,
+    kill_tree_and_drain,
+    new_session_kwargs,
+    postgres_skip_reason,
+)
+
 API_DIR = REPO_ROOT / "packages" / "api"
 
 DATABASE_URL = os.environ.get(
@@ -52,6 +66,33 @@ def _free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def require_postgres():
+    """Skip this whole directory -- fast -- when there is no database to talk to.
+
+    `scripts/test.ps1` runs `pytest platform services packages stages tests`,
+    so `tests/integration/` is part of the documented whole-suite command. On a
+    clean checkout with no Postgres these tests do not merely fail, they used
+    to wedge the run: the `api_server` fixture below spent 20s failing to reach
+    a server that could not start, then hung forever reading its output.
+
+    A TCP probe, not a psycopg2 connect: this runs on every session including
+    on machines with no database at all, and must answer in milliseconds. It
+    answers only "is something listening". Anything subtler -- wrong password,
+    missing schema, a genuinely broken API -- must still fail loudly inside the
+    tests. Nothing here weakens an assertion; it only decides run vs skip.
+
+    Autouse session fixture rather than `pytest.skip(allow_module_level=True)`
+    deliberately: a module-level skip removes these tests from COLLECTION,
+    which would quietly shrink the count that tests/test_collection_floor.py
+    exists to guard, and hide the integration suite from the report entirely.
+    This way they stay collected and are reported as skipped, with the reason.
+    """
+    reason = postgres_skip_reason(DATABASE_URL)
+    if reason:
+        pytest.skip(reason)
 
 
 @pytest.fixture(scope="session")
@@ -210,16 +251,20 @@ def spawn_worker(db_url: str, *, env: dict | None = None) -> subprocess.Popen:
         env=full_env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        # A worker is a tree: mid-build it has Ghostscript, pandoc or Typst
+        # running under it. Its own session makes those reachable by stop_worker.
+        **new_session_kwargs(),
     )
 
 
 def stop_worker(proc: subprocess.Popen, timeout_s: float = 5) -> None:
-    proc.terminate()
-    try:
-        proc.wait(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=timeout_s)
+    """Stop a worker AND whatever it had running.
+
+    `terminate()` alone signals worker.py only; a Ghostscript or Typst child
+    mid-render survives it and keeps working against the shared test CAS root
+    after the test that owned it has finished.
+    """
+    kill_tree(proc, timeout_s=timeout_s)
 
 
 def wait_for_terminal(db_url: str, build_id: str, timeout_s: int = 90) -> dict:
@@ -359,6 +404,9 @@ def api_server():
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        # On Windows `tsx` is tsx.cmd: cmd.exe spawning node.exe. On POSIX it is
+        # a shell shim. Either way the process we hold is not the one serving.
+        **new_session_kwargs(),
     )
     base_url = f"http://127.0.0.1:{port}"
     try:
@@ -372,13 +420,15 @@ def api_server():
                 pass
             time.sleep(0.2)
         if not healthy:
-            proc.terminate()
-            out = proc.stdout.read() if proc.stdout else ""
+            # This line used to be `proc.terminate()` followed by a bare
+            # `proc.stdout.read()`, and it hung the entire suite forever:
+            # terminate killed tsx, node.exe kept the write end of the pipe,
+            # the pipe never reached EOF, and the read never returned. Kill the
+            # tree first, then read with a deadline.
+            out = kill_tree_and_drain(proc)
             pytest.fail(f"API server never became healthy.\n{out}")
         yield base_url
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        # Same orphan problem, quieter symptom: the old terminate/wait/kill
+        # reaped tsx and left node.exe serving on the port after every run.
+        kill_tree(proc)
