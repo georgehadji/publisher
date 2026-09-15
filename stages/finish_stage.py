@@ -30,6 +30,7 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 from publisher_prepress.ghostscript import (
     GhostscriptError, find_binary, to_pdfx, to_proof,
 )
+from publisher_sandbox import sandbox_for
 from profiles import load_profile
 
 
@@ -96,10 +97,15 @@ def finish(ctx: StageCtx, pdf_path: str | None = None,
     if gs_binary is not None:
         press_path = work / "press.pdf"
         proof_path = work / "proof.pdf"
+        # E3.2: real rlimit containment around ghostscript. Dockerfile.worker
+        # is Linux-only, so production always gets RlimitSubprocessSandbox;
+        # InProcessSandbox is only ever reached in local dev/test on a
+        # platform with no rlimits (Windows) -- see sandbox_for()'s docstring.
+        sandbox = sandbox_for()
         try:
             to_pdfx(pdf_path_p, press_path, work, title=ctx.build_id,
-                    bleed_pt=bleed_pt, gs_binary=gs_binary)
-            to_proof(pdf_path_p, proof_path, gs_binary=gs_binary)
+                    bleed_pt=bleed_pt, gs_binary=gs_binary, sandbox=sandbox)
+            to_proof(pdf_path_p, proof_path, gs_binary=gs_binary, sandbox=sandbox)
         except GhostscriptError as e:
             # A failed conversion is an engine failure, not a reason to fall back
             # to passing the input through -- that is precisely the silent

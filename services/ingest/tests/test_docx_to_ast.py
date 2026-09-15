@@ -252,3 +252,102 @@ def test_external_entity_in_docx_is_not_resolved(tmp_path):
         "external entity was resolved -- the AST contains the entity target's "
         "content (XXE). lxml must not load external entities."
     )
+
+
+# ── E3.4 (docs/ARCHITECTURE_SCORE_10_PLAN.md): audit the OOXML XML path ──
+#
+# The XXE test above exercises document.xml, which python-docx's own
+# Document() constructor parses. word/footnotes.xml is a SEPARATE parse call
+# (docx_rich.read_footnotes(), via a bare lxml etree.fromstring() -- python-docx
+# has no footnote API) that the XXE test above never touches. These two verify
+# it independently rather than assuming it inherits document.xml's protection
+# just because it is "the same library".
+
+def _docx_with_footnotes(tmp_path: "Path", footnotes_xml: bytes) -> "Path":
+    """A real DOCX, built via python-docx, with a properly-declared
+    word/footnotes.xml part added after the fact -- valid content-type
+    Override and relationship, so read_footnotes()'s `iter_parts()` walk
+    actually discovers it, the same as a real document with footnotes would."""
+    import zipfile
+    from pathlib import Path
+
+    base = tmp_path / "base.docx"
+    docx.Document().save(str(base))
+
+    content_types_override = (
+        b'<Override PartName="/word/footnotes.xml" '
+        b'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>'
+    )
+    footnotes_rel = (
+        b'<Relationship Id="rIdFootnotesTest" '
+        b'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" '
+        b'Target="footnotes.xml"/>'
+    )
+
+    out = tmp_path / "with-footnotes.docx"
+    with zipfile.ZipFile(base) as src, zipfile.ZipFile(out, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == "[Content_Types].xml":
+                data = data.replace(b"</Types>", content_types_override + b"</Types>")
+            elif item.filename == "word/_rels/document.xml.rels":
+                data = data.replace(b"</Relationships>", footnotes_rel + b"</Relationships>")
+            dst.writestr(item, data)
+        dst.writestr("word/footnotes.xml", footnotes_xml)
+    return out
+
+
+def test_external_entity_in_footnotes_xml_is_not_resolved(tmp_path):
+    from pathlib import Path
+
+    marker = "PUBLISHER_XXE_FOOTNOTE_MARKER_9c1b"
+    target_url = Path(__file__).resolve().as_uri()
+    footnotes_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<!DOCTYPE r [<!ENTITY xxe SYSTEM "{target_url}">]>'
+        '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:footnote w:id="1" w:type="normal">'
+        '<w:p><w:r><w:t>&xxe;</w:t></w:r></w:p>'
+        "</w:footnote>"
+        "</w:footnotes>"
+    ).encode("utf-8")
+    docx_path = _docx_with_footnotes(tmp_path, footnotes_xml)
+
+    try:
+        ast = docx_to_ast(docx_path)
+    except Exception:
+        return  # refused loudly -- equally acceptable: no silent expansion
+
+    import json
+
+    assert marker not in json.dumps(ast, ensure_ascii=False), (
+        "external entity in footnotes.xml was resolved -- the AST contains "
+        "the entity target's content (XXE)."
+    )
+
+
+def test_billion_laughs_in_footnotes_xml_is_refused_as_bad_input(tmp_path):
+    # Verified empirically (not assumed) that lxml's built-in entity-
+    # amplification guard already refuses this, raising XMLSyntaxError --
+    # this asserts docx_to_ast reclassifies that as IngestError/BAD_INPUT
+    # instead of letting it leak as an unclassified crash.
+    footnotes_xml = (
+        '<?xml version="1.0"?>'
+        "<!DOCTYPE lolz ["
+        '<!ENTITY lol "lol">'
+        '<!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">'
+        '<!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">'
+        '<!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;">'
+        '<!ENTITY lol5 "&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;">'
+        '<!ENTITY lol6 "&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;">'
+        "]>"
+        '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:footnote w:id="1" w:type="normal">'
+        "<w:p><w:r><w:t>&lol6;</w:t></w:r></w:p>"
+        "</w:footnote>"
+        "</w:footnotes>"
+    ).encode("utf-8")
+    docx_path = _docx_with_footnotes(tmp_path, footnotes_xml)
+
+    with pytest.raises(IngestError):
+        docx_to_ast(docx_path)

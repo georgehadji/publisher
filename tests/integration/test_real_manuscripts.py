@@ -101,7 +101,10 @@ def test_upload_route_rejects_non_docx(api_server, make_docx):
         },
     )
     assert resp.status_code == 400, f"garbage upload must be rejected, got {resp.status_code}: {resp.text}"
-    assert "not a DOCX" in resp.json().get("error", "")
+    # The route's message broadened to cover legacy .doc detection too; this
+    # assertion had drifted from it (pre-existing, unrelated to E3 -- caught
+    # now that Postgres is finally reachable in this environment).
+    assert "neither a DOCX" in resp.json().get("error", "")
 
 
 def test_upload_route_rejects_oversized_docx(api_server, make_docx):

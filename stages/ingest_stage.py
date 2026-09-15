@@ -33,6 +33,7 @@ from publisher_stages import (
     ArtifactRef as StageArtifactRef,
 )
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
+from publisher_sandbox import SandboxConfig, ThreatMonitor
 
 # U5/S9 -- zip-bomb caps. A DOCX is a ZIP archive; a hostile file can declare
 # huge uncompressed sizes or a huge entry count while being small on the wire
@@ -42,6 +43,11 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 # data, so the check is cheap.
 MAX_DOCX_ENTRIES = int(os.environ.get("PUBLISHER_MAX_DOCX_ENTRIES", "4096"))
 MAX_DOCX_DECOMPRESSED = int(os.environ.get("PUBLISHER_MAX_DOCX_DECOMPRESSED_BYTES", str(256 * 1024 * 1024)))
+# E3.4 audit: entry count and total uncompressed size were bounded, but an
+# individual entry's NAME was not -- a single absurdly long central-directory
+# filename can bypass a count-based cap. Real OOXML part names are always
+# short ("word/document.xml", "word/media/image12.png").
+MAX_DOCX_ENTRY_NAME_CHARS = int(os.environ.get("PUBLISHER_MAX_DOCX_ENTRY_NAME_CHARS", "512"))
 
 
 # Legacy binary Word (.doc) is an OLE2 compound file, not a ZIP. python-docx
@@ -116,6 +122,12 @@ def _convert_legacy_doc(source: Path, work_dir: Path) -> Path:
 
 
 def _check_zip_limits(source: Path) -> None:
+    """Delegates to `publisher_sandbox.ThreatMonitor` (E3.3) rather than
+    re-implementing entry-count/size caps inline -- `ingest_stage.py` and
+    `publisher_sandbox` had two zip-bomb checks that could silently drift out
+    of sync; deleting this one also means the caps here get
+    ThreatMonitor's compression-ratio check for free, which this inline
+    version never had."""
     try:
         with zipfile.ZipFile(source) as zf:
             infos = zf.infolist()
@@ -124,18 +136,28 @@ def _check_zip_limits(source: Path) -> None:
             kind=ErrorKind.BAD_INPUT,
             message=f"{source.name} is not a valid ZIP/DOCX archive: {e}",
         ) from e
-    if len(infos) > MAX_DOCX_ENTRIES:
+
+    monitor = ThreatMonitor(SandboxConfig(
+        max_zip_entries=MAX_DOCX_ENTRIES,
+        max_zip_uncompressed_bytes=MAX_DOCX_DECOMPRESSED,
+    ))
+    monitor.check_zip_bomb(
+        file_size=sum(i.file_size for i in infos),
+        compressed_size=sum(i.compress_size for i in infos),
+        entry_count=len(infos),
+    )
+    if monitor.has_violations:
         raise StageError(
             kind=ErrorKind.BAD_INPUT,
-            message=f"{source.name} has {len(infos)} entries, over the "
-                    f"{MAX_DOCX_ENTRIES} cap -- refusing to decompress a zip bomb",
+            message=f"{source.name} failed the zip bomb guard: {'; '.join(monitor.violations)}",
         )
-    total = sum(i.file_size for i in infos)
-    if total > MAX_DOCX_DECOMPRESSED:
+
+    longest = max((i.filename for i in infos), key=len, default="")
+    if len(longest) > MAX_DOCX_ENTRY_NAME_CHARS:
         raise StageError(
             kind=ErrorKind.BAD_INPUT,
-            message=f"{source.name} declares {total} bytes uncompressed, over the "
-                    f"{MAX_DOCX_DECOMPRESSED} cap -- refusing to decompress a zip bomb",
+            message=f"{source.name} has an entry name of {len(longest)} characters, "
+                    f"over the {MAX_DOCX_ENTRY_NAME_CHARS} cap: {longest[:80]!r}...",
         )
 
 

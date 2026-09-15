@@ -9,6 +9,7 @@ description = "Prepress module — geometry, preflight rules, font vault, vendor
 requires-python = ">=3.12"
 dependencies = [
     "pyyaml>=6.0",
+    "publisher-sandbox",
 ]
 optional-dependencies = {test = ["pytest>=8.0"]}
 

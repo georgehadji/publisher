@@ -14,6 +14,7 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 from publisher_prepress.preflight import run_preflight
 from publisher_prepress.geometry import spine_width, cover_dimensions, TrimSize, BleedBox
 from publisher_prepress.ghostscript import GhostscriptError, find_binary, to_pdfx, to_proof
+from publisher_sandbox import sandbox_for
 from profiles import load_profile
 
 
@@ -320,6 +321,9 @@ def finish_gs(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -> Stag
     if gs_binary is not None:
         press_path = work / "press.pdf"
         proof_path = work / "proof.pdf"
+        # E3.2: real rlimit containment around ghostscript -- see finish_stage.py's
+        # matching call site and sandbox_for()'s docstring.
+        sandbox = sandbox_for()
         try:
             to_pdfx(
                 pdf_path_p, press_path, work,
@@ -328,8 +332,9 @@ def finish_gs(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -> Stag
                 # Same figure design-compile grew the page box by; see finish v6.
                 bleed_pt=float((profile.get("bleed") or {}).get("all", 0.0)) * 72.0 / 25.4,
                 gs_binary=gs_binary,
+                sandbox=sandbox,
             )
-            to_proof(pdf_path_p, proof_path, gs_binary=gs_binary)
+            to_proof(pdf_path_p, proof_path, gs_binary=gs_binary, sandbox=sandbox)
         except GhostscriptError as e:
             raise StageError(
                 kind=ErrorKind.ENGINE_BUG,

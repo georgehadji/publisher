@@ -35,6 +35,7 @@ from typing import Iterator
 import docx
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+from lxml import etree
 
 from .docx_rich import (
     MediaNotStorable,
@@ -343,6 +344,17 @@ def docx_to_ast(
         blocks, sources = read_blocks(source, store_media=store_media)
     except MediaNotStorable as e:
         raise IngestError(str(e)) from e
+    except etree.XMLSyntaxError as e:
+        # E3.4 audit: docx_rich.read_footnotes() parses word/footnotes.xml
+        # directly (python-docx has no footnote API), via lxml's default
+        # etree.fromstring() -- unlike document.xml, which python-docx's own
+        # Document() constructor parses. A malformed or hostile footnotes.xml
+        # (e.g. a billion-laughs payload; verified empirically that lxml's
+        # built-in entity-amplification guard already refuses it, raising
+        # exactly this exception) would otherwise leak past this function as
+        # an unclassified lxml error instead of the BAD_INPUT this module
+        # exists to produce for every other malformed-DOCX case.
+        raise IngestError(f"malformed XML in a DOCX part: {e}") from e
     if not blocks:
         raise IngestError(f"DOCX contains no text: {source}")
 

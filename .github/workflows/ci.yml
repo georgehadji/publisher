@@ -31,6 +31,17 @@ env:
 jobs:
   python:
     runs-on: ubuntu-latest
+    env:
+      # E2.2/E3.2 interaction found verifying E3.1 against a real build:
+      # deadline_mw runs a stage on a background thread, and glibc gives a
+      # new thread its own malloc arena (tens of MB, reserved via mmap) on
+      # its first allocation -- exactly what memory_mw's RLIMIT_AS exists to
+      # block. Without this, a realistic budget can make the WATCHDOG
+      # THREAD's own first allocation fail, surfacing as a garbled parse
+      # error instead of a clean MemoryError. See memory_mw's docstring
+      # (platform/exec/py/publisher_exec/__init__.py) for the full story;
+      # this runner hits the same threaded chain Dockerfile.worker does.
+      MALLOC_ARENA_MAX: "1"
     services:
       postgres:
         image: postgres:16-alpine

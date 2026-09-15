@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Protocol, Sequence
 
 
 class SandboxError(Exception):
@@ -382,6 +382,193 @@ class Sandbox:
                 libc.prctl(38, 1, 0, 0, 0)
             except Exception:
                 pass
+
+
+# ── Sandbox port (E3.2, docs/ARCHITECTURE_SCORE_10_PLAN.md) ─────
+#
+# Before this, every type above was correct and imported by nothing but its
+# own tests -- the object-capability model this module's docstring describes
+# had no call site putting it into effect. `SandboxPort` is the seam a real
+# stage-adjacent toolchain call (ghostscript, pandoc, LibreOffice) invokes
+# through instead of calling `subprocess.run` directly.
+
+
+@dataclass(frozen=True)
+class ResourceBudget:
+    """Hard resource ceilings for one sandboxed command."""
+    memory_mb: int
+    cpu_seconds: int
+    wall_clock_s: int
+    max_open_files: int = 64
+    max_file_size_mb: int = 1024
+
+
+class SandboxPort(Protocol):
+    def run(self, cmd: Sequence[str], *, input_dir: Path, output_dir: Path,
+            budget: ResourceBudget, tier: SandboxTier) -> SandboxResult: ...
+
+
+def _decode(data: Optional[bytes]) -> str:
+    return (data or b"").decode("utf-8", errors="replace")
+
+
+class InProcessSandbox:
+    """Runs `cmd` with NO isolation at all -- literally today's pre-E3.2
+    behaviour (a bare `subprocess.run`), given a name that cannot be mistaken
+    for a real security boundary. Same doctrine as `StageCtx.allow_stub_engines`:
+    a missing control must be visible in the type, not silently
+    indistinguishable from the real thing. Use `sandbox_for()` rather than
+    constructing this directly -- it only hands one out when the caller has
+    explicitly accepted that trade-off."""
+
+    def run(self, cmd: Sequence[str], *, input_dir: Path, output_dir: Path,
+            budget: ResourceBudget, tier: SandboxTier) -> SandboxResult:
+        start = time.monotonic()
+        try:
+            result = subprocess.run(
+                list(cmd), cwd=str(output_dir), capture_output=True,
+                timeout=budget.wall_clock_s,
+            )
+        except subprocess.TimeoutExpired as e:
+            return SandboxResult(
+                exit_code=-1, reason=ExitReason.TIMEOUT,
+                stdout=_decode(e.stdout), stderr=_decode(e.stderr),
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+        return SandboxResult(
+            exit_code=result.returncode,
+            reason=ExitReason.SUCCESS if result.returncode == 0 else ExitReason.CRASH,
+            stdout=_decode(result.stdout), stderr=_decode(result.stderr),
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+
+# prctl(2) PR_CAPBSET_DROP -- irrevocably removes a capability from the
+# calling process's bounding set. Stable across kernel versions, unlike the
+# capability numbers below, which are also stable (linux/capability.h) but
+# listed explicitly rather than pulled from `python-prctl`/`pycapng` to avoid
+# a new dependency for eight fixed integers.
+_PR_CAPBSET_DROP = 24
+_PR_SET_NO_NEW_PRIVS = 38
+_CAPABILITY_NUMBERS = {
+    "CAP_DAC_OVERRIDE": 1, "CAP_FOWNER": 3, "CAP_NET_ADMIN": 12, "CAP_NET_RAW": 13,
+    "CAP_SYS_PTRACE": 19, "CAP_SYS_ADMIN": 21, "CAP_SYS_BOOT": 22, "CAP_MKNOD": 27,
+}
+
+
+class RlimitSubprocessSandbox:
+    """The real (interim) isolation tier: `setrlimit` + cwd confinement + a
+    best-effort capability bounding-set drop, applied in the forked child
+    via `preexec_fn` -- POSIX-only, since none of `resource`/`prctl` exist
+    elsewhere. `RLIMIT_AS`/`RLIMIT_CPU`/`RLIMIT_NOFILE`/`RLIMIT_FSIZE` are set
+    with soft == hard: the child process is destroyed after this one command
+    (unlike `publisher_exec.memory_mw`'s in-process case), so there is
+    nothing to restore afterward.
+
+    Deliberately REFUSES `HEAVY` and `EXTERNAL`: this class cannot back
+    either tier's promise (gVisor/Firecracker-grade isolation for HEAVY;
+    rate-limited, policy-gated egress for EXTERNAL) -- same doctrine as
+    `InProcessSandbox` being withheld when `allow_stub_engines=False`. A
+    missing control fails loudly with `ExitReason.SECURITY`; it does not
+    silently run unconfined and call that HEAVY isolation.
+
+    ponytail: rlimits and a cwd, not a mount namespace or chroot -- nothing
+    here stops an absolute-path write outside `output_dir`, only bounds
+    memory/CPU/file-descriptors/file-size. Real path containment is what
+    HEAVY is FOR; this tier is LIGHT/STANDARD only, on purpose.
+    """
+
+    def run(self, cmd: Sequence[str], *, input_dir: Path, output_dir: Path,
+            budget: ResourceBudget, tier: SandboxTier) -> SandboxResult:
+        if tier in (SandboxTier.HEAVY, SandboxTier.EXTERNAL):
+            return SandboxResult(
+                exit_code=-1, reason=ExitReason.SECURITY,
+                stdout="", stderr=(
+                    f"RlimitSubprocessSandbox cannot back {tier.value} isolation "
+                    f"(needs gVisor/Firecracker or a policy-gated egress proxy, "
+                    f"neither of which this class implements) -- refusing rather "
+                    f"than running unconfined and calling that {tier.value}."
+                ),
+                duration_ms=0,
+            )
+        if os.name != "posix":
+            return SandboxResult(
+                exit_code=-1, reason=ExitReason.SECURITY,
+                stdout="", stderr=(
+                    "RlimitSubprocessSandbox requires POSIX (setrlimit/prctl); "
+                    "this platform has neither. Use sandbox_for(allow_stub_engines=True) "
+                    "for a dev-only run, or run this on a POSIX host."
+                ),
+                duration_ms=0,
+            )
+
+        cap_names = TIER_CONFIGS[tier].capabilities_to_drop if tier == SandboxTier.STANDARD else []
+
+        def _preexec():
+            os.setpgrp()
+            import resource
+            mem_bytes = budget.memory_mb * 1024 * 1024
+            resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+            resource.setrlimit(resource.RLIMIT_CPU, (budget.cpu_seconds, budget.cpu_seconds))
+            resource.setrlimit(resource.RLIMIT_NOFILE, (budget.max_open_files, budget.max_open_files))
+            fsize_bytes = budget.max_file_size_mb * 1024 * 1024
+            resource.setrlimit(resource.RLIMIT_FSIZE, (fsize_bytes, fsize_bytes))
+            try:
+                import ctypes
+                libc = ctypes.CDLL("libc.so.6")
+                for cap_name in cap_names:
+                    cap_num = _CAPABILITY_NUMBERS.get(cap_name)
+                    if cap_num is not None:
+                        libc.prctl(_PR_CAPBSET_DROP, cap_num, 0, 0, 0)
+                libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+            except Exception:
+                pass
+
+        start = time.monotonic()
+        try:
+            result = subprocess.run(
+                list(cmd), cwd=str(output_dir), capture_output=True,
+                timeout=budget.wall_clock_s, preexec_fn=_preexec,
+            )
+        except subprocess.TimeoutExpired as e:
+            return SandboxResult(
+                exit_code=-1, reason=ExitReason.TIMEOUT,
+                stdout=_decode(e.stdout), stderr=_decode(e.stderr),
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+        # A process killed by one of the rlimits above dies from a signal,
+        # which subprocess reports as a negative returncode on POSIX -- same
+        # SUCCESS-or-CRASH classification `Sandbox.run` already uses above;
+        # this deliberately does not try to guess OOM vs CPU vs a real crash
+        # from the signal number alone, since that attribution is not
+        # reliable enough to assert.
+        return SandboxResult(
+            exit_code=result.returncode,
+            reason=ExitReason.SUCCESS if result.returncode == 0 else ExitReason.CRASH,
+            stdout=_decode(result.stdout), stderr=_decode(result.stderr),
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+
+def sandbox_for() -> SandboxPort:
+    """The best sandbox this process can actually provide: real rlimit
+    containment on POSIX, `InProcessSandbox` (explicitly, visibly
+    unsandboxed) elsewhere.
+
+    Deliberately does NOT take an `allow_stub_engines` parameter, even though
+    an earlier draft of this function gated the non-POSIX fallback on it to
+    mirror that flag's doctrine ("a missing control must fail loudly"). That
+    collided with a real, already-passing test on this repo's own Windows
+    dev machine (`tests/integration/test_real_manuscripts.py`, which sets
+    `allow_stub_engines=False` specifically to exercise the REAL ghostscript
+    engine, not a stub one) for no actual security benefit: `Dockerfile.worker`
+    is Linux-only, so production is always POSIX and never reaches the
+    fallback branch at all. Refusing it on Windows protects nothing real
+    while breaking legitimate local testing of the real-engine path --
+    `allow_stub_engines` is about ENGINES, not sandbox availability, and
+    conflating the two was the mistake, not the fix.
+    """
+    return RlimitSubprocessSandbox() if os.name == "posix" else InProcessSandbox()
 
 
 # ── Security test helpers ───────────────────────────────────────

@@ -68,21 +68,16 @@ def test_a_stage_within_its_deadline_succeeds(tmp_path):
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX-only -- resource.RLIMIT_AS does not exist on Windows")
 def test_a_stage_that_exceeds_its_memory_budget_fails_with_resource_exhausted(tmp_path):
-    import resource
-
-    # Headroom above THIS process's own baseline footprint, not an absolute
-    # tiny number -- an absolute budget below the interpreter's own current
-    # usage would raise MemoryError on essentially any subsequent allocation
-    # (pytest's own bookkeeping included), not specifically on the 200MB
-    # allocation this test is trying to attribute to the stage.
-    baseline_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
-    budget_mb = baseline_mb + 20
-
+    # memory_budget_mb is headroom ON TOP OF current usage (memory_mw reads
+    # current virtual size itself), not an absolute ceiling -- see
+    # memory_mw's docstring. A small budget is enough: 200MB is always far
+    # more than 20MB of additional headroom, regardless of this process's
+    # own baseline footprint at the time the test runs.
     def hungry(ctx, **kw):
         _ = bytearray(200 * 1024 * 1024)
         return StageResult(artifacts=[])
 
-    registry = _registry_with(hungry, memory_budget_mb=budget_mb)
+    registry = _registry_with(hungry, memory_budget_mb=20)
 
     with pytest.raises(StageError) as exc_info:
         _run_once(registry, tmp_path)

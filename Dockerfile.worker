@@ -59,6 +59,47 @@ COPY templates/ templates/
 COPY corpus/ corpus/
 COPY tracer_bullet.py worker.py cli.py ./
 
-ENV PYTHONPATH=/app/platform/stages/py:/app/platform/cas/py:/app/platform/cache/py:/app/platform/reproducibility/src:/app/platform/supply-chain/src:/app/services/structure:/app/services/agents:/app/services/ingest:/app/services/cover:/app/services/epub:/app/services/idml:/app/services/onix:/app/services/prepress:/app/services/alttext
+# E3.1 audit: publisher_exec (E1.1) and publisher_sandbox (E3.2) were both
+# missing here -- worker.py's own `from publisher_exec import DagExecutor`
+# means this container has never actually been able to run a build. The
+# reproducibility/supply-chain entries pointed at a `/src` subdirectory
+# neither package has (the actual packages sit directly under their
+# platform/<name>/ directory, matching every other platform/* package here);
+# fixed alongside since they were wrong for the same reason -- a path that
+# was never exercised because nothing in worker.py's own import chain needs
+# either package.
+ENV PYTHONPATH=/app/platform/stages/py:/app/platform/cas/py:/app/platform/cache/py:/app/platform/exec/py:/app/platform/sandbox/py:/app/platform/reproducibility:/app/platform/supply-chain:/app/services/structure:/app/services/agents:/app/services/ingest:/app/services/cover:/app/services/epub:/app/services/idml:/app/services/onix:/app/services/prepress:/app/services/alttext
+
+# E2.2/E3.2 interaction found and reproduced empirically while verifying E3.1
+# against a real build in this container: publisher_exec's deadline_mw runs
+# every stage on a background thread (its watchdog), and memory_mw applies
+# the stage's declared memory_budget_mb as an RLIMIT_AS around it. glibc's
+# malloc gives each thread its OWN arena the first time it allocates, and
+# reserves that arena's virtual memory (tens of MB) via mmap upfront -- which
+# is exactly the kind of allocation RLIMIT_AS exists to block. Under a
+# realistic budget (ingest's declared 128 MB, with this image's normal
+# baseline footprint already close to it), the watchdog thread's first
+# malloc for its own arena can itself fail, and libxml2 does not always
+# surface that cleanly -- it appeared here as a real DOCX failing to parse
+# with lxml's `unknown error (<string>, line 0)`, not a clean MemoryError.
+# MALLOC_ARENA_MAX=1 forces every thread to share one arena, which is the
+# standard fix for RLIMIT_AS + multithreaded glibc and was confirmed (with
+# and without) to be the difference between the failure and a clean run.
+ENV MALLOC_ARENA_MAX=1
+
+# E3.1: run as a fixed non-root uid, never root. Two things the READ-ONLY
+# rootfs (docker-compose.yml) makes load-bearing here, both done as root
+# before dropping privileges:
+#   - fontconfig's cache: weasyprint/LibreOffice both need it, and a
+#     read-only rootfs can never build it at runtime.
+#   - /data/cas ownership: an empty NAMED VOLUME is created owned by root on
+#     first use, but Docker seeds a fresh volume from whatever the image
+#     already has at that mount point -- so the image must own it as the
+#     app user *before* docker-compose.yml ever mounts cas-data there.
+RUN groupadd -r publisher && useradd -r -g publisher -u 10001 -m -d /home/publisher publisher \
+    && fc-cache -f \
+    && mkdir -p /data/cas && chown -R publisher:publisher /data/cas /home/publisher
+
+USER 10001:10001
 
 CMD ["python", "worker.py"]

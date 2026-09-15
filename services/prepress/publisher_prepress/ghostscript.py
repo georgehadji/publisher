@@ -26,6 +26,8 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from publisher_sandbox import ExitReason, ResourceBudget, SandboxPort, SandboxTier
+
 # Ghostscript's -dPDFX alone does NOT produce a conformant PDF/X file: the
 # standard requires an OutputIntent naming the destination colour profile, and
 # gs will reject the job without one. This PostScript prologue installs it.
@@ -153,12 +155,38 @@ def find_cmyk_icc() -> Optional[Path]:
     return None
 
 
-def _run(cmd: list[str], timeout: int = 300) -> str:
+def _run(cmd: list[str], timeout: int = 300, *,
+         sandbox: Optional[SandboxPort] = None,
+         work_dir: Optional[Path] = None) -> str:
     """Run gs and return its combined output.
 
     The output is RETURNED, not discarded, because Ghostscript reports PDF/X
     non-conformance on a successful exit -- see _assert_no_pdfx_downgrade.
+
+    `sandbox` is optional (E3.2): when given, the command runs through it
+    (real rlimit containment on POSIX -- see publisher_sandbox) instead of a
+    bare subprocess.run. Every existing caller that omits it keeps today's
+    unsandboxed behaviour unchanged; `to_pdfx`/`to_proof`'s own callers
+    (the two finish stages) pass one by default via `sandbox_for()`.
     """
+    if sandbox is not None:
+        cwd = work_dir or Path.cwd()
+        budget = ResourceBudget(
+            memory_mb=1024, cpu_seconds=timeout, wall_clock_s=timeout,
+            max_open_files=64, max_file_size_mb=2048,
+        )
+        result = sandbox.run(
+            cmd, input_dir=cwd, output_dir=cwd, budget=budget, tier=SandboxTier.STANDARD,
+        )
+        if result.reason != ExitReason.SUCCESS:
+            raise GhostscriptError(
+                f"ghostscript sandboxed run failed ({result.reason.value}, "
+                f"exit {result.exit_code})\n"
+                f"command: {' '.join(cmd)}\n"
+                f"stderr: {result.stderr.strip()}"
+            )
+        return f"{result.stdout}\n{result.stderr}"
+
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise GhostscriptError(
@@ -231,6 +259,7 @@ def to_pdfx(
     condition_id: str = "CGATS TR 001",
     bleed_pt: float = 0.0,
     gs_binary: Optional[str] = None,
+    sandbox: Optional[SandboxPort] = None,
 ) -> None:
     """
     Convert to PDF/X-1a: CMYK, prepress-quality, OutputIntent installed.
@@ -317,7 +346,7 @@ def to_pdfx(
         f"-sOutputFile={output_pdf}",
         str(pdfx_def),
         str(input_pdf),
-    ])
+    ], sandbox=sandbox, work_dir=work_dir)
     _assert_no_pdfx_downgrade(gs_output)
     _assert_pdf(output_pdf, "press")
     _assert_pdfx(output_pdf)
@@ -329,6 +358,7 @@ def to_proof(
     *,
     dpi: int = 150,
     gs_binary: Optional[str] = None,
+    sandbox: Optional[SandboxPort] = None,
 ) -> None:
     """
     Produce the reviewer's proof: downsampled images, linearized for fast
@@ -352,5 +382,5 @@ def to_proof(
         "-dFastWebView=true",
         f"-sOutputFile={output_pdf}",
         str(input_pdf),
-    ])
+    ], sandbox=sandbox, work_dir=output_pdf.parent)
     _assert_pdf(output_pdf, "proof")

@@ -91,6 +91,20 @@ def test_ingest_rejects_huge_decompressed_size(tmp_path):
     assert "zip bomb" in exc.value.message
 
 
+def test_ingest_rejects_an_absurdly_long_entry_name(tmp_path):
+    """E3.4 audit: entry count and total size were bounded, but a single
+    entry's own NAME was not -- a long name can bypass a count-based cap."""
+    bomb = io.BytesIO()
+    with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("word/" + ("a" * 1000) + ".xml", "<w:p/>")
+    path = _write_docx(tmp_path, bomb.getvalue())
+
+    with pytest.raises(StageError) as exc:
+        ingest(_ctx(tmp_path), docx_path=path)
+    assert exc.value.kind == ErrorKind.BAD_INPUT
+    assert "entry name" in exc.value.message
+
+
 def test_ingest_rejects_corrupt_archive(tmp_path):
     """S9: bytes that are not a ZIP at all are named as such, not left to blow
     up python-docx three stack frames later."""

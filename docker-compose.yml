@@ -27,6 +27,11 @@ services:
     # hot cannot starve or OOM the others on the same host.
     mem_limit: 1g
     cpus: 1.0
+    # E3.1: on both networks -- `default` (so `api` keeps reaching it
+    # unchanged) and `dbnet` (so the egress-isolated `worker` can too).
+    networks:
+      - default
+      - dbnet
 
   worker:
     build:
@@ -47,8 +52,43 @@ services:
       # logs worker` stayed empty for the whole of a build -- the per-stage prints
       # only appeared if the process exited.
       PYTHONUNBUFFERED: "1"
+      # Nothing under a read-only rootfs can persist a bytecode cache anyway;
+      # avoid the wasted (harmless, but repeated every start) write attempt.
+      PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - cas-data:/data/cas
+    # E3.1: the worker parses tenant-uploaded archives through libreoffice,
+    # weasyprint and ghostscript -- a hostile document exploiting any of them
+    # should not be able to persist anything, escalate privileges, or reach
+    # the network. `USER 10001` (Dockerfile.worker) removes root; everything
+    # below removes what root would otherwise still be able to do.
+    read_only: true
+    tmpfs:
+      # noexec/nosuid/nodev: this is scratch space for a build's own temp
+      # files (publisher_exec's tempfile.TemporaryDirectory, ghostscript's
+      # intermediates), never a place anything needs to execute from.
+      - /tmp:size=2g,noexec,nosuid,nodev
+      # LibreOffice's `-env:UserInstallation=` already points its profile at
+      # the build's own /tmp scratch dir (stages/ingest_stage.py
+      # `_convert_legacy_doc`), but it can still probe $HOME for other
+      # writes (as does fontconfig's per-user cache) -- give it one, sized
+      # well under the tmpfs above. Docker's tmpfs default is root:root
+      # mode 0700 for any path other than /tmp itself (which it special-
+      # cases to the standard 1777) -- verified against a real build: without
+      # `uid=`/`gid=` here, uid 10001 could not even list its own $HOME,
+      # and weasyprint/Pango logged "Fontconfig error: No writable cache
+      # directories" (harmless -- it falls back to uncached lookups -- but
+      # noisy on every real render).
+      - /home/publisher:size=256m,nosuid,nodev,uid=10001,gid=10001,mode=0700
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # No egress: the cover-art/LLM path that would need it is unreachable in
+    # production today (L8). `postgres` joins both this network and the
+    # default one, so `api` (unchanged, still on default) keeps reaching it;
+    # `worker` reaches ONLY postgres, nothing else, in or out.
+    networks:
+      - dbnet
     # Postgres restarting used to leave the queue permanently undrained: the
     # worker exited and nothing brought it back.
     restart: unless-stopped
@@ -97,6 +137,14 @@ services:
     # concurrent requests, not a single huge one.
     mem_limit: 512m
     cpus: 1.0
+
+networks:
+  # E3.1: internal -- no default gateway to the internet for anything on it.
+  # Published `ports:` mappings (postgres's 55432, api's 4000) are host-side
+  # DNAT and work regardless; `internal` only removes the container's OWN
+  # route out.
+  dbnet:
+    internal: true
 
 volumes:
   pgdata:

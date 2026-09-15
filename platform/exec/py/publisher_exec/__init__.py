@@ -303,10 +303,44 @@ def deadline_mw(invocation: StageInvocation, next_: Next) -> StageResult:
     return result
 
 
+def _current_vsize_bytes(resource_mod) -> int:
+    """Current process virtual address space, in bytes -- what `RLIMIT_AS`
+    actually caps. `/proc/self/statm`'s first field (Linux-only, hence the
+    fallback) rather than `RUSAGE_SELF.ru_maxrss`: RSS is resident pages
+    actually touched, and undercounts by a lot against something like
+    weasyprint's Cairo/Pango bindings, which mmap far more address space than
+    they fault in. Padding the RSS-based fallback 2x is a deliberately crude
+    stand-in for hosts with no /proc (e.g. macOS), not a claim of precision.
+    """
+    try:
+        with open("/proc/self/statm") as f:
+            pages = int(f.read().split()[0])
+        return pages * resource_mod.getpagesize()
+    except (OSError, ValueError, IndexError):
+        return resource_mod.getrusage(resource_mod.RUSAGE_SELF).ru_maxrss * 1024 * 2
+
+
 def memory_mw(invocation: StageInvocation, next_: Next) -> StageResult:
     """Applies `invocation.decl.memory_budget_mb` as a hard `RLIMIT_AS`
     around the rest of the chain, converting a resulting `MemoryError` into
     `RESOURCE_EXHAUSTED`.
+
+    The limit is CURRENT VIRTUAL SIZE PLUS the declared budget, not the
+    budget alone -- found necessary verifying E3.1 against a real 9-stage
+    build in one worker process, not by inspection. `run()` executes an
+    entire build's stage DAG sequentially in ONE process; `RLIMIT_AS` caps
+    that process's TOTAL virtual address space, which only grows as earlier
+    stages import their own libraries (ingest's python-docx/lxml, design-
+    compile's/paginate's weasyprint/Cairo/Pango, ...). Treating
+    `memory_budget_mb` as an absolute ceiling meant a later stage's declared
+    budget had to exceed not just its OWN needs but everything every earlier
+    stage in the same build had already mapped -- observed directly as
+    design-compile's real, tiny CSS-generation work dying with a plain
+    `MemoryError` under its declared 64 MB, because the process had already
+    mapped more than that just importing weasyprint for the stage after it.
+    Reinterpreting the budget as "how much MORE this stage may map, on top
+    of what is already resident" is the only reading that survives a
+    multi-stage single-process executor.
 
     POSIX-only -- `resource` does not exist on Windows -- so this is a
     best-effort no-op there, the same convention `platform/sandbox` already
@@ -316,13 +350,25 @@ def memory_mw(invocation: StageInvocation, next_: Next) -> StageResult:
     `finally` unable to undo itself on a second stage in the same process.
     ponytail: process-wide, not per-child -- a budget that can't leak onto
     the *next* stage sharing this process needs E3.2's forked sandbox child.
+
+    DEPLOYMENT REQUIREMENT (also found empirically, not by inspection): the
+    process this runs in MUST set `MALLOC_ARENA_MAX=1` in its environment
+    before the interpreter starts (Dockerfile.worker does). `deadline_mw`
+    runs the stage on a background thread; glibc's malloc gives a new thread
+    its own arena on first allocation, reserving tens of MB of virtual
+    address space via mmap up front -- exactly what RLIMIT_AS exists to
+    block. Under a tight budget this can make the WATCHDOG THREAD's own
+    first allocation fail, which libxml2 (reached via python-docx) does not
+    always surface as a clean MemoryError -- it was observed as a real,
+    valid DOCX failing to parse with lxml's `unknown error (<string>, line
+    0)`. Reproduced with and without `MALLOC_ARENA_MAX=1` to confirm it.
     """
     try:
         import resource
     except ImportError:
         return next_(invocation)
 
-    budget_bytes = invocation.decl.memory_budget_mb * 1024 * 1024
+    budget_bytes = _current_vsize_bytes(resource) + invocation.decl.memory_budget_mb * 1024 * 1024
     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
     new_soft = budget_bytes if hard == resource.RLIM_INFINITY else min(budget_bytes, hard)
     try:
