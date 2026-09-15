@@ -145,3 +145,44 @@ jobs:
         run: python tools/lint_service_deps.py
       - name: Import boundaries (E1.4)
         run: lint-imports --config .importlinter
+
+  supply-chain:
+    # E3.5 -- pip-audit and npm audit are gates (non-zero exit fails the job);
+    # the SBOM is an artifact, not a gate, because there is no CVE-count
+    # threshold defined yet to fail it against (platform/supply-chain's
+    # CveGate is a placeholder -- see that module's own docstring).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: pip-audit (requirements.lock)
+        # --require-hashes is also implied by the file having --hash entries
+        # at all; spelled out so a future edit that drops hashes fails loudly
+        # here instead of silently auditing an unpinned tree.
+        run: |
+          pip install --quiet pip-audit
+          pip-audit -r requirements.lock --require-hashes
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: npm ci (api)
+        working-directory: packages/api
+        run: npm ci
+      - name: npm audit --audit-level=high (api)
+        working-directory: packages/api
+        run: npm audit --audit-level=high
+      - name: npm ci (web)
+        working-directory: packages/web
+        run: npm ci
+      - name: npm audit --audit-level=high (web)
+        working-directory: packages/web
+        run: npm audit --audit-level=high
+      - name: Generate SBOM (syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+          upload-artifact: true

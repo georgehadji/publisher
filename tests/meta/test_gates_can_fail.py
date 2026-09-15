@@ -18,6 +18,7 @@ to close.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -43,6 +44,10 @@ class Gate:
     # Extra environment, computed from the worktree root -- only
     # `import-boundaries` needs this; see `_worktree_pythonpath`'s docstring.
     env: Callable[[Path], dict[str, str]] | None = None
+    # Returns a skip reason if this gate's tool cannot run at all in the
+    # current environment (vs. failing because of the mutation) -- only
+    # `pip-audit` needs this; see `_pip_audit_unusable_reason`'s docstring.
+    skip_if: Callable[[], str | None] | None = None
 
 
 # ---- mutations: each makes ONE known-bad change, nothing else -------------
@@ -150,6 +155,53 @@ def _worktree_pythonpath(root: Path) -> dict[str, str]:
     return {"PYTHONPATH": os.pathsep.join(paths)}
 
 
+def add_known_vulnerable_pinned_dependency(root: Path) -> None:
+    """A real PyPI release with public CVEs (urllib3 1.24.1 -- e.g.
+    CVE-2019-11324), added with ITS OWN correct hashes so the gate's failure
+    is pip-audit's vulnerability finding, not a hash mismatch. It has no
+    runtime dependencies of its own, so this is a self-contained addition
+    under `--require-hashes` -- no other line in the file needs to change."""
+    path = root / "requirements.lock"
+    text = path.read_text(encoding="utf-8")
+    text += (
+        "\nurllib3==1.24.1 \\\n"
+        "    --hash=sha256:61bf29cada3fc2fbefad4fdf059ea4bd1b4a86d2b6d15e1c7c0b582b9752fe39 \\\n"
+        "    --hash=sha256:de9529817c93f27c8ccbfead6985011db27bd0ddfcdb2d86f3f663385c6a9c22\n"
+        "    # meta-gate probe: known-vulnerable pin (CVE-2019-11324 et al.)\n"
+    )
+    path.write_text(text, encoding="utf-8")
+
+
+def _pip_audit_unusable_reason() -> str | None:
+    """pip-audit's CLI hard-imports the stdlib `venv` module on every code
+    path -- including a plain `-r requirements.lock` audit that never
+    creates one -- and some minimal Python installs omit it (found on this
+    project's own dev machine while wiring this gate up). Skip rather than
+    report a false gate failure that has nothing to do with the mutation;
+    CI's ubuntu-latest runner ships the full stdlib and runs this for real."""
+    if importlib.util.find_spec("venv") is None:
+        return "pip-audit requires the stdlib `venv` module, missing from this Python install"
+    if shutil.which("pip-audit") is None:
+        return "pip-audit is not installed in this environment (pip install pip-audit)"
+    return None
+
+
+def add_known_vulnerable_npm_dependency(root: Path) -> None:
+    """minimatch 3.0.4 carries a published ReDoS advisory (GHSA-f8q6-p94x-37v3,
+    severity high). Resolved with a real `npm install`, not a hand-edited
+    lockfile, so package.json and package-lock.json stay consistent with
+    each other exactly as a real dependency bump would leave them."""
+    api_dir = root / "packages" / "api"
+    # bash -c, not a raw ["npm", ...] argv: on Windows, `npm` resolves to
+    # `npm.cmd`, and CreateProcess (what subprocess uses without shell=True)
+    # cannot exec a .cmd directly -- the same reason `codegen-sync`'s Gate
+    # above wraps its command in bash -c.
+    subprocess.run(
+        ["bash", "-c", "npm install minimatch@3.0.4 --save --package-lock-only --no-audit"],
+        cwd=api_dir, check=True, capture_output=True, text=True, timeout=120,
+    )
+
+
 GATES: list[Gate] = [
     Gate(
         id="codegen-sync",
@@ -188,6 +240,19 @@ GATES: list[Gate] = [
         mutate=add_platform_to_services_import,
         env=_worktree_pythonpath,
     ),
+    Gate(
+        id="pip-audit",
+        cmd=["pip-audit", "-r", "requirements.lock", "--require-hashes"],
+        cwd=".",
+        mutate=add_known_vulnerable_pinned_dependency,
+        skip_if=_pip_audit_unusable_reason,
+    ),
+    Gate(
+        id="npm-audit",
+        cmd=["bash", "-c", "npm ci --no-audit && npm audit --audit-level=high"],
+        cwd="packages/api",
+        mutate=add_known_vulnerable_npm_dependency,
+    ),
 ]
 
 # Maps each CI `run:` step (by its `name:`, or by the run command itself for
@@ -212,6 +277,11 @@ STEP_CLASSIFICATION: dict[str, str | None] = {
     "Version-bump rule (§3.3, §7)": "stage-versions",
     "Service deps declared (U3)": "service-deps",
     "Import boundaries (E1.4)": "import-boundaries",
+    "pip-audit (requirements.lock)": "pip-audit",
+    "npm ci (api)": None,  # dependency install, not a gate
+    "npm audit --audit-level=high (api)": "npm-audit",
+    "npm ci (web)": None,  # dependency install, not a gate
+    "npm audit --audit-level=high (web)": "npm-audit",  # same mechanism as (api), one Gate covers both
 }
 
 
@@ -251,6 +321,10 @@ def worktree(tmp_path):
 
 @pytest.mark.parametrize("gate", GATES, ids=[g.id for g in GATES])
 def test_gate_can_fail(gate: Gate, worktree: Path):
+    if gate.skip_if is not None:
+        reason = gate.skip_if()
+        if reason:
+            pytest.skip(reason)
     gate.mutate(worktree)
     run_env = {**os.environ, **gate.env(worktree)} if gate.env is not None else None
     result = subprocess.run(

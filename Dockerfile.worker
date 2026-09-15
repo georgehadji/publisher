@@ -1,5 +1,11 @@
 # Publisher worker -- ARCHITECTURE_REMEDIATION.md A1.4/A1.5.
-FROM python:3.12-slim
+# E3.5: pinned by digest, not the `3.12-slim` tag -- a tag is mutable (upstream
+# can repoint it to a different image without notice); a digest is the image's
+# own content hash, so "the same commit rebuilds to the same base" is actually
+# true. Recorded by pulling the tag and reading `docker inspect
+# --format='{{index .RepoDigests 0}}'` at pin time; bump deliberately, not
+# silently, when a base-image update is wanted.
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
 
 # weasyprint's real runtime deps (Cairo/Pango stack). The worker runs with
 # allow_stub_engines=False (worker.py) -- a missing render engine must fail
@@ -27,13 +33,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # verified HTML to Typst markup, typst paginates it. Both are pinned by
 # version -- Debian's pandoc is 2.17, which predates the Typst writer entirely,
 # so the distro package cannot serve this path.
+#
+# E3.5: pinned by sha256 digest, not just version -- a version tag names a
+# GitHub release, not fixed bytes; a compromised release asset (or a CDN
+# serving something else for the same URL) would install silently. The
+# digests below were recorded by downloading each asset once and running
+# `sha256sum` (ARCHITECTURE.md §2.1 principle 7's TODO, now closed) -- neither
+# project publishes a signed checksums file for these particular assets, so
+# this is trust-on-first-use: a byte-identical re-download always matches,
+# and any future change to either URL's content is exactly what `sha256sum -c`
+# exists to catch.
 ARG PANDOC_VERSION=3.5
+ARG PANDOC_DEB_SHA256=4f41d817d262ef3d17953a3e6e0fefddb971aa4f2f121544a9a86db449d945e1
 ARG TYPST_VERSION=0.13.1
+ARG TYPST_TARBALL_SHA256=7d214bfeffc2e585dc422d1a09d2b144969421281e8c7f5d784b65fc69b5673f
 RUN curl -fsSL -o /tmp/pandoc.deb \
       "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb" \
+    && echo "${PANDOC_DEB_SHA256}  /tmp/pandoc.deb" | sha256sum -c - \
     && dpkg -i /tmp/pandoc.deb && rm /tmp/pandoc.deb \
     && curl -fsSL -o /tmp/typst.tar.xz \
       "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-x86_64-unknown-linux-musl.tar.xz" \
+    && echo "${TYPST_TARBALL_SHA256}  /tmp/typst.tar.xz" | sha256sum -c - \
     && tar -xJf /tmp/typst.tar.xz -C /tmp \
     && install -m 0755 /tmp/typst-x86_64-unknown-linux-musl/typst /usr/local/bin/typst \
     && rm -rf /tmp/typst.tar.xz /tmp/typst-x86_64-unknown-linux-musl \
@@ -41,14 +61,15 @@ RUN curl -fsSL -o /tmp/pandoc.deb \
     # writer would otherwise fail per-build, at render time, on every book.
     && pandoc --list-output-formats | grep -qx typst \
     && typst --version
-# TODO(repro): ARCHITECTURE.md §2.1 principle 7 wants these pinned by digest,
-# not version tag. Add `sha256sum -c` once the release hashes are recorded in
-# the toolchain manifest alongside the ICC and font hashes.
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# E3.5: requirements.lock is the full hash-pinned closure (requirements.txt
+# plus every transitive dependency) -- see its own header for how to
+# regenerate it. `--require-hashes` refuses to install anything not listed
+# here, or whose downloaded bytes don't match the recorded digest.
+COPY requirements.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 COPY platform/ platform/
 COPY services/ services/

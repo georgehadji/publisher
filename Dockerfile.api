@@ -1,5 +1,8 @@
 # Publisher API -- ARCHITECTURE_REMEDIATION.md A1.5.
-FROM node:22-slim AS build
+# E3.5: pinned by digest (see Dockerfile.worker's base-image comment for why);
+# both stages use the same digest, recorded from the same `docker inspect
+# --format='{{index .RepoDigests 0}}'` pull.
+FROM node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS build
 WORKDIR /app
 # packages/api/tsconfig.json extends the monorepo root tsconfig -- the image
 # must keep that same relative layout (repo-root/packages/api/), not flatten
@@ -11,7 +14,7 @@ RUN cd packages/api && npm install
 COPY packages/api/ ./packages/api/
 RUN cd packages/api && npm run build
 
-FROM node:22-slim
+FROM node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
 WORKDIR /app
 COPY --from=build /app/packages/api/node_modules ./node_modules
 COPY --from=build /app/packages/api/dist ./dist
