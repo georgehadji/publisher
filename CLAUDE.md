@@ -134,6 +134,6 @@ cross-project log directory and a sibling repo's failures got reported as Publis
 `COST_AND_STABILITY_PLAN.md` · `REMEDIATION_PLAN.md` (complete) ·
 `VERIFICATION_PLAN.md` (G1–G8 — gates that cannot fail; **draft, nothing implemented**) ·
 `CONTEXT_ARCHITECTURE.md` (C1–C4 — ICM evaluated against this repo; **research memo**) ·
-`ARCHITECTURE_SCORE_10_PLAN.md` (E0–E7 — EGFV v3.0 audit 5/10 → 10/10; **E0–E2 landed+tested, E3+ open**)
+`ARCHITECTURE_SCORE_10_PLAN.md` (E0–E7 — EGFV v3.0 audit 5/10 → 10/10; **E0–E2 landed+tested, E3.1–E3.4 landed+tested (verified against a real Docker build), E3.5+ open**)
 
 Full index with per-document status: the **publisher-docs** skill.
