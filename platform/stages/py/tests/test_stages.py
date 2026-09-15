@@ -116,5 +116,20 @@ def test_error_kind_retryable():
     assert infra_err.retryable
 
     import pytest
-    with pytest.raises(ValueError, match="Only infra and external_limit"):
+    with pytest.raises(ValueError, match="Only infra, external_limit and timeout"):
         StageError(kind=ErrorKind.ENGINE_BUG, message="bug", retryable=True)
+
+
+def test_timeout_is_retryable():
+    # E2.2: often transient contention -- deliberately added to the
+    # retryable set alongside infra and external_limit.
+    err = StageError(kind=ErrorKind.TIMEOUT, message="deadline exceeded", retryable=True)
+    assert err.retryable
+
+
+def test_resource_exhausted_is_not_retryable():
+    # E2.2: retrying a deterministic OOM burns a worker slot to reach the
+    # same outcome -- deliberately NOT added to the retryable set.
+    import pytest
+    with pytest.raises(ValueError, match="Only infra, external_limit and timeout"):
+        StageError(kind=ErrorKind.RESOURCE_EXHAUSTED, message="OOM", retryable=True)

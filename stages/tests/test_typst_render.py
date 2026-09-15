@@ -112,7 +112,7 @@ def test_renders_a_real_pdf_with_measured_chapter_pages():
 
         ctx = StageCtx(
             build_id="test-typst",
-            cache_key="test-typst",
+            deterministic_seed="test-typst",
             deadline=datetime.now(timezone.utc),
             memory_budget_mb=512,
             work_dir=str(tmp_path),

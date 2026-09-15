@@ -20,6 +20,31 @@ integration test. Splitting it:
 sites (`worker.py`, `tracer_bullet.py`, integration tests) -- new code should
 call `plan()`/`run()` directly, since that is what makes scheduling decisions
 unit-testable without a CAS or a socket.
+
+`run()`'s per-stage call is itself a small middleware chain (E2.1,
+docs/ARCHITECTURE_SCORE_10_PLAN.md): `cache_mw`, `memory_mw` and
+`deadline_mw`, composed once per build and applied to every stage. Before
+this, three unrelated defects (an always-already-expired deadline nothing
+read, an unenforced memory budget, and a cache key that was really a
+placeholder string) all traced back to the same cause -- there was no single
+place where a cross-cutting per-stage concern lived, so each was a special
+case bolted onto the stage-invocation code inline. `sandbox_mw` (E3.2) and
+`admission_mw` (U8) are deliberately NOT here yet: both need capabilities (a
+real sandboxed child process; a shared admission-control port) this plan has
+not built. Adding them is a matter of extending the list `run()` passes to
+`_compose()`, not restructuring it.
+
+`memory_mw` wraps OUTSIDE `deadline_mw`, not inside it as the plan's own
+illustrative `CHAIN` example orders them -- deliberately, not an oversight.
+`deadline_mw`'s watchdog abandons a timed-out call without waiting for its
+background thread; if `memory_mw` were the one running IN that thread (inside
+`deadline_mw`), a genuinely hung stage would leave the process's RLIMIT_AS
+lowered for as long as the leaked thread keeps running, which for an infinite
+loop is forever -- silently starving every later stage in the same
+long-lived worker process. With `memory_mw` outside, its own `finally`
+restore runs on the caller's thread as soon as `deadline_mw` gives up and
+returns, bounding the poisoned window to at most that one stage's
+`timeout_s`.
 """
 
 from __future__ import annotations
@@ -28,13 +53,14 @@ import hashlib
 import os
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeoutError
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from publisher_stages import (
-    StageRegistry, StageCtx, StageResult, StageError,
+    StageRegistry, StageDeclaration, StageCtx, StageResult, StageError,
     ErrorKind, get_registry,
 )
 from publisher_stages import ArtifactRef as StageArtifactRef
@@ -220,6 +246,141 @@ def _register_artifacts(decl, stage_name: str, result: StageResult,
                     artifact_paths[matched_schema] = art.hash
 
 
+@dataclass(frozen=True)
+class StageInvocation:
+    """Everything one middleware needs to run or short-circuit a single stage
+    call (E2.1). Built once per stage in `run()`'s loop; every middleware
+    reads it and passes it unchanged to the next one -- none of them mutate
+    it or reach into `run()`'s own state for anything but what's threaded
+    through here or closed over at construction (`cache_mw`)."""
+
+    stage_name: str
+    decl: StageDeclaration
+    ctx: StageCtx
+    inputs: dict[str, Any]
+
+
+Next = Callable[[StageInvocation], StageResult]
+StageMiddleware = Callable[[StageInvocation, Next], StageResult]
+
+
+def _compose(chain: list[StageMiddleware], terminal: Next) -> Next:
+    """Build one callable: chain[0] outermost, `terminal` innermost."""
+    handler = terminal
+    for mw in reversed(chain):
+        handler = (lambda inv, _mw=mw, _next=handler: _mw(inv, _next))
+    return handler
+
+
+def deadline_mw(invocation: StageInvocation, next_: Next) -> StageResult:
+    """Enforces `invocation.ctx.deadline` around the rest of the chain.
+
+    ponytail: a background-thread watchdog, not real preemption -- calling
+    this middleware's caller stops waiting at the deadline, but a stage stuck
+    in a tight CPU-bound loop keeps its thread alive after that (Python
+    cannot forcibly kill a thread). That is a real ceiling, not an oversight:
+    true preemption needs E3.2's `RLIMIT_CPU` on a forked, sandboxed child,
+    which the plan explicitly defers this middleware to once it lands. Until
+    then this at least turns a hang into a classified `TIMEOUT` failure
+    instead of blocking the whole build (or worker) indefinitely.
+    """
+    remaining = (invocation.ctx.deadline - datetime.now(timezone.utc)).total_seconds()
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(next_, invocation)
+    try:
+        result = future.result(timeout=max(remaining, 0))
+    except _FutureTimeoutError:
+        pool.shutdown(wait=False)
+        raise StageError(
+            kind=ErrorKind.TIMEOUT,
+            message=(
+                f"Stage '{invocation.stage_name}' exceeded its "
+                f"{invocation.decl.timeout_s}s deadline"
+            ),
+            retryable=True,
+        )
+    pool.shutdown(wait=False)
+    return result
+
+
+def memory_mw(invocation: StageInvocation, next_: Next) -> StageResult:
+    """Applies `invocation.decl.memory_budget_mb` as a hard `RLIMIT_AS`
+    around the rest of the chain, converting a resulting `MemoryError` into
+    `RESOURCE_EXHAUSTED`.
+
+    POSIX-only -- `resource` does not exist on Windows -- so this is a
+    best-effort no-op there, the same convention `platform/sandbox` already
+    uses for the same constraint (see its `_preexec`). Only the SOFT limit is
+    ever touched: an unprivileged process can lower its hard limit but never
+    raise it back, so touching `hard` here would make the restore in
+    `finally` unable to undo itself on a second stage in the same process.
+    ponytail: process-wide, not per-child -- a budget that can't leak onto
+    the *next* stage sharing this process needs E3.2's forked sandbox child.
+    """
+    try:
+        import resource
+    except ImportError:
+        return next_(invocation)
+
+    budget_bytes = invocation.decl.memory_budget_mb * 1024 * 1024
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    new_soft = budget_bytes if hard == resource.RLIM_INFINITY else min(budget_bytes, hard)
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (new_soft, hard))
+    except (ValueError, OSError):
+        return next_(invocation)
+
+    try:
+        return next_(invocation)
+    except MemoryError as e:
+        raise StageError(
+            kind=ErrorKind.RESOURCE_EXHAUSTED,
+            message=(
+                f"Stage '{invocation.stage_name}' exceeded its "
+                f"{invocation.decl.memory_budget_mb}MB memory budget"
+            ),
+        ) from e
+    finally:
+        resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
+
+
+def _make_cache_mw(
+    cache_store: CacheStore, cas: ContentAddressedStore,
+    cas_root_path: Path, artifact_paths: dict[str, str],
+) -> StageMiddleware:
+    """Builds `cache_mw`, closing over this build's own effectful handles so
+    the real cache key stays internal to it (E2.3) -- a stage function never
+    sees it, only `ctx.deterministic_seed`, which happens to be the same
+    value but is understood as a seed, not a lookup key."""
+
+    def cache_mw(invocation: StageInvocation, next_: Next) -> StageResult:
+        decl = invocation.decl
+        cache_key = invocation.ctx.deterministic_seed
+        cached = cache_store.get(cache_key)
+        if cached is not None:
+            result = StageResult(
+                artifacts=[
+                    StageArtifactRef(kind=kind, hash=ref["sha256"],
+                                      media_type=ref["media_type"], size=ref["size"])
+                    for kind, ref in cached["output_refs"].items()
+                ],
+                cache_hit=True,
+            )
+            _register_artifacts(decl, invocation.stage_name, result, cas, cas_root_path, artifact_paths)
+            return result
+
+        result = next_(invocation)
+        _register_artifacts(decl, invocation.stage_name, result, cas, cas_root_path, artifact_paths)
+        cache_store.put(
+            cache_key, invocation.stage_name, decl.version,
+            {art.kind: {"sha256": art.hash, "media_type": art.media_type, "size": art.size}
+             for art in result.artifacts},
+        )
+        return result
+
+    return cache_mw
+
+
 def run(
     execution_plan: ExecutionPlan,
     registry: StageRegistry,
@@ -297,6 +458,16 @@ def run(
     # schema_id -> filesystem path to the artifact in CAS
     artifact_paths: dict[str, str] = {}
 
+    # E2.1: composed once per build, applied to every stage. cache_mw
+    # outermost so a hit short-circuits before deadline/memory enforcement
+    # ever runs; deadline_mw innermost (closest to the actual call) so its
+    # watchdog thread never runs memory_mw's own setrlimit/restore -- see
+    # the module docstring for why that ordering matters.
+    handle: Next = _compose(
+        [_make_cache_mw(cache_store, cas, cas_root_path, artifact_paths), memory_mw, deadline_mw],
+        terminal=lambda inv: inv.decl.fn(inv.ctx, **inv.inputs),
+    )
+
     with tempfile.TemporaryDirectory(prefix=f"pub-build-{build_id}-") as work_dir:
         work_dir_path = Path(work_dir)
 
@@ -308,17 +479,7 @@ def run(
 
             print(f"  -- {stage_name} (v{decl.version}) --")
             start = time.monotonic()
-
-            # Build context
-            ctx = StageCtx(
-                build_id=build_id,
-                cache_key=f"tb-{stage_name}-v{decl.version}",
-                deadline=datetime.now(timezone.utc),
-                memory_budget_mb=decl.memory_budget_mb,
-                work_dir=str(work_dir_path),
-                allow_stub_engines=allow_stub_engines,
-                cas_root=str(cas_root_path),
-            )
+            started_at = datetime.now(timezone.utc)
 
             # Resolve inputs for this stage:
             # 1. Start with explicit initial_inputs (root params like fixture paths)
@@ -333,44 +494,36 @@ def run(
                 if schema_id in artifact_paths:
                     stage_inputs[param_name] = artifact_paths[schema_id]
 
-            cache_key = _cache_key_for(stage_name, decl, stage_inputs)
-            cached = cache_store.get(cache_key)
-            if cached is not None:
-                result = StageResult(
-                    artifacts=[
-                        StageArtifactRef(kind=kind, hash=ref["sha256"],
-                                          media_type=ref["media_type"], size=ref["size"])
-                        for kind, ref in cached["output_refs"].items()
-                    ],
-                    cache_hit=True,
-                )
-                results[stage_name] = result
-                _register_artifacts(decl, stage_name, result, cas, cas_root_path, artifact_paths)
-                elapsed = time.monotonic() - start
-                if on_stage_complete:
-                    on_stage_complete(stage_name, decl, result, int(elapsed * 1000))
-                print(f"  HIT {stage_name} cache hit in {elapsed:.2f}s -> {len(result.artifacts)} artifacts")
-                print()
-                continue
+            # The real cache key, computed once and handed to the stage as
+            # `deterministic_seed` (E2.3) -- cache_mw reads it back off ctx
+            # rather than recomputing it, so there is exactly one value, not
+            # two things that are supposed to agree.
+            seed = _cache_key_for(stage_name, decl, stage_inputs)
+            ctx = StageCtx(
+                build_id=build_id,
+                deterministic_seed=seed,
+                deadline=started_at + timedelta(seconds=decl.timeout_s),
+                memory_budget_mb=decl.memory_budget_mb,
+                work_dir=str(work_dir_path),
+                allow_stub_engines=allow_stub_engines,
+                cas_root=str(cas_root_path),
+            )
+            invocation = StageInvocation(stage_name=stage_name, decl=decl, ctx=ctx, inputs=stage_inputs)
 
             try:
-                result = decl.fn(ctx, **stage_inputs)
+                result = handle(invocation)
                 elapsed = time.monotonic() - start
                 results[stage_name] = result
-
-                _register_artifacts(decl, stage_name, result, cas, cas_root_path, artifact_paths)
-                cache_store.put(
-                    cache_key, stage_name, decl.version,
-                    {art.kind: {"sha256": art.hash, "media_type": art.media_type, "size": art.size}
-                     for art in result.artifacts},
-                )
 
                 if on_stage_complete:
                     on_stage_complete(stage_name, decl, result, int(elapsed * 1000))
 
-                n_artifacts = len(result.artifacts)
-                metrics_str = ", ".join(f"{k}={v}" for k, v in result.metrics.items())
-                print(f"  OK {stage_name} done in {elapsed:.2f}s -> {n_artifacts} artifacts, {metrics_str}")
+                if result.cache_hit:
+                    print(f"  HIT {stage_name} cache hit in {elapsed:.2f}s -> {len(result.artifacts)} artifacts")
+                else:
+                    n_artifacts = len(result.artifacts)
+                    metrics_str = ", ".join(f"{k}={v}" for k, v in result.metrics.items())
+                    print(f"  OK {stage_name} done in {elapsed:.2f}s -> {n_artifacts} artifacts, {metrics_str}")
 
             except StageError as e:
                 elapsed = time.monotonic() - start
@@ -435,4 +588,7 @@ class DagExecutor:
         )
 
 
-__all__ = ["ExecutionPlan", "plan", "run", "DagExecutor"]
+__all__ = [
+    "ExecutionPlan", "plan", "run", "DagExecutor",
+    "StageInvocation", "StageMiddleware", "Next", "deadline_mw", "memory_mw",
+]

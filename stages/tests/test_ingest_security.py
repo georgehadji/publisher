@@ -25,7 +25,7 @@ from stages.ingest_stage import ingest
 def _ctx(tmp_path: Path) -> StageCtx:
     return StageCtx(
         build_id="test-ingest-sec",
-        cache_key="test",
+        deterministic_seed="test",
         deadline=datetime.now(timezone.utc),
         memory_budget_mb=128,
         work_dir=str(tmp_path),

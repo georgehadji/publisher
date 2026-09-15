@@ -39,14 +39,14 @@ def _cas(ctx: StageCtx) -> ContentAddressedStore:
 
 def _deterministic_timestamp(ctx: StageCtx) -> str:
     """
-    A timestamp derived from the build's cache key rather than the wall clock.
+    A timestamp derived from the build's deterministic seed rather than the wall clock.
 
     ARCHITECTURE.md §2.5 requires nondeterministic bytes to be "set to fixed values
     derived from the cache key" so that artifacts are byte-identical across rebuilds.
     A `datetime.now()` here would give the same inputs a different artifact hash on
     every run, silently defeating the cache and the 2029-rebuild contract.
     """
-    seed = int(hashlib.sha256(ctx.cache_key.encode("utf-8")).hexdigest()[:8], 16)
+    seed = int(hashlib.sha256(ctx.deterministic_seed.encode("utf-8")).hexdigest()[:8], 16)
     return datetime.fromtimestamp(seed, tz=timezone.utc).isoformat()
 
 

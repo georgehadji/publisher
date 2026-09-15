@@ -28,6 +28,10 @@ class ErrorKind(str, Enum):
     ENGINE_BUG = "engine_bug"
     INFRA = "infra"
     EXTERNAL_LIMIT = "external_limit"
+    # E2.2 (docs/ARCHITECTURE_SCORE_10_PLAN.md): the executor's deadline_mw
+    # and memory_mw middlewares are the only producers of these.
+    TIMEOUT = "timeout"
+    RESOURCE_EXHAUSTED = "resource_exhausted"
 
 
 @dataclass(frozen=True)
@@ -50,8 +54,16 @@ class StageError(Exception):
     retryable: bool = False
 
     def __post_init__(self):
-        if self.retryable and self.kind not in (ErrorKind.INFRA, ErrorKind.EXTERNAL_LIMIT):
-            raise ValueError(f"Only infra and external_limit errors are retryable, got {self.kind}")
+        # E2.2: TIMEOUT joins the retryable set deliberately (often transient
+        # contention) -- RESOURCE_EXHAUSTED does NOT (retrying a deterministic
+        # OOM burns a worker slot to reach the same outcome). Extend this
+        # tuple on purpose when a new kind needs it; never widen it generally.
+        if self.retryable and self.kind not in (
+            ErrorKind.INFRA, ErrorKind.EXTERNAL_LIMIT, ErrorKind.TIMEOUT,
+        ):
+            raise ValueError(
+                f"Only infra, external_limit and timeout errors are retryable, got {self.kind}"
+            )
 
 
 @dataclass(frozen=True)
@@ -79,7 +91,16 @@ class StageResult:
 class StageCtx:
     """Context provided to a stage when it runs."""
     build_id: str
-    cache_key: str
+    # E2.3: this used to be named `cache_key` and was populated with a fake
+    # placeholder (`f"tb-{stage}-v{ver}"`) that had nothing to do with the
+    # REAL cache key computed downstream -- the field's name described a use
+    # nobody made of it. Stages that read this never wanted a lookup key;
+    # they wanted a stable seed (e.g. for a reproducible fake timestamp,
+    # ARCHITECTURE.md §2.5). It is now genuinely derived from the stage's
+    # declared cache_key_inputs -- the same derivation, in fact the same
+    # value, the executor's own cache uses internally -- so it is stable
+    # across reruns with identical inputs and differs when inputs differ.
+    deterministic_seed: str
     deadline: datetime
     memory_budget_mb: int
     work_dir: str
@@ -139,6 +160,12 @@ class StageDeclaration:
     implements: Optional[str] = None
     placement: str = "on-demand"  # "arm-spot" | "on-demand" | "external" (F4.3)
     memory_budget_mb: int = 256
+    # E2.2: consumed by the executor's deadline_mw as
+    # `deadline = started_at + timedelta(seconds=timeout_s)`. 300s covers
+    # every stage observed in the full suite today (heaviest real-PDF/
+    # Ghostscript runs are single-digit seconds); override per-stage once a
+    # real one needs longer.
+    timeout_s: int = 300
     queue: str = "q.default"
     description: str = ""
 
@@ -581,6 +608,7 @@ def stage(
     implements: Optional[str] = None,
     placement: str = "on-demand",
     memory_budget_mb: int = 256,
+    timeout_s: int = 300,
     queue: str = "q.default",
     description: str = "",
 ) -> Callable:
@@ -613,6 +641,7 @@ def stage(
             implements=implements,
             placement=placement,
             memory_budget_mb=memory_budget_mb,
+            timeout_s=timeout_s,
             queue=queue,
             description=description or fn.__doc__ or "",
             fn=fn,

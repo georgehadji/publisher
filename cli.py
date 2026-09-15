@@ -101,7 +101,7 @@ def _cmd_run_stage(args: argparse.Namespace):
 
     ctx = StageCtx(
         build_id=f"dev-{args.stage_name}",
-        cache_key="dev-no-cache",
+        deterministic_seed="dev-no-cache",
         deadline=datetime.now(timezone.utc),
         memory_budget_mb=decl.memory_budget_mb,
         work_dir="/tmp/pub-dev",

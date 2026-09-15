@@ -104,7 +104,7 @@ def _rich_docx(tmp_path: Path) -> Path:
 def _ctx(tmp_path: Path) -> StageCtx:
     return StageCtx(
         build_id="rich",
-        cache_key="rich",
+        deterministic_seed="rich",
         deadline=datetime.now(timezone.utc),
         memory_budget_mb=512,
         work_dir=str(tmp_path / "work"),

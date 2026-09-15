@@ -52,7 +52,7 @@ def _write(tmp_dir: Path, name: str, obj) -> str:
 def _ctx(tmp_dir: Path) -> StageCtx:
     return StageCtx(
         build_id="test-build",
-        cache_key="test",
+        deterministic_seed="test",
         deadline=datetime.now(timezone.utc),
         memory_budget_mb=128,
         work_dir=str(tmp_dir),

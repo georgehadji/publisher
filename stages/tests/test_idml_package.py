@@ -199,7 +199,7 @@ def test_stage_emits_a_valid_package_from_a_real_document(tmp_path):
 
     ctx = StageCtx(
         build_id="test-idml",
-        cache_key="test-idml",
+        deterministic_seed="test-idml",
         deadline=datetime.now(timezone.utc),
         memory_budget_mb=256,
         work_dir=str(tmp_path),
@@ -224,7 +224,7 @@ def test_stage_refuses_a_document_that_never_reached_resolve(tmp_path):
 
     ctx = StageCtx(
         build_id="test-idml",
-        cache_key="test-idml",
+        deterministic_seed="test-idml",
         deadline=datetime.now(timezone.utc),
         memory_budget_mb=256,
         work_dir=str(tmp_path),

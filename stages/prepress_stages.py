@@ -19,14 +19,14 @@ from profiles import load_profile
 
 def _deterministic_timestamp(ctx: StageCtx) -> str:
     """
-    A timestamp derived from the build's cache key rather than the wall clock.
+    A timestamp derived from the build's deterministic seed rather than the wall clock.
 
     ARCHITECTURE.md §2.5 requires nondeterministic bytes to be "set to fixed values
     derived from the cache key" so artifacts stay byte-identical across rebuilds.
     """
     import hashlib
     from datetime import datetime, timezone
-    seed = int(hashlib.sha256(ctx.cache_key.encode("utf-8")).hexdigest()[:8], 16)
+    seed = int(hashlib.sha256(ctx.deterministic_seed.encode("utf-8")).hexdigest()[:8], 16)
     return datetime.fromtimestamp(seed, tz=timezone.utc).isoformat()
 
 

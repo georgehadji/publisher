@@ -19,6 +19,7 @@ to close.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,9 @@ class Gate:
     cmd: list[str]
     cwd: str  # relative to the worktree root
     mutate: Callable[[Path], None]  # applies one known-bad change in place
+    # Extra environment, computed from the worktree root -- only
+    # `import-boundaries` needs this; see `_worktree_pythonpath`'s docstring.
+    env: Callable[[Path], dict[str, str]] | None = None
 
 
 # ---- mutations: each makes ONE known-bad change, nothing else -------------
@@ -111,6 +115,41 @@ def add_platform_to_services_import(root: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+# Every package `.importlinter`'s root_packages names, mapped to its source
+# directory relative to the repo root -- mirrors ci.yml's PUBLISHER_PKGS.
+_IMPORT_LINTER_PACKAGE_DIRS = [
+    "platform/cas/py", "platform/cache/py", "platform/stages/py", "platform/exec/py",
+    "platform/sandbox/py", "services/ingest", "services/structure", "services/prepress",
+    "services/cover", "services/epub", "services/onix", "services/alttext", "services/agents",
+]
+
+
+def _worktree_pythonpath(root: Path) -> dict[str, str]:
+    """PYTHONPATH pointing `lint-imports` at THIS worktree's own copies of
+    every package it analyzes -- required for the mutation above to be
+    visible at all.
+
+    Every one of these packages is `pip install -e`'d exactly once against
+    the MAIN working tree. Pip's PEP 660 editable finder resolves
+    `import publisher_stages` (etc.) to that fixed absolute path forever,
+    regardless of which process's cwd asks for it -- so mutating a scratch
+    worktree's copy of `publisher_stages/__init__.py` and running
+    `lint-imports` with `cwd=worktree` silently analyzes the UNMODIFIED main
+    tree; the gate could never fail no matter what the mutation was.
+    Prepending the worktree's own source directories to PYTHONPATH fixes
+    this: the interpreter's standard sys.path-based PathFinder resolves a
+    plain top-level package name before the editable finder's meta-path
+    entry gets a chance (confirmed empirically against this repo's actual
+    pip/Python; there is no public grimp/import-linter option for this,
+    since it is really a pip editable-install behavior, not an import-linter
+    one). Every OTHER gate in this file mutates a file reached by a
+    cwd-relative or script-relative path, not a `pip install -e`'d package
+    name, so none of them need this.
+    """
+    paths = [str(root / d) for d in _IMPORT_LINTER_PACKAGE_DIRS]
+    return {"PYTHONPATH": os.pathsep.join(paths)}
+
+
 GATES: list[Gate] = [
     Gate(
         id="codegen-sync",
@@ -147,6 +186,7 @@ GATES: list[Gate] = [
         cmd=["lint-imports", "--config", ".importlinter"],
         cwd=".",
         mutate=add_platform_to_services_import,
+        env=_worktree_pythonpath,
     ),
 ]
 
@@ -212,9 +252,10 @@ def worktree(tmp_path):
 @pytest.mark.parametrize("gate", GATES, ids=[g.id for g in GATES])
 def test_gate_can_fail(gate: Gate, worktree: Path):
     gate.mutate(worktree)
+    run_env = {**os.environ, **gate.env(worktree)} if gate.env is not None else None
     result = subprocess.run(
         gate.cmd, cwd=worktree / gate.cwd, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=180,
+        encoding="utf-8", errors="replace", timeout=180, env=run_env,
     )
     assert result.returncode != 0, (
         f"gate '{gate.id}' did not fail on a known-bad mutation\n"
