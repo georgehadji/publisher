@@ -250,13 +250,13 @@ def test_second_build_of_same_input_hits_cache():
 
     Currently impossible: DagExecutor.execute() has no parameter for a durable,
     caller-supplied CAS root -- it allocates a fresh tempfile.TemporaryDirectory
-    on every call (tracer_bullet.py), so a second run shares no bytes with the
+    on every call (publisher_exec), so a second run shares no bytes with the
     first and StageResult carries no cache_hit field to report on regardless.
     """
     sys.path.insert(0, str(REPO_ROOT))
     import stages  # noqa: F401 -- registration side effect
     from publisher_stages import get_registry
-    from tracer_bullet import DagExecutor
+    from publisher_exec import DagExecutor
 
     persistent_root = REPO_ROOT / ".test-cas-cache"
     registry = get_registry()

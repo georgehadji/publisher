@@ -84,11 +84,11 @@ def idml(ctx: StageCtx, doc_path: str | None = None, pagemap_path: str | None = 
     # --standalone: the standalone wrapper carries pandoc's own style
     # definitions and a <Document> root, and this package defines its styles
     # from the DesignSpec instead.
-    from stages.extract_stage import _ast_to_html
+    from stages.rendering import ast_to_html
     story_xml = _run(
         [pandoc, "--from=html", "--to=icml", "--wrap=preserve"],
         timeout=PANDOC_TIMEOUT_S, what="pandoc html -> icml",
-        stdin=_ast_to_html(doc).encode("utf-8"),
+        stdin=ast_to_html(doc).encode("utf-8"),
     ).decode("utf-8")
 
     spec = None

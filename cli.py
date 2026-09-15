@@ -83,10 +83,16 @@ def main():
 
 def _cmd_run_stage(args: argparse.Namespace):
     """Run a build stage."""
-    from publisher_stages import get_registry, run_stage, StageCtx
+    import os
     from datetime import datetime, timezone
+    from publisher_stages import run_stage, StageCtx, RegistryConfig, RenderEngine, build_registry
 
-    registry = get_registry()
+    import stages  # noqa: F401 -- registration side effect (E1.2 entry point)
+    stages.import_idml_if_requested(
+        os.environ.get("PUBLISHER_EMIT_IDML", "").strip().lower() in ("1", "true", "yes")
+    )
+    engine = RenderEngine(os.environ.get("PUBLISHER_RENDER_ENGINE", "css").strip().lower())
+    registry = build_registry(RegistryConfig(render_engine=engine))
     decl = registry.get(args.stage_name)
     if decl is None:
         print(f"Unknown stage: '{args.stage_name}'")

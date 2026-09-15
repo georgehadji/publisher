@@ -45,13 +45,34 @@ import psycopg2
 import psycopg2.extras
 
 REPO_ROOT = Path(__file__).resolve().parent
-for sub in ("platform/stages/py", "platform/cas/py", "platform/cache/py"):
+for sub in ("platform/stages/py", "platform/cas/py", "platform/cache/py", "platform/exec/py"):
     sys.path.insert(0, str(REPO_ROOT / sub))
 
 import stages  # noqa: F401 -- registration side effect
 from publisher_cache import PostgresCacheStore
-from publisher_stages import ErrorKind, StageError, get_registry
-from tracer_bullet import DagExecutor
+from publisher_stages import ErrorKind, StageError, RegistryConfig, RenderEngine, build_registry
+from publisher_exec import DagExecutor
+
+# E1.2: this entry point parses PUBLISHER_RENDER_ENGINE/PUBLISHER_EMIT_IDML at its
+# own edge and calls build_registry() -- stages/__init__.py no longer reads either.
+stages.import_idml_if_requested(
+    os.environ.get("PUBLISHER_EMIT_IDML", "").strip().lower() in ("1", "true", "yes")
+)
+
+
+def _registry_config_from_env() -> RegistryConfig:
+    engine_raw = os.environ.get("PUBLISHER_RENDER_ENGINE", "css").strip().lower()
+    try:
+        engine = RenderEngine(engine_raw)
+    except ValueError:
+        raise ValueError(
+            f"PUBLISHER_RENDER_ENGINE={engine_raw!r} is not a render path. "
+            f"Choose one of {[e.value for e in RenderEngine]}."
+        )
+    # U2: this worker renders what the tenant uploaded -- the real DOCX path,
+    # never the fixture loader `acquire` (ARCHITECTURE_UPLIFT_PLAN.md N1).
+    return RegistryConfig(render_engine=engine, ingest_impl="ingest")
+
 
 POLL_INTERVAL_S = 2
 CAS_ROOT = Path(os.environ.get("PUBLISHER_CAS_ROOT", "./.publisher/cas"))
@@ -233,10 +254,13 @@ def _resolve_profile_name(build: dict) -> str:
     return name
 
 
-def _initial_inputs_for(conn, build: dict) -> dict:
+def _initial_inputs_for(conn, build: dict, registry) -> dict:
     """
     Maps a build's {documentId, designId, profileIds} to real DagExecutor
-    root inputs (U2).
+    root inputs (U2). `registry` is the FrozenRegistry `run_build` already
+    built for this run (E1.2) -- resolving `finish`/`design-compile` against
+    a SEPARATE registry could silently disagree if config parsing ever drifts
+    between the two call sites.
 
     Reads the manuscript the tenant actually uploaded: build['document_id'] ->
     manuscripts.source_sha256 -> the DOCX bytes in CAS, fed to the `ingest`
@@ -279,10 +303,10 @@ def _initial_inputs_for(conn, build: dict) -> dict:
     # supplied), which silently dropped `preflight` and `package` from the
     # DAG: the build reported `completed` with no preflight verdict and no
     # package -- the second hard gate, bypassed. Resolve the selected name.
-    finish_stage = get_registry().selected_implementation("finish")
+    finish_stage = registry.selected_implementation("finish")
     # "design-compile" is a step with two implementations too (CSS and Typst,
     # selected by PUBLISHER_RENDER_ENGINE) -- same resolution, same reason.
-    design_stage = get_registry().selected_implementation("design-compile")
+    design_stage = registry.selected_implementation("design-compile")
 
     return {
         "ingest": {"docx_path": str(cas_path)},
@@ -369,11 +393,10 @@ def run_build(conn, build: dict) -> None:
               # attempt; the attempt this run is ON is pre-value + 1.
               attempt=(build.get("attempt") or 0) + 1,
               lease_s=LEASE_SECONDS)
-    registry = get_registry()
-    # U2: this worker renders what the tenant uploaded. Select `ingest` (the real
-    # DOCX path) -- idempotent, and it forces the requirement in-process even if
-    # something else flipped the registry to the fixture loader `acquire`.
-    registry.select_implementation("ingest", "ingest")
+    # E1.2: a fresh FrozenRegistry per build, built from this process's own
+    # config -- not a shared mutable singleton another build (or a stale
+    # import-time selection) could have left in a different state.
+    registry = build_registry(_registry_config_from_env())
     executor = DagExecutor(registry, allow_stub_engines=False)
     cache_store = PostgresCacheStore(_dsn())
 
@@ -416,7 +439,7 @@ def run_build(conn, build: dict) -> None:
     try:
         results = executor.execute(
             build_id=build_id,
-            initial_inputs=_initial_inputs_for(conn, build),
+            initial_inputs=_initial_inputs_for(conn, build, registry),
             cas_root=CAS_ROOT,
             cache_store=cache_store,
             on_stage_complete=_on_stage,

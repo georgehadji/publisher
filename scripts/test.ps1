@@ -11,13 +11,20 @@
 # 2. PLUGIN AUTOLOAD COSTS ~100s PER RUN. Third-party pytest plugin discovery
 #    scans site-packages metadata; on Windows that is subject to real-time AV
 #    scanning and `pytest --version` alone took 2m30s. No test here depends on
-#    a third-party plugin -- verified: 338 collected, zero errors, 13.8s.
+#    a third-party plugin.
 #
 # Paths are listed explicitly rather than relying on testpaths so collection
 # can never wander outside this repo.
 #
-# Usage:  ./scripts/test.ps1              (whole suite)
+# E0.5: this header used to hardcode a measured count/time ("338 collected,
+# 13.8s") as if it were a standing guarantee. It went stale the moment more
+# tests were added and nobody noticed, because nothing re-checked it -- the
+# exact L16 failure mode. Below, `--durations=10` (default via pyproject.toml)
+# and the wall-clock line print what THIS run actually measured, every time.
+#
+# Usage:  ./scripts/test.ps1              (default suite, external tests excluded)
 #         ./scripts/test.ps1 -k cache     (extra args pass through to pytest)
+#         ./scripts/test.ps1 -m external  (only the excluded external tests)
 
 $Repo = Split-Path -Parent $PSScriptRoot
 Set-Location $Repo
@@ -27,9 +34,12 @@ $Out = ".publisher/test-output.txt"
 
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
 
+$started = Get-Date
 python -m pytest platform services packages stages tests @args 2>&1 | Tee-Object -FilePath $Out
 $code = $LASTEXITCODE
+$elapsed = (Get-Date) - $started
 
 Write-Output ""
+Write-Output "--- wall time: $([math]::Round($elapsed.TotalSeconds, 1))s ---"
 Write-Output "--- full output: $Out ---"
 exit $code

@@ -53,8 +53,51 @@ A stable prefix is billed at ~10% on cache hit, so bloat is survivable *if it ne
 Root cause of P3 is reading results out of a **global, cross-project** log directory. Fix: never read results from `rtk`'s tee dir. Write them to a **project-local, git-ignored** path and read only that.
 
 - `scripts/test.ps1` / `scripts/test.sh`: run the suite with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, explicit Publisher-only paths, output to `.publisher/test-output.txt`.
-- Autoload off is safe *and* honest here: verified 338 tests collect with zero errors, 13.8 s vs ~160 s. No test depends on a third-party plugin.
+- Autoload off is safe *and* honest here: no test depends on a third-party plugin.
 - Add `norecursedirs` to `pyproject.toml` so collection never wanders.
+
+**E0.5 update, measured 2026-09-14** (`docs/ARCHITECTURE_SCORE_10_PLAN.md`) — the
+"338 collected, 13.8s" line above had gone stale (more tests were added and
+nothing re-checked it, which is what L16 flagged): actual count by then was 432
+tests at 553s. Fix applied: `test_scribus_opens_the_package` marked
+`@pytest.mark.external` and excluded from the default run via
+`addopts = "... -m \"not external\""` in `pyproject.toml`; `test.ps1` now prints
+measured wall time every run instead of a hardcoded number.
+
+Result after excluding Scribus: 407 passed, 31 skipped, 1 deselected, 298s —
+not yet under the 90s this item targeted, because a second, unrelated outlier
+(`tests/test_process_hygiene.py::test_drain_output_returns_even_while_a_grandchild_holds_the_pipe`,
+~123s) surfaced that the original L16 finding didn't name.
+
+**Root-caused and fixed, 2026-09-14.** Not a timeout being too generous:
+`Popen.communicate(timeout=N)` spawns a daemon reader thread that is created
+once and *reused* across calls; when it times out, that thread stays alive,
+blocked in a raw read, still holding the stream's internal I/O lock.
+`kill_tree`'s `_close_streams` then called `.close()` on that same stream —
+and `TextIOWrapper.close()` needs that same lock, so it blocked for however
+long the surviving grandchild kept the pipe's write end open (confirmed
+empirically: a bare `.close()` after one timed-out `communicate()` blocked for
+~119s of a 120s-lived holder). Fix: `drain_output` marks a stream it gave up
+on (`_proc_control_leaked_pipes`), and `_close_streams` skips `.close()` on a
+marked stream rather than resurrecting the hang — the fd leaks for the
+remainder of the (short-lived, test-only) process, which is cheap and safe.
+That fix alone would have traded "slow but the grandchild ends up reaped" for
+"fast but leaking a `sleep(120)` orphan", since `kill_tree(proc)` cannot reach
+a grandchild once `proc`'s own pid has already exited (`taskkill /T` needs its
+anchor pid to still resolve — confirmed empirically, it fails outright
+otherwise). Added `kill_pid(pid)` for reaping a bare pid with no Popen handle,
+and the test now asserts the grandchild is actually gone, not just that the
+test returned quickly. `tests/test_process_hygiene.py` full run: 96s wall,
+that one test down from ~123s to ~7s.
+
+Full default suite re-measured after the fix: **407 passed, 31 skipped, 1
+deselected, 176s** (down from 298s). Still not under 90s: `tests/meta/`'s own
+gates-can-fail tests (E0.1, added the same day) are real subprocess/worktree
+work, the slowest at ~37s (`codegen-sync`, which copies `schemas/node_modules`
+and runs a real `node` + `git diff`). Not a hang, not fabricated — genuine
+gate-verification cost. Revisit if it grows further.
+Flagged separately; do not assume 90s is reachable until that one is resolved
+too.
 
 ### S2 — Gitignore generated state *(P4)*
 

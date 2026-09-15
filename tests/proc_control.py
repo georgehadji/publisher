@@ -99,6 +99,27 @@ def _kill_tree_windows(pid: int) -> None:
     )
 
 
+def kill_pid(pid: int) -> None:
+    """Kill a bare pid discovered without a Popen handle for it.
+
+    `kill_tree(proc)` can only reach descendants while `proc` itself is still
+    resolvable: `taskkill /T /PID <dead-pid>` fails outright once that pid has
+    already exited (confirmed empirically -- "ERROR: The process ... not
+    found", no attempt at the tree walk), so a caller that already terminated
+    the direct child by some other means cannot use it to reap a grandchild
+    whose pid it only knows by number. Safe on an already-dead pid.
+    """
+    if os.name == "nt":
+        _kill_tree_windows(pid)
+        return
+    import signal
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def _kill_tree_posix(proc: subprocess.Popen) -> None:
     import signal
 
@@ -154,7 +175,23 @@ def kill_tree(proc: subprocess.Popen, timeout_s: float = 5.0) -> None:
 
 
 def _close_streams(proc: subprocess.Popen) -> None:
-    """Release our ends of the pipes so the fds do not accumulate across a run."""
+    """Release our ends of the pipes so the fds do not accumulate across a run.
+
+    Skips a stream `drain_output` gave up on (`_proc_control_leaked_pipes`).
+    `Popen.communicate()` reads via a daemon thread that is created once and
+    reused across calls; when it times out, that thread is left running,
+    blocked inside a raw read on the pipe, and it keeps holding the stream's
+    internal I/O lock. `TextIOWrapper.close()` needs that same lock, so
+    closing the stream here would block for however long the surviving
+    descendant keeps the write end open -- reintroducing, via `.close()`, the
+    exact hang `drain_output`'s timeout exists to prevent. Confirmed empirically:
+    a bare `proc.stdout.close()` after one timed-out `communicate()` blocked for
+    the remaining ~119s of a 120s-lived holder. Leaking the fd is deliberate and
+    cheap here -- these are short-lived test helper processes; the OS reclaims it
+    when the interpreter exits.
+    """
+    if getattr(proc, "_proc_control_leaked_pipes", False):
+        return
     for stream in (proc.stdout, proc.stderr, proc.stdin):
         if stream is not None and not stream.closed:
             try:
@@ -182,6 +219,10 @@ def drain_output(proc: subprocess.Popen, timeout_s: float = 5.0) -> str:
             out, _ = proc.communicate(timeout=timeout_s)
             return out or ""
         except (subprocess.TimeoutExpired, OSError, ValueError):
+            # Giving up here means communicate()'s reader thread is still
+            # blocked and still holding the stream's I/O lock (see
+            # _close_streams) -- mark it so nobody tries to .close() it later.
+            proc._proc_control_leaked_pipes = True
             return PIPE_STILL_HELD
 
 
@@ -239,6 +280,7 @@ def postgres_skip_reason(url: str, timeout_s: float = 1.0) -> str | None:
 __all__ = [
     "PIPE_STILL_HELD",
     "drain_output",
+    "kill_pid",
     "kill_tree",
     "kill_tree_and_drain",
     "new_session_kwargs",

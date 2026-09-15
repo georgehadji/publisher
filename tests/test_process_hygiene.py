@@ -35,6 +35,7 @@ import pytest
 
 from proc_control import (
     drain_output,
+    kill_pid,
     kill_tree,
     new_session_kwargs,
     pid_alive,
@@ -134,10 +135,22 @@ def test_drain_output_returns_even_while_a_grandchild_holds_the_pipe(tmp_path):
         )
         assert isinstance(out, str), "callers interpolate this into a failure message"
     finally:
+        # kill_tree(proc) cannot reach the grandchild here: proc.terminate()
+        # above already killed the direct child, and taskkill's /T tree-walk
+        # needs its *anchor* pid to still resolve (confirmed empirically --
+        # once proc.pid is dead, `taskkill /T /PID <that pid>` fails outright
+        # with "process not found" and never attempts the walk). Reap the
+        # grandchild directly by its own pid instead, or this test leaks a
+        # sleep(120) process on every run -- the exact class of bug this file
+        # exists to catch, just reintroduced through this test's own cleanup.
         kill_tree(proc)
+        kill_pid(grandchild_pid)
         deadline = time.monotonic() + REAP_GRACE_S
         while time.monotonic() < deadline and pid_alive(grandchild_pid):
             time.sleep(0.1)
+        assert not pid_alive(grandchild_pid), (
+            f"grandchild {grandchild_pid} survived cleanup -- leaked a sleep(120) process"
+        )
 
 
 def test_drain_output_still_returns_real_output_when_nothing_holds_the_pipe(tmp_path):

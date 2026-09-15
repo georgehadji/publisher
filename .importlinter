@@ -1,0 +1,79 @@
+[importlinter]
+root_packages =
+    publisher_stages
+    publisher_cas
+    publisher_cache
+    publisher_exec
+    publisher_sandbox
+    publisher_ingest
+    publisher_structure
+    publisher_prepress
+    publisher_cover
+    publisher_epub
+    publisher_onix
+    publisher_alttext
+    publisher_agents
+
+# E1.4 (docs/ARCHITECTURE_SCORE_10_PLAN.md): the audit's strongest structural
+# property -- `platform -> services` is zero imports -- was true only by
+# convention. These make it an enforced invariant instead of a fact that can
+# silently stop being true. tools/lint_service_deps.py keeps the one job
+# import-linter cannot do: checking that a cross-package import a contract
+# below permits is also DECLARED in the importing package's own
+# pyproject.toml [project].dependencies.
+#
+# NOT expressed here: "no production import of the dev harness" (worker.py,
+# publisher_exec must not import tracer_bullet.py). grimp -- import-linter's
+# graph backend -- requires every root_packages entry to be a real package
+# (a directory with __init__.py); worker.py and tracer_bullet.py are bare
+# top-level modules, and grimp raises NotATopLevelModule for those (confirmed
+# empirically against grimp 3.3). That rule is still enforced -- just by grep,
+# not a declarative contract: `grep -rn 'from tracer_bullet import'
+# --include=*.py .` returns 0 matches repo-wide (E1.1's own acceptance
+# criterion; verified 2026-09-15). Revisit if grimp adds single-module root
+# support.
+
+[importlinter:contract:no-platform-to-services]
+name = platform does not import services
+type = forbidden
+source_modules =
+    publisher_stages
+    publisher_cas
+    publisher_cache
+    publisher_exec
+forbidden_modules =
+    publisher_ingest
+    publisher_structure
+    publisher_prepress
+    publisher_cover
+
+[importlinter:contract:services-do-not-know-the-substrate]
+name = services do not import the platform substrate
+type = forbidden
+source_modules =
+    publisher_ingest
+    publisher_structure
+    publisher_prepress
+    publisher_cover
+forbidden_modules =
+    publisher_stages
+    publisher_cas
+    publisher_exec
+
+[importlinter:contract:services-are-independent]
+name = services are independent of one another
+type = independence
+modules =
+    publisher_ingest
+    publisher_structure
+    publisher_prepress
+    publisher_cover
+    publisher_epub
+    publisher_onix
+    publisher_alttext
+
+# publisher_agents is deliberately NOT one of the modules above: it legitimately
+# calls publisher_structure.rules (U3, CI-linted by tools/lint_service_deps.py),
+# and an `independence` contract has no "one-directional" exception -- adding
+# it to the list would flag that real, intended dependency as a violation.
+# Every OTHER pair in the list above stays genuinely independent.

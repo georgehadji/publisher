@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from stages.design_compile_stage import _default_designspec, _emit_css
+from stages.design_compile_stage import _default_designspec
+from stages.rendering import emit_css
 from stages.typst_stages import _emit_typst
 from templates import DEFAULT_LEADING_PT, TEMPLATES
 
@@ -38,7 +39,7 @@ def _css_block(css: str, needle: str) -> str:
 
 
 def test_running_head_size_is_body_minus_three(tmp_path):
-    css = _emit_css(_spec())
+    css = emit_css(_spec())
     head = _css_block(css, "string(recto-head)")
 
     assert f"font-size: {BODY_SIZE - 3:g}pt;" in head
@@ -50,7 +51,7 @@ def test_running_head_size_is_body_minus_three(tmp_path):
 
 
 def test_folio_size_is_body_minus_one(tmp_path):
-    css = _emit_css(_spec())
+    css = emit_css(_spec())
     folio = _css_block(css, "counter(page,")
 
     assert f"font-size: {BODY_SIZE - 1:g}pt;" in folio
@@ -62,7 +63,7 @@ def test_both_engines_read_the_same_spec():
     """The anti-drift check. CSS said 9pt, Typst said body-1.5; both ignored the
     spec, so the same manuscript got different running heads per engine."""
     spec = _spec()
-    css, typ = _emit_css(spec), _emit_typst(spec)
+    css, typ = emit_css(spec), _emit_typst(spec)
 
     head_size = f"{BODY_SIZE - 3:g}pt"
     folio_size = f"{BODY_SIZE - 1:g}pt"
@@ -84,7 +85,7 @@ def test_changing_the_spec_moves_both_engines():
                                "tracking": 0, "weight": "regular"})
     spec["typography"]["bodySize"] = 12.0
 
-    css, typ = _emit_css(spec), _emit_typst(spec)
+    css, typ = emit_css(spec), _emit_typst(spec)
     head = _css_block(css, "string(recto-head)")
 
     assert "font-size: 10pt;" in head

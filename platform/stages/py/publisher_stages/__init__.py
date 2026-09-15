@@ -87,8 +87,8 @@ class StageCtx:
     # True. Default False so a real build (any executor other than the local tracer
     # bullet) fails loudly on a missing engine rather than silently certifying stub
     # output as "passed" (BUILD_PLAN.md D8: no silent quality downgrades). Only
-    # tracer_bullet.py's own DagExecutor sets this — the API-triggered production
-    # executor never does.
+    # Only tracer_bullet.py's local dev run sets this (via publisher_exec's
+    # DagExecutor) — the API-triggered production executor never does.
     allow_stub_engines: bool = False
     # Durable CAS root every stage must write artifacts into -- ARCHITECTURE_
     # REMEDIATION.md A1.1. Empty defaults to work_dir/.cas, today's implicit
@@ -119,7 +119,7 @@ class StageDeclaration:
     # e.g. `resolve`'s `overrides_path=None` legitimately means "zero overrides", vs
     # `cover`'s `page_count=0`, whose default is a placeholder the function rejects
     # outright (`if not page_count: raise BAD_INPUT`). A local executor building a
-    # reachable-stage subset (tracer_bullet.py DagExecutor._reachable_stages) needs
+    # reachable-stage subset (publisher_exec's `_reachable_stages`) needs
     # this distinction explicitly declared -- inferring it from whether the Python
     # parameter merely HAS a default conflates the two cases.
     optional_root_inputs: Optional[list[str]] = None
@@ -444,13 +444,126 @@ class StageRegistry:
         return violations
 
 
+# ── Registry lifecycle: explicit construction, no import-time env (E1.2) ────
+#
+# Before this, `stages/__init__.py` called `select_implementation()` four
+# times at IMPORT time (one reading PUBLISHER_RENDER_ENGINE), mutating the
+# same global `_REGISTRY` that `worker.run_build` then mutated AGAIN per
+# build. Import order and environment were part of the graph's identity, and
+# two builds wanting different engines in the same process could not
+# coexist. `build_registry(config)` fixes this: `_REGISTRY` now holds
+# declarations ONLY (never a selection -- nobody calls its
+# `select_implementation` any more), and every caller that needs a fully
+# selected, ready-to-run graph builds its OWN immutable `FrozenRegistry` from
+# an explicit `RegistryConfig`.
+
+
+class RenderEngine(str, Enum):
+    """Which pair of alternative render stages a build binds -- BUILD_PLAN.md O1."""
+    CSS = "css"
+    TYPST = "typst"
+
+
+# Which concrete stage names each engine selects for the two steps it decides.
+# This is the same mapping that used to live in stages/__init__.py; moved here
+# because SELECTION is build_registry()'s job now, not an import-time side effect.
+_RENDER_ENGINE_SELECTIONS: dict["RenderEngine", dict[str, str]] = {
+    RenderEngine.CSS: {"design-compile": "design-compile", "paginate": "paginate"},
+    RenderEngine.TYPST: {"design-compile": "design-compile-typst", "paginate": "paginate-typst"},
+}
+
+
+@dataclass(frozen=True)
+class RegistryConfig:
+    """Explicit input to `build_registry()`. Two different configs -- built in
+    the same process -- produce two independent `FrozenRegistry` instances;
+    neither mutates the other, and neither mutates the shared `_REGISTRY`."""
+    render_engine: "RenderEngine" = RenderEngine.CSS
+    finish_impl: str = "finish-gs"
+    ingest_impl: str = "ingest"
+
+
+def _validate_selection(stages: dict[str, StageDeclaration], step: str, stage_name: str) -> None:
+    decl = stages.get(stage_name)
+    if decl is None:
+        raise ValueError(f"cannot select unknown stage '{stage_name}' for step '{step}'")
+    if decl.implements != step:
+        raise ValueError(
+            f"stage '{stage_name}' declares implements={decl.implements!r}, not '{step}'"
+        )
+
+
+class FrozenRegistry(StageRegistry):
+    """An immutable, fully-selected registry -- the output of `build_registry()`.
+
+    Inherits every read method from `StageRegistry` (`get`, `all`,
+    `derive_dag`, `check_integrity`, `topological_sort`, ...) unchanged; only
+    `register()` and `select_implementation()` are disabled, since a frozen
+    registry's declarations and selection are both fixed at construction.
+    """
+
+    def __init__(self, stages: dict[str, StageDeclaration], selection: dict[str, str]):
+        self._stages = dict(stages)  # shallow copy -- StageDeclaration itself is frozen
+        self._selection = dict(selection)
+
+    def register(self, decl: StageDeclaration) -> None:
+        raise TypeError(
+            "FrozenRegistry is immutable -- register new stages via @stage "
+            "(at import time) before calling build_registry()"
+        )
+
+    def select_implementation(self, step: str, stage_name: str) -> None:
+        raise TypeError(
+            "FrozenRegistry is immutable -- pass selections via RegistryConfig "
+            "to build_registry() instead"
+        )
+
+
+def build_registry(config: RegistryConfig) -> FrozenRegistry:
+    """Build an immutable, fully-selected registry from `config`.
+
+    Reads the declarations `@stage` has registered so far (via the shared,
+    selection-free `_REGISTRY`) and computes a FRESH selection dict from
+    `config` -- nothing here is read from `os.environ` or from import order.
+    Call this at each entry point's edge (`worker.py`, `tracer_bullet.py`,
+    `cli.py`, `platform/stages/integrity.py`) after `import stages` has run.
+    """
+    selection: dict[str, str] = {
+        "ingest": config.ingest_impl,
+        "finish": config.finish_impl,
+    }
+    engine_impls = _RENDER_ENGINE_SELECTIONS.get(config.render_engine)
+    if engine_impls is None:
+        raise ValueError(
+            f"{config.render_engine!r} is not a known render engine. "
+            f"Choose one of {sorted(_RENDER_ENGINE_SELECTIONS)}."
+        )
+    selection.update(engine_impls)
+
+    for step, stage_name in selection.items():
+        _validate_selection(_REGISTRY._stages, step, stage_name)
+
+    return FrozenRegistry(_REGISTRY._stages, selection)
+
+
 # ── Global registry instance ─────────────────────────────────────
+#
+# Holds declarations ONLY -- see the note above `build_registry()`. Safe to
+# share process-wide because `StageDeclaration` is itself immutable and
+# nothing here ever calls `select_implementation` on this instance.
 
 _REGISTRY = StageRegistry()
 
 
 def get_registry() -> StageRegistry:
-    """Return the global stage registry instance."""
+    """Return the global stage registry instance.
+
+    Selection-agnostic call sites (e.g. `package_stage.py`'s manifest, which
+    only wants `{name: version}` across every declared stage) can keep using
+    this. Anything that needs a correctly SELECTED graph must call
+    `build_registry(RegistryConfig(...))` instead -- this instance's own
+    `_selection` is intentionally never populated any more.
+    """
     return _REGISTRY
 
 

@@ -10,15 +10,15 @@ long gone. Ingestion is precisely the step that *can* drop text, so it
 carries its own post-condition: every non-empty block of the DOCX must
 appear in the emitted AST (`_assert_no_text_lost`).
 
-Constraints imposed by `extract._ast_to_html` (stages/extract_stage.py)
-----------------------------------------------------------------------
+Constraints imposed by `stages.rendering.ast_to_html` (stages/rendering.py)
+----------------------------------------------------------------------------
 These are not stylistic preferences; violating them fails the build:
 
-* A `chapter` MUST carry `attrs.title`. `_ast_to_html` falls back to
+* A `chapter` MUST carry `attrs.title`. `ast_to_html` falls back to
   `f"Chapter {number}"` when it is missing, injecting text into the HTML
   side that no source-side text can match.
 * frontMatter/backMatter items MUST NOT carry `attrs.title`.
-  `_ast_to_html` does not render titles for them, but the source-side
+  `ast_to_html` does not render titles for them, but the source-side
   extractor picks up `attrs.title` anywhere it appears -- so a title here
   is counted on one side only.
 """

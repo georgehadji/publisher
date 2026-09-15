@@ -9,6 +9,11 @@ declare module 'fastify' {
     /** Idempotency key reserved by the onRequest hook, filled by onSend (U5/S3). */
     idemKey?: string;
   }
+  interface FastifyInstance {
+    /** Every route registered so far, collected via `onRoute` (E0.4's
+     * route-coverage meta-test: a route missing from the auth matrix). */
+    publisherRoutes: { method: string; url: string }[];
+  }
 }
 
 export {};

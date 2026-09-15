@@ -133,6 +133,7 @@ cross-project log directory and a sibling repo's failures got reported as Publis
 `BLOCKING_FIX_PLAN.md` (D1–D3 landed in c5cfad3) ·
 `COST_AND_STABILITY_PLAN.md` · `REMEDIATION_PLAN.md` (complete) ·
 `VERIFICATION_PLAN.md` (G1–G8 — gates that cannot fail; **draft, nothing implemented**) ·
-`CONTEXT_ARCHITECTURE.md` (C1–C4 — ICM evaluated against this repo; **research memo**)
+`CONTEXT_ARCHITECTURE.md` (C1–C4 — ICM evaluated against this repo; **research memo**) ·
+`ARCHITECTURE_SCORE_10_PLAN.md` (E0–E7 — EGFV v3.0 audit 5/10 → 10/10; **E0 + E1 (E1.1–E1.4) landed+tested, E2+ open**)
 
 Full index with per-document status: the **publisher-docs** skill.

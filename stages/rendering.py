@@ -1,0 +1,699 @@
+"""
+Shared rendering primitives -- E1.3 (docs/ARCHITECTURE_SCORE_10_PLAN.md).
+
+`ast_to_html` and `emit_css` used to live as private, cross-sibling imports:
+`paginate_stage.py` reached into `stages.extract_stage._ast_to_html` and
+`stages.design_compile_stage._emit_css`, and `idml_stage.py`/`typst_stages.py`
+each reached into `_ast_to_html` too. This is their one public home instead
+(E1: one home per concern).
+
+CONSTRAINT THAT MUST SURVIVE ANY FUTURE CHANGE HERE: `extract` and `paginate`
+must call the SAME function object. Two copies of either function would
+silently break the guarantee that pagination renders exactly what the
+text-integrity gate verified against `extract`'s output -- see
+`stages/tests/test_shared_rendering.py`, which asserts identity, not just
+equality of output.
+"""
+
+from __future__ import annotations
+
+import html as _html
+
+# The house 5.00mm baseline -- see design_compile_stage.py's original comment:
+# a DesignSpec reaches emit_css() as a plain dict with no schema defaults
+# applied at runtime, so a `.get(key)` with no fallback would emit CSS with a
+# missing value the moment a spec omits a field.
+from templates import DEFAULT_LEADING_PT
+
+# ── ast_to_html (moved from extract_stage.py) ───────────────────────────────
+
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{title}</title>
+</head>
+<body>
+{body}
+</body>
+</html>"""
+
+# Extensions for the image types Word actually embeds. The renderers get files
+# on disk, and weasyprint, Typst and InDesign all decide how to decode by
+# extension -- an extensionless blob is refused by all three.
+MEDIA_EXTENSIONS = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/tiff": "tif",
+    "image/bmp": "bmp",
+    "image/svg+xml": "svg",
+    "image/x-emf": "emf",
+    "image/x-wmf": "wmf",
+}
+
+
+def _escape_html(text: str) -> str:
+    return _html.escape(text, quote=True)
+
+
+def _media_src(ref: dict) -> str:
+    """`media/<sha256>.<ext>` for a figure's mediaRef.
+
+    Content-addressed rather than named: the src is enough for any renderer to
+    pull the bytes back out of CAS, so the HTML carries no path into a work
+    directory that will not exist by the time it is rendered.
+    """
+    digest = ref.get("hash")
+    if not digest:
+        return ""
+    ext = MEDIA_EXTENSIONS.get(ref.get("mediaType", ""), "bin")
+    return f"media/{digest}.{ext}"
+
+
+def _render_inline(content: list) -> str:
+    """Render AST inline content to HTML."""
+    parts = []
+    for node in content:
+        ntype = node.get("type", "text")
+
+        if ntype == "text":
+            text = _escape_html(node.get("text", ""))
+            # Apply marks
+            marks = node.get("marks", [])
+            for mark in marks:
+                mtype = mark.get("type", "")
+                if mtype == "emphasis":
+                    text = f"<em>{text}</em>"
+                elif mtype == "strong":
+                    text = f"<strong>{text}</strong>"
+                elif mtype == "smallCaps":
+                    text = f'<span class="small-caps">{text}</span>'
+                elif mtype == "superscript":
+                    text = f"<sup>{text}</sup>"
+                elif mtype == "subscript":
+                    text = f"<sub>{text}</sub>"
+                elif mtype == "code":
+                    text = f"<code>{text}</code>"
+                elif mtype == "link":
+                    href = (mark.get("attrs") or {}).get("href", "")
+                    text = f'<a href="{_escape_html(href)}">{text}</a>'
+            parts.append(text)
+
+        elif ntype == "emphasis":
+            p = _render_inline(node.get("content", []))
+            parts.append(f"<em>{p}</em>")
+
+        elif ntype == "strong":
+            p = _render_inline(node.get("content", []))
+            parts.append(f"<strong>{p}</strong>")
+
+        elif ntype == "hardBreak":
+            parts.append("<br/>")
+
+        elif ntype == "codeInline":
+            parts.append(f"<code>{_escape_html(node.get('text', ''))}</code>")
+
+        elif ntype == "superscript":
+            parts.append(f"<sup>{_render_inline(node.get('content', []))}</sup>")
+
+        else:
+            parts.append(_escape_html(str(node.get("text", ""))))
+
+    return "".join(parts)
+
+
+def _render_table(node: dict) -> str:
+    """Render an AST table to HTML."""
+    parts = ['<table>']
+    caption = (node.get("attrs") or {}).get("caption", "")
+    if caption:
+        parts.append(f'<caption>{_escape_html(caption)}</caption>')
+
+    for row in node.get("content", []):
+        is_header = (row.get("attrs") or {}).get("header", False)
+        tag = "th" if is_header else "td"
+        parts.append("<tr>")
+        for cell in row.get("content", []):
+            colspan = (cell.get("attrs") or {}).get("colspan", 1)
+            parts.append(f'<{tag} colspan="{colspan}">{_render_content(cell.get("content", []))}</{tag}>')
+        parts.append("</tr>")
+    parts.append("</table>")
+    return "\n".join(parts)
+
+
+def _render_content(content: list) -> str:
+    """Render AST block content to HTML."""
+    parts = []
+    for node in content:
+        ntype = node.get("type", "unknown")
+
+        if ntype == "paragraph":
+            role = (node.get("attrs") or {}).get("role", "normal")
+            cls = f"paragraph {role}" if role != "normal" else "paragraph"
+            parts.append(f'<p class="{cls}">{_render_inline(node.get("content", []))}</p>')
+
+        elif ntype == "heading":
+            level = (node.get("attrs") or {}).get("level", 2)
+            parts.append(f'<h{level}>{_render_inline(node.get("content", []))}</h{level}>')
+
+        elif ntype == "blockquote":
+            parts.append(f'<blockquote>{_render_content(node.get("content", []))}</blockquote>')
+
+        elif ntype == "epigraph":
+            source = (node.get("attrs") or {}).get("source", "")
+            inner = _render_content(node.get("content", []))
+            parts.append(f'<blockquote class="epigraph">{inner}')
+            if source:
+                parts.append(f'<footer>{_escape_html(source)}</footer>')
+            parts.append("</blockquote>")
+
+        elif ntype == "verse":
+            parts.append('<div class="verse">')
+            for line in node.get("content", []):
+                parts.append(f'<p class="verse-line">{_render_inline(line.get("content", []))}</p>')
+            parts.append("</div>")
+
+        elif ntype == "sceneBreak":
+            ornament = (node.get("attrs") or {}).get("ornament", "dinkus")
+            parts.append(f'<hr class="scene-break" data-ornament="{ornament}" />')
+
+        elif ntype == "code":
+            lang = (node.get("attrs") or {}).get("language", "")
+            parts.append(f'<pre class="code-block" data-language="{lang}">{_escape_html(node.get("content", ""))}</pre>')
+
+        elif ntype == "dialogue":
+            speaker = (node.get("attrs") or {}).get("speaker", "")
+            inner = _render_content(node.get("content", []))
+            parts.append(f'<div class="dialogue" data-speaker="{_escape_html(speaker)}">{inner}</div>')
+
+        elif ntype == "list":
+            list_type = (node.get("attrs") or {}).get("listType", "unordered")
+            tag = "ol" if list_type == "ordered" else "ul"
+            parts.append(f'<{tag}>')
+            for item in node.get("content", []):
+                parts.append(f'<li>{_render_content(item.get("content", []))}</li>')
+            parts.append(f'</{tag}>')
+
+        elif ntype == "figure":
+            attrs = node.get("attrs", {})
+            caption = attrs.get("caption", "")
+            src = _media_src(attrs.get("mediaRef") or {})
+            parts.append('<figure>')
+            # The <img> was missing entirely: every figure rendered as an empty
+            # box with a caption under it. Nothing caught it, because a picture
+            # contributes no text for the integrity gate to miss.
+            if src:
+                parts.append(f'<img src="{src}" alt="{_escape_html(attrs.get("altText", ""))}"/>')
+            parts.append(f'<figcaption>{_escape_html(caption)}</figcaption>' if caption else '')
+            parts.append('</figure>')
+
+        elif ntype == "footnote":
+            # An inline element at block position on purpose: `float: footnote`
+            # (CSS Generated Content for Paged Media) moves it into the page's
+            # footnote area and numbers the call itself. Rendering it as a block
+            # would print the note inline in the text where it happens to sit.
+            parts.append(
+                f'<span class="footnote">{_render_inline(node.get("content", []))}</span>'
+            )
+
+        elif ntype == "sidebar":
+            parts.append(f'<aside class="sidebar">{_render_content(node.get("content", []))}</aside>')
+
+        elif ntype == "pageBreak":
+            parts.append('<div class="page-break"></div>')
+
+        elif ntype in ("halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword",
+                       "preface", "acknowledgments", "prologue", "epilogue", "afterword",
+                       "appendix", "notes", "bibliography", "index", "aboutTheAuthor", "alsoBy", "colophon"):
+            role = ntype
+            parts.append(f'<div class="{role}">{_render_content(node.get("content", []))}</div>')
+
+        elif ntype == "table":
+            parts.append(_render_table(node))
+
+        else:
+            parts.append(f'<!-- unknown node type: {ntype} -->')
+
+    return "\n".join(parts)
+
+
+def ast_to_html(ast: dict) -> str:
+    """Convert a Book AST into a flat typescript-like HTML document.
+
+    This is deliberately naive -- the tracer bullet validates the contract,
+    not the quality. Production will use XSweet.
+
+    `extract` and `paginate` (and, for their measured-pagemap hint,
+    `idml_stage.py` and `typst_stages.py`) must all call this SAME function
+    object -- see the module docstring.
+    """
+    parts = []
+
+    # Title from metadata
+    title = (ast.get("metadata") or {}).get("title", "Untitled")
+
+    # Process front matter
+    front_matter = ast.get("frontMatter") or []
+    for item in front_matter:
+        parts.append(f'<div class="front-matter {item.get("type", "unknown")}">')
+        parts.append(_render_content(item.get("content", [])))
+        parts.append("</div>")
+
+    # Process body (chapters)
+    body = ast.get("body", [])
+    for chapter in body:
+        ctype = chapter.get("type", "unknown")
+        attrs = chapter.get("attrs", {})
+        cid = attrs.get("id", f"{ctype}-{attrs.get('number', '?')}")
+        title_text = attrs.get("title", f"Chapter {attrs.get('number', '?')}")
+
+        parts.append(f'<div class="{ctype}" id="{cid}" data-number="{attrs.get("number", "")}">')
+        parts.append(f'<h1 class="chapter-title">{_escape_html(title_text)}</h1>')
+        parts.append(_render_content(chapter.get("content", [])))
+        parts.append("</div>")
+
+    # Process back matter
+    back_matter = ast.get("backMatter") or []
+    for item in back_matter:
+        parts.append(f'<div class="back-matter {item.get("type", "unknown")}">')
+        parts.append(_render_content(item.get("content", [])))
+        parts.append("</div>")
+
+    return HTML_TEMPLATE.format(title=_escape_html(title), body="\n".join(parts))
+
+
+# ── emit_css (moved from design_compile_stage.py) ───────────────────────────
+
+_RUNNING_HEAD_DEFAULTS = {"sizeDelta": -3.0, "weight": "bold",
+                          "case": "uppercase", "tracking": 100.0}
+_FOLIO_DEFAULTS = {"sizeDelta": -1.0, "weight": "regular",
+                   "case": "none", "tracking": 0.0}
+
+CSS_WEIGHTS = {"regular": "400", "medium": "500", "semibold": "600", "bold": "700"}
+
+
+def _furniture_css(block: dict, body_size: float, family: str,
+                   defaults: dict) -> list[str]:
+    """CSS declarations for a running head or folio, from the DesignSpec.
+
+    The one place these turn into declarations. They used to be `font-size: 9pt`
+    written out three times, which meant the DesignSpec's typography was ignored
+    outright and a house rule like "running heads are body minus three" could not
+    be expressed at all, let alone changed in one place.
+    """
+    size = body_size + float(block.get("sizeDelta", defaults["sizeDelta"]))
+    weight = block.get("weight", defaults["weight"])
+    case = block.get("case", defaults["case"])
+    # Tracking is authored in InDesign units (1/1000 em) because InDesign is one
+    # of the deliverables; CSS wants em.
+    tracking = float(block.get("tracking", defaults["tracking"])) / 1000.0
+
+    decls = [f"font-family: {family};", f"font-size: {size:g}pt;",
+             f"font-weight: {CSS_WEIGHTS.get(weight, '400')};"]
+    if case in ("uppercase", "lowercase"):
+        decls.append(f"text-transform: {case};")
+    elif case == "small-caps":
+        decls.append("font-variant-caps: small-caps;")
+    if tracking:
+        decls.append(f"letter-spacing: {tracking:g}em;")
+    return decls
+
+
+def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
+    """Emit CSS @page rules and typographic styles from a DesignSpec.
+
+    This implements a subset of the CSS Paged Media output from ARCHITECTURE.md §2.7.
+
+    `bleed_mm` is emitted as the CSS Paged Media `bleed` property rather than
+    being added to `size` by hand. The renderer, not this function, then owns
+    the box arithmetic: weasyprint keeps the page box at trim (so margins and
+    the type area do not move), grows MediaBox/BleedBox outward by the bleed,
+    and writes a TrimBox at the trim edge.
+
+    Doing it by hand -- `size: trim + 2*bleed` with padded margins -- lays out
+    the right geometry but leaves TrimBox == BleedBox == MediaBox in the output,
+    because weasyprint writes all three from the page box. Ghostscript then
+    ignores `PDFXTrimBoxToMediaBoxOffset` (those apply only to boxes the input
+    lacks), fails its own TrimBox-fits-inside-BleedBox test on three identical
+    non-integral rectangles, and abandons PDF/X. The bleed has to be declared
+    where the renderer can see it.
+
+    A page laid out at exactly trim -- what this emitted before -- cannot carry
+    bleed at all, however much the vendor profile asks for. Preflight measured
+    0.00mm against a profile demanding 3.00mm and was right to fail.
+
+    `design-compile` and `paginate`'s CSS fallback must both call this SAME
+    function object -- see the module docstring.
+    """
+    typography = designspec.get("typography", {})
+    grid = designspec.get("grid", {})
+    margins = designspec.get("margins", {})
+    folio = designspec.get("folio", {})
+    chapter_openings = designspec.get("chapterOpenings", {})
+    running_heads = designspec.get("runningHeads", {})
+    colors = designspec.get("colors", {})
+    trim_size = designspec.get("trimSize", {})
+
+    # Unit conversion
+    has_unit = trim_size.get("unit", "mm")
+    w_mm = trim_size.get("width", 152)
+    h_mm = trim_size.get("height", 229)
+
+    body_size = typography.get("bodySize", 10.5)
+    leading = typography.get("leading", DEFAULT_LEADING_PT)
+    measure = typography.get("measure", 66)
+
+    body_font_family = (typography.get("bodyFont") or {}).get("family", "EB Garamond")
+    heading_font_family = (typography.get("headingFont") or {}).get("family", "")
+    if not heading_font_family:
+        heading_font_family = body_font_family
+
+    top = margins.get("top", 18)
+    bottom = margins.get("bottom", 20)
+    inside = margins.get("inside", 15)
+    outside = margins.get("outside", 20)
+    gutter = margins.get("gutter", 0)
+
+    text_color = colors.get("text", "#000000")
+    paper_color = colors.get("paper", "#FFFFFF")
+
+    lines = [
+        "/* Auto-generated from DesignSpec -- emit_css() */",
+        "",
+        "@page {",
+        f"  size: {w_mm:g}mm {h_mm:g}mm;",
+        # Emitted only when there is bleed to declare, so a no-bleed profile's
+        # stylesheet is byte-identical to what it was before bleed existed.
+        *([f"  bleed: {bleed_mm:g}mm;"] if bleed_mm > 0 else []),
+        f"  margin-top: {top}mm;",
+        f"  margin-bottom: {bottom}mm;",
+        f"  margin-left: {inside}mm;",
+        f"  margin-right: {outside}mm;",
+        "}",
+        "",
+        "@page :first {",
+        "  @top-left { content: none; }",
+        "  @top-right { content: none; }",
+        "}",
+        "",
+        f"@page :recto {{",
+        f"  margin-left: {inside}mm;",
+        f"  margin-right: {outside}mm;",
+        f"  @top-left {{ content: ''; }}",
+        f"  @top-right {{ content: ''; }}",
+        "}",
+        "",
+        f"@page :verso {{",
+        f"  margin-left: {outside}mm;",
+        f"  margin-right: {inside}mm;",
+        f"  @top-left {{ content: ''; }}",
+        f"  @top-right {{ content: ''; }}",
+        "}",
+        "",
+    ]
+
+    # Running heads
+    rh_recto_source = running_heads.get("rectoSource", "chapter-title")
+    rh_verso_source = running_heads.get("versoSource", "book-title")
+    rh_style = running_heads.get("style", "centered")
+
+    if rh_recto_source != "none" or rh_verso_source != "none":
+        head_css = _furniture_css(running_heads, body_size, body_font_family,
+                                  _RUNNING_HEAD_DEFAULTS)
+        lines.extend([
+            "@page :recto {",
+            "  @top-left {",
+            "    content: string(recto-head);",
+            *(f"    {d}" for d in head_css),
+            "  }",
+            "}",
+            "",
+            "@page :verso {",
+            "  @top-right {",
+            "    content: string(verso-head);",
+            *(f"    {d}" for d in head_css),
+            "  }",
+            "}",
+            "",
+        ])
+
+    # Folio
+    folio_pos = folio.get("position", "bottom-center")
+    folio_style = folio.get("style", "arabic")
+    folio_suppress = folio.get("suppressOn", ["chapter-opening"])
+
+    if folio_pos != "none":
+        folio_side_map = {
+            "bottom-center": ("bottom", "center"),
+            "bottom-outside": ("bottom", "outside"),
+            "top-center": ("top", "center"),
+            "top-outside": ("top", "outside"),
+        }
+        edge, align = folio_side_map.get(folio_pos, ("bottom", "center"))
+        lines.extend([
+            "@page {",
+            f"  @{edge}-{align} {{",
+            f"    content: counter(page, {folio_style});",
+            *(f"    {d}" for d in _furniture_css(folio, body_size,
+                                                 body_font_family, _FOLIO_DEFAULTS)),
+            "  }",
+            "}",
+            "",
+        ])
+
+        if "chapter-opening" in folio_suppress:
+            lines.extend([
+                "@page chapter-opening {",
+                f"  @{edge}-{align} {{ content: none; }}",
+                "}",
+                "",
+            ])
+
+    # Chapter opening styles
+    starts_on = chapter_openings.get("startsOn", "recto")
+    drop_cap = chapter_openings.get("dropCap", True)
+    drop_cap_lines = chapter_openings.get("dropCapLines", 3)
+
+    # Base body
+    lines.extend([
+        "html {",
+        f"  font-family: {body_font_family};",
+        f"  font-size: {body_size}pt;",
+        f"  line-height: {leading}pt;",
+        f"  color: {text_color};",
+        "}",
+        "",
+        "body {",
+        f"  counter-reset: chapter footnote;",
+        "}",
+        "",
+        "p {",
+        "  margin: 0;",
+        "  text-indent: 1.5em;",
+        "  widows: 2;",
+        "  orphans: 2;",
+        "}",
+        "",
+        "p.chapter-opening {",
+        "  text-indent: 0;",
+        "}",
+        "",
+        ".chapter {",
+        f"  page: chapter-opening;",
+        f"  page-break-before: {starts_on};",
+        "  counter-increment: chapter;",
+        "}",
+        "",
+        f".chapter-title {{",
+        f"  font-family: {heading_font_family};",
+        f"  font-size: {body_size * 1.8}pt;",
+        f"  line-height: {leading * 2}pt;",
+        f"  text-align: center;",
+        f"  margin-top: {leading * 2}pt;",
+        f"  margin-bottom: {leading}pt;",
+        f"  string-set: recto-head content(text);",
+        "}",
+        "",
+    ])
+
+    if drop_cap:
+        lines.extend([
+            "p.chapter-opening::first-letter {",
+            f"  font-size: {body_size * drop_cap_lines * 0.8}pt;",
+            f"  line-height: {leading * drop_cap_lines * 0.7}pt;",
+            "  float: left;",
+            f"  margin-right: 0.15em;",
+            "  font-weight: bold;",
+            "}",
+            "",
+        ])
+
+    # Scene break
+    lines.extend([
+        "hr.scene-break {",
+        "  border: none;",
+        "  text-align: center;",
+        "  margin: 1em 0;",
+        "}",
+        "hr.scene-break::before {",
+        "  content: '* * *';",
+        "}",
+        "",
+    ])
+
+    # Verse
+    lines.extend([
+        ".verse {",
+        "  margin-left: 2em;",
+        "  font-style: italic;",
+        "}",
+        ".verse-line {",
+        "  text-indent: -1em;",
+        "  padding-left: 1em;",
+        "}",
+        "",
+    ])
+
+    # Blockquotes
+    lines.extend([
+        "blockquote {",
+        "  margin: 0.5em 1.5em;",
+        "  font-style: italic;",
+        "}",
+        "blockquote.epigraph {",
+        "  margin: 1em 2em;",
+        "}",
+        "blockquote.epigraph footer {",
+        "  text-align: right;",
+        "  font-size: 0.9em;",
+        "}",
+        "",
+    ])
+
+    # Code blocks
+    lines.extend([
+        "pre.code-block {",
+        "  font-family: 'Consolas', 'Monaco', monospace;",
+        "  font-size: 0.85em;",
+        "  line-height: 1.4;",
+        "  margin: 0.5em 0;",
+        "  white-space: pre-wrap;",
+        "}",
+        "",
+    ])
+
+    # Tables
+    lines.extend([
+        "table {",
+        "  margin: 0.5em 0;",
+        "  border-collapse: collapse;",
+        f"  font-size: {body_size * 0.9}pt;",
+        "}",
+        "th, td {",
+        "  padding: 0.2em 0.5em;",
+        "  border: 1px solid #ccc;",
+        "  text-align: left;",
+        "}",
+        "th {",
+        "  font-weight: bold;",
+        "}",
+        "caption {",
+        "  font-style: italic;",
+        "  margin-bottom: 0.3em;",
+        "}",
+        # A table split across a page break loses its heading row unless the
+        # header group is declared as one; repeating it is the renderer's job,
+        # this only says which rows to repeat.
+        "thead { display: table-header-group; }",
+        "tr { break-inside: avoid; }",
+        "",
+    ])
+
+    # Figures. `break-inside: avoid` keeps a plate and its caption together: a
+    # caption stranded at the top of the next page is the classic tell of a book
+    # nobody looked at before printing.
+    lines.extend([
+        "figure {",
+        "  margin: 1em 0;",
+        "  text-align: center;",
+        "  break-inside: avoid;",
+        "}",
+        "figure img {",
+        # The type area is the constraint: an image wider than the text block
+        # runs into the margins, and one taller than the page is dropped whole
+        # by some renderers rather than scaled to fit.
+        "  max-width: 100%;",
+        "  max-height: 85vh;",
+        "  height: auto;",
+        "}",
+        "figcaption {",
+        f"  font-size: {body_size * 0.85}pt;",
+        "  font-style: italic;",
+        "  margin-top: 0.4em;",
+        "}",
+        "",
+    ])
+
+    # Footnotes. `float: footnote` is CSS Generated Content for Paged Media: the
+    # renderer lifts the span out of the text flow into the page's footnote area
+    # and numbers both the call and the note, which is why the AST carries no
+    # marker text of its own.
+    lines.extend([
+        "@page { @footnotes { border-top: 0.5pt solid currentColor; padding-top: 0.4em; } }",
+        "span.footnote {",
+        "  float: footnote;",
+        "  footnote-style-position: outside;",
+        f"  font-size: {body_size * 0.82}pt;",
+        "  text-align: left;",
+        "  text-indent: 0;",
+        "}",
+        "::footnote-call {",
+        "  content: counter(footnote, decimal);",
+        "  vertical-align: super;",
+        "  font-size: 0.7em;",
+        "  line-height: 0;",
+        "}",
+        "::footnote-marker {",
+        "  content: counter(footnote, decimal) '. ';",
+        "  font-weight: normal;",
+        "}",
+        "",
+    ])
+
+    # Small caps
+    lines.extend([
+        ".small-caps {",
+        "  font-variant: small-caps;",
+        "}",
+        "",
+    ])
+
+    # Front/back matter
+    lines.extend([
+        ".front-matter, .back-matter {",
+        "  page-break-before: recto;",
+        "}",
+        ".titlePage {",
+        "  text-align: center;",
+        "  padding-top: 30%;",
+        "}",
+        ".copyrightPage {",
+        "  font-size: 0.85em;",
+        "}",
+        "",
+    ])
+
+    # Named pages for chapter openings
+    lines.extend([
+        "@page chapter-opening {",
+        f"  @top-left {{ content: none; }}",
+        f"  @top-right {{ content: none; }}",
+        "}",
+        "",
+    ])
+
+    return "\n".join(lines)
+
+
+__all__ = ["ast_to_html", "emit_css"]

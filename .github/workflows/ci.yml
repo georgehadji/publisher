@@ -22,24 +22,76 @@ env:
   # would fail to collect in CI while passing locally.
   PUBLISHER_PKGS: >-
     -e platform/cas/py -e platform/stages/py -e platform/cache/py
-    -e platform/sandbox/py -e platform/reproducibility -e platform/supply-chain
+    -e platform/exec/py -e platform/sandbox/py -e platform/reproducibility
+    -e platform/supply-chain
     -e services/prepress -e services/structure -e services/agents
     -e services/ingest -e services/cover -e services/idml
-    -e services/epub -e services/onix
+    -e services/epub -e services/onix -e services/alttext
 
 jobs:
   python:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: publisher
+          POSTGRES_USER: publisher
+          POSTGRES_PASSWORD: publisher
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 2s --health-timeout 5s --health-retries 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ${{ env.PUBLISHER_PKGS }}
+      - run: pip install ${{ env.PUBLISHER_PKGS }} psycopg2-binary requests
+      - name: Load schema
+        # GitHub's `services:` Postgres has no init-script mount (unlike
+        # docker-compose.yml's `/docker-entrypoint-initdb.d/`), so CI applies
+        # schema.sql itself. psycopg2, not psql, to avoid a new tool dependency.
+        run: |
+          python <<'PY'
+          import pathlib
+          import psycopg2
+          conn = psycopg2.connect("postgresql://publisher:publisher@localhost:55432/publisher")
+          conn.autocommit = True
+          with conn.cursor() as cur:
+              cur.execute(pathlib.Path("platform/db/schema.sql").read_text())
+          print("schema loaded")
+          PY
       - name: Full test suite
-        run: python -m pytest --tb=short
+        # `-rs` prints skip reasons. A CI run where the 24 Postgres-backed
+        # integration tests silently skip is indistinguishable from one where
+        # they passed (E0.3) -- so a skip for that reason fails the job even
+        # though pytest itself exits 0 for a skip.
+        run: |
+          python -m pytest --tb=short -rs | tee pytest-output.txt
+          ! grep -q "Postgres is not listening" pytest-output.txt
       - name: Lint schemas (no free-text in structure routes)
         run: python tools/lint_schemas.py
+
+  node:
+    # E0.4 -- packages/api had 3.3k LOC including the entire auth/tenancy
+    # boundary and zero test files; neither `vitest` nor `tsc --noEmit` ran
+    # in CI despite both being configured in package.json. The auth-matrix
+    # and route-coverage tests use Fastify's in-process `.inject()`, not a
+    # real socket or database, so this job needs no Postgres service.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - name: Type-check (tsc --noEmit)
+        run: npm run lint
+      - name: Vitest -- auth matrix, route coverage, CAS hardening
+        run: npm run test
 
   rust:
     runs-on: ubuntu-latest
@@ -64,7 +116,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ${{ env.PUBLISHER_PKGS }}
+      - run: pip install ${{ env.PUBLISHER_PKGS }} import-linter
       - name: Codegen in sync (§3.1 Done)
         run: |
           cd schemas && node codegen/generate.mjs && cd ..
@@ -80,3 +132,5 @@ jobs:
         run: python tools/lint_stage_versions.py "${{ github.event.pull_request.base.sha || 'HEAD~1' }}"
       - name: Service deps declared (U3)
         run: python tools/lint_service_deps.py
+      - name: Import boundaries (E1.4)
+        run: lint-imports --config .importlinter

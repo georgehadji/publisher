@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "publisher-exec"
+version = "0.1.0"
+description = "DAG executor -- pure planning half + effectful running half (E1.1)"
+requires-python = ">=3.12"
+dependencies = []
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["publisher_exec*"]

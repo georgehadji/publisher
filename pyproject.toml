@@ -1,6 +1,12 @@
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-q --strict-markers"
+# `-m "not external"`: a test that shells out to a GUI/desktop binary (Scribus)
+# runs only when explicitly requested (`pytest -m external`), not on every
+# default run — E0.5, closing L16's "553s suite nobody actually runs".
+addopts = "-q --strict-markers -m \"not external\" --durations=10"
+markers = [
+    "external: shells out to a GUI/desktop binary not on the worker toolchain (e.g. Scribus); excluded by default, run with -m external",
+]
 # `tests` carries the generated contract tests (§3.20) and the collection floor.
 # It was omitted, so a bare `pytest` never ran either of them and CI was the only
 # place they executed — under `continue-on-error`, which meant nowhere.

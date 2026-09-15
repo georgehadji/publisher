@@ -19,7 +19,9 @@ from pathlib import Path
 # ModuleNotFoundError and the checker could never execute.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from publisher_stages import get_registry
+import os
+
+from publisher_stages import RegistryConfig, RenderEngine, build_registry
 # stages/__init__.py owns the canonical list of stage modules to register. This used
 # to be a hand-maintained duplicate of that list here, which had already drifted once
 # (tracer_bullet.py's own copy omitted prepress_stages entirely — see its docstring).
@@ -28,7 +30,16 @@ import stages  # noqa: F401 — import for its registration side effect
 
 
 def main():
-    registry = get_registry()
+    # E1.2: check against an explicit, fully-selected registry -- not the bare
+    # global (which now holds declarations only, no selection). Checking the
+    # unselected registry would report spurious "unselected_alternatives"
+    # errors for every multi-implementation step (finish, ingest,
+    # design-compile, paginate), none of which reflect a real build config.
+    stages.import_idml_if_requested(
+        os.environ.get("PUBLISHER_EMIT_IDML", "").strip().lower() in ("1", "true", "yes")
+    )
+    engine = RenderEngine(os.environ.get("PUBLISHER_RENDER_ENGINE", "css").strip().lower())
+    registry = build_registry(RegistryConfig(render_engine=engine))
     violations = registry.check_integrity()
     
     if not violations:

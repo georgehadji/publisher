@@ -16,8 +16,8 @@ CLAUDE.md "two hard gates"). Select the path with:
 
     PUBLISHER_RENDER_ENGINE=typst   (default: css)
 
-WHY PANDOC. The AST is already rendered to HTML by `extract._ast_to_html` -- the
-same function whose output ast-assemble proved text-complete. Pandoc converts
+WHY PANDOC. The AST is already rendered to HTML by `stages.rendering.ast_to_html`
+-- the same function whose output ast-assemble proved text-complete. Pandoc converts
 that HTML to Typst markup, so this path reuses the verified renderer instead of
 introducing a second AST walker that could drift from what the gate checked.
 Chapter *structure* (headings, page marks) is emitted here rather than handed to
@@ -26,7 +26,7 @@ pages from.
 
 WHY BLEED IS ADDED TO THE PAGE BOX HERE, unlike the CSS emitter. weasyprint
 writes TrimBox == MediaBox from its page box, so bleed there has to be declared
-with the CSS `bleed` property (see design_compile_stage._emit_css). Typst emits
+with the CSS `bleed` property (see stages.rendering.emit_css). Typst emits
 a MediaBox and no TrimBox at all, so `finish-gs`'s PDFXTrimBoxToMediaBoxOffset
 -- which only applies to boxes the input lacks -- is what insets the TrimBox.
 The renderer's job is therefore to lay out at trim + 2*bleed and let Ghostscript
@@ -48,11 +48,11 @@ from publisher_stages import (
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 from publisher_prepress.fontvault import FontLicenseViolation, validate_font_use
 from profiles import load_profile
+from templates import DEFAULT_LEADING_PT
 # The fallbacks for the page-furniture blocks, shared with the CSS emitter so
-# both engines cannot drift apart on what a running head is.
-from stages.design_compile_stage import (
-    DEFAULT_LEADING_PT, _FOLIO_DEFAULTS, _RUNNING_HEAD_DEFAULTS,
-)
+# both engines cannot drift apart on what a running head is. Moved to
+# stages/rendering.py in E1.3 along with emit_css itself.
+from stages.rendering import _FOLIO_DEFAULTS, _RUNNING_HEAD_DEFAULTS
 
 TYPST_SCHEMA = "text/x-typst"
 
@@ -76,7 +76,7 @@ def _typ_str(text: str) -> str:
 
 def _emit_typst(designspec: dict, bleed_mm: float = 0.0) -> str:
     """Emit a Typst preamble from a DesignSpec -- the `emit_typst()` sibling of
-    `design_compile_stage._emit_css` (ARCHITECTURE.md §2.7: one spec, several
+    `stages.rendering.emit_css` (ARCHITECTURE.md §2.7: one spec, several
     emitters).
 
     Page box is trim + 2*bleed on every side and margins grow by the same
@@ -399,8 +399,8 @@ def _run(argv: list[str], *, timeout: int, what: str,
 
 def _chapters_of(doc: dict) -> list[dict]:
     """Chapter id/number/title/content, using the SAME id rule as
-    `extract._ast_to_html`, so a pagemap from this path is comparable with one
-    from the CSS path for the same book.
+    `stages.rendering.ast_to_html`, so a pagemap from this path is comparable
+    with one from the CSS path for the same book.
     """
     chapters = []
     for i, chapter in enumerate(doc.get("body") or []):
@@ -449,7 +449,7 @@ def _build_main_typ(doc: dict, styles: str, chapters: list[dict],
                     pandoc: str, filter_path: Path | None = None) -> str:
     """Assemble the Typst document: preamble, front matter, chapters, back
     matter -- with pandoc converting each HTML fragment into Typst markup."""
-    from stages.extract_stage import _render_content
+    from stages.rendering import _render_content
 
     filter_args = ["--lua-filter", str(filter_path)] if filter_path else []
 
@@ -555,9 +555,9 @@ def paginate_typst(ctx: StageCtx, doc_path: str | None = None,
     # Figures are `media/<sha256>.<ext>` in the HTML and become `#image(...)` in
     # the Typst source, resolved relative to --root -- so the bytes have to be
     # under `work` before typst compiles, not merely somewhere in CAS.
-    from stages.extract_stage import _ast_to_html
+    from stages.rendering import ast_to_html
     from stages.media import materialize_media
-    images = materialize_media(_ast_to_html(doc), ctx.cas_root, work)
+    images = materialize_media(ast_to_html(doc), ctx.cas_root, work)
 
     footnote_filter = work / "footnotes.lua"
     footnote_filter.write_text(FOOTNOTE_FILTER_LUA, encoding="utf-8")

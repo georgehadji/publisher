@@ -21,7 +21,7 @@ import pytest
 
 from publisher_stages import StageCtx, StageError, ErrorKind
 from stages.structure_stage import ast_assemble
-from stages.extract_stage import _ast_to_html
+from stages.rendering import ast_to_html
 
 
 GOOD_AST = {
@@ -64,7 +64,7 @@ def test_ast_assemble_passes_on_faithful_conversion():
     """Baseline: HTML honestly derived from the source AST must pass the gate."""
     with tempfile.TemporaryDirectory() as td:
         tmp_dir = Path(td)
-        html = _ast_to_html(GOOD_AST)
+        html = ast_to_html(GOOD_AST)
         html_path = tmp_dir / "extract.html"
         html_path.write_text(html, encoding="utf-8")
         source_path = _write(tmp_dir, "source.json", GOOD_AST)
@@ -81,7 +81,7 @@ def test_ast_assemble_rejects_dropped_paragraph():
     """
     with tempfile.TemporaryDirectory() as td:
         tmp_dir = Path(td)
-        html = _ast_to_html(GOOD_AST)
+        html = ast_to_html(GOOD_AST)
         mutated_html = html.replace(
             '<p class="paragraph">The third and final sentence.</p>', ""
         )

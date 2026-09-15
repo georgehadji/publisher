@@ -14,9 +14,10 @@ bypassed the one thing it exists to guarantee. Consuming `doc-effective/1` makes
 that structurally impossible -- there is no path to a `raw-pdf/1` artifact that
 does not pass through `ast-assemble` first (BUILD_PLAN.md §3.9, §5.1 P0).
 
-Rendering reuses `extract`'s own `_ast_to_html` (the same function whose output
-was proven text-complete by ast-assemble) rather than inventing a second AST-to-
-HTML renderer that could drift from what the integrity gate actually verified.
+Rendering reuses `stages.rendering.ast_to_html` -- the SAME function object
+`extract` calls, whose output was proven text-complete by ast-assemble --
+rather than inventing a second AST-to-HTML renderer that could drift from
+what the integrity gate actually verified (E1.3).
 """
 
 from __future__ import annotations
@@ -228,15 +229,16 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
         raise StageError(kind=ErrorKind.BAD_INPUT, message=f"Document input not found: {doc_path}")
 
     doc = json.loads(doc_path_p.read_bytes())
-    from stages.extract_stage import _ast_to_html
-    html_body = _ast_to_html(doc)
+    from stages.rendering import ast_to_html
+    html_body = ast_to_html(doc)
 
     css = ""
     if css_path and Path(css_path).exists():
         css = Path(css_path).read_text()
     else:
-        from stages.design_compile_stage import _default_designspec, _emit_css
-        css = _emit_css(_default_designspec())
+        from stages.design_compile_stage import _default_designspec
+        from stages.rendering import emit_css
+        css = emit_css(_default_designspec())
 
     full_html = PAGE_TEMPLATE.format(css=css, html=html_body)
 

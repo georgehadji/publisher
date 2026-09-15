@@ -42,9 +42,12 @@ def test_suite_collection_floor():
         # `-p no:cacheprovider` avoids fighting the parent run over .pytest_cache.
         # `--ignore` this file: without it the subprocess re-collects the floor test,
         # which is harmless but doubles the work for no signal.
-        # No extra `-q`: pyproject's addopts already sets it, and a second -q suppresses
-        # the "N tests collected" summary line entirely.
-        [sys.executable, "-m", "pytest", "--collect-only",
+        # `-o addopts=-q` resets the inherited addopts (E0.5 added `-m "not
+        # external"` there for the default run) so the summary line stays the
+        # plain "N tests collected" this test parses, not "N/M ... (K
+        # deselected)". The floor is about collection integrity, not about
+        # which tests the default run happens to select.
+        [sys.executable, "-m", "pytest", "--collect-only", "-o", "addopts=-q",
          "-p", "no:cacheprovider", "--ignore", str(Path(__file__).resolve())],
         capture_output=True,
         text=True,

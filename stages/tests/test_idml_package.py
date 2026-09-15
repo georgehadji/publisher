@@ -151,6 +151,7 @@ def test_validator_rejects_a_package_with_a_deflated_mimetype(tmp_path):
         validate_idml(bad)
 
 
+@pytest.mark.external
 def test_scribus_opens_the_package(tmp_path):
     """An independent implementation's opinion.
 
@@ -160,7 +161,9 @@ def test_scribus_opens_the_package(tmp_path):
     one to hand a designer.
 
     Skipped unless Scribus is installed: it is a development tool, not part of
-    the worker toolchain.
+    the worker toolchain. Marked `external` (E0.5): shelling out to Scribus
+    takes ~180s, so it's excluded from the default run and only executes when
+    asked for explicitly (`pytest -m external`), e.g. a nightly job.
     """
     from publisher_idml.scribus_check import find_scribus, scribus_opens
 

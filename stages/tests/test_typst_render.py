@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from publisher_stages import StageCtx, get_registry
+from publisher_stages import StageCtx
 import stages  # noqa: F401 -- registers every stage
 from stages.typst_stages import _emit_typst, paginate_typst
 
@@ -82,22 +82,23 @@ def test_bleed_grows_page_box_and_margins():
 def test_typst_selection_keeps_the_dag_clean():
     """Selecting the Typst path must bind exactly one producer of raw-pdf/1 and
     leave no unsatisfiable input -- the CSS emitter and weasyprint renderer go
-    inactive, they do not co-exist."""
-    registry = get_registry()
-    try:
-        registry.select_implementation("design-compile", "design-compile-typst")
-        registry.select_implementation("paginate", "paginate-typst")
+    inactive, they do not co-exist.
 
-        errors = [v for v in registry.check_integrity() if v["severity"] == "error"]
-        assert errors == [], errors
+    E1.2: builds its OWN registry via build_registry() rather than mutating
+    the shared global -- no try/finally restore needed, and a concurrent test
+    building a CSS registry can no longer observe this one's selection.
+    """
+    from publisher_stages import RegistryConfig, RenderEngine, build_registry
 
-        dag = registry.derive_dag()
-        assert "paginate-typst" in dag["finish-gs"]
-        assert "paginate" not in dag["finish-gs"]
-        assert "design-compile-typst" in dag["paginate-typst"]
-    finally:
-        registry.select_implementation("design-compile", "design-compile")
-        registry.select_implementation("paginate", "paginate")
+    registry = build_registry(RegistryConfig(render_engine=RenderEngine.TYPST))
+
+    errors = [v for v in registry.check_integrity() if v["severity"] == "error"]
+    assert errors == [], errors
+
+    dag = registry.derive_dag()
+    assert "paginate-typst" in dag["finish-gs"]
+    assert "paginate" not in dag["finish-gs"]
+    assert "design-compile-typst" in dag["paginate-typst"]
 
 
 @pytest.mark.skipif(not HAVE_TOOLCHAIN, reason="pandoc and typst are not installed")

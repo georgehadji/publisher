@@ -12,9 +12,14 @@ zero test cases. The contract gate reported success while testing nothing.
 
 Keep this list in sync with platform/stages/integrity.py, which imports the same set for
 the DAG integrity check.
-"""
 
-import os
+E1.2 (docs/ARCHITECTURE_SCORE_10_PLAN.md): this module is imports only now -- no
+`os.environ`, no `select_implementation()`. It used to read PUBLISHER_RENDER_ENGINE
+and select `finish`/`ingest`/the render engine at IMPORT time, mutating the same
+global registry that `worker.run_build` mutated again per build -- import order and
+environment were part of the graph's identity. Selection now happens explicitly, per
+caller, via `publisher_stages.build_registry(RegistryConfig(...))`.
+"""
 
 from . import acquire_stage  # noqa: F401
 from . import ingest_stage  # noqa: F401
@@ -44,54 +49,25 @@ __all__ = [
     "typst_stages",
 ]
 
-# The `finish` step has two implementations: `finish` (P0 pass-through scaffolding) and
-# `finish-gs` (P1 Ghostscript PDF/X). Select the real one so the derived DAG binds a
-# single producer of pdfx/1 instead of whichever stage happened to run first.
-from publisher_stages import get_registry as _get_registry  # noqa: E402
-_get_registry().select_implementation("finish", "finish-gs")
-
-# The `ingest` step has two implementations: `ingest` (U2 -- real DOCX the tenant
-# uploaded) and `acquire` (fixture ast/1 loader). Default to the REAL one: a build
-# must render what the tenant submitted, and the only way to reintroduce the
-# fixture-substitution CRITICAL (ARCHITECTURE_UPLIFT_PLAN.md N1) is to explicitly
-# select `acquire`. The local dev harness (tracer_bullet.py) does exactly that.
-_get_registry().select_implementation("ingest", "ingest")
-
-# ── Render path selection ────────────────────────────────────────────────────
-#
-# Two workflows produce the same raw-pdf/1 from the same doc-effective/1:
-#
-#   css    (default)  design-compile      -> text/css        -> paginate
-#   typst             design-compile-typst -> text/x-typst   -> paginate-typst
-#
-# Both then feed the SAME finish-gs -> preflight -> package tail, and both sit
-# downstream of the text-integrity gate. Selecting an engine changes which pair
-# of stages the derived DAG binds; it never changes which gates run.
-#
-# This is a selection, not a fallback: an unknown value fails at import rather
-# than silently rendering with the other engine (BUILD_PLAN.md D8).
-_RENDER_ENGINES = {
-    "css": (("design-compile", "design-compile"), ("paginate", "paginate")),
-    "typst": (("design-compile", "design-compile-typst"), ("paginate", "paginate-typst")),
-}
-_ENGINE = os.environ.get("PUBLISHER_RENDER_ENGINE", "css").strip().lower()
-if _ENGINE not in _RENDER_ENGINES:
-    raise ValueError(
-        f"PUBLISHER_RENDER_ENGINE={_ENGINE!r} is not a render path. "
-        f"Choose one of {sorted(_RENDER_ENGINES)}."
-    )
-for _step, _impl in _RENDER_ENGINES[_ENGINE]:
-    _get_registry().select_implementation(_step, _impl)
-
 # ── IDML deliverable (opt-in) ────────────────────────────────────────────────
 #
 # `idml` is a terminal delivery artifact: an InDesign-openable package, consumed
 # by nobody. It needs pandoc, so it is imported (and therefore registered) only
 # when asked for. Registering it unconditionally would add a pandoc dependency
-# to every CSS-path build on every machine, and a build would start failing for
-# want of a file the customer never ordered.
+# to every CSS-path build on every machine -- worse, its two root inputs
+# (`designspec_path`, `profile_name`) are both declared OPTIONAL (absence is a
+# valid state, same as `resolve`'s `overrides_path`), so once registered it is
+# unconditionally REACHABLE the moment its upstream producers are -- i.e. on
+# every ordinary build. There is no root-input flag that can gate it off after
+# the fact; import is the only gate.
 #
-# Not gated on "is pandoc installed" on purpose: that would silently drop the
+# E1.2: this can no longer be an env read at this module's top level (stages/
+# __init__.py is imports only now). Each entry point reads PUBLISHER_EMIT_IDML
+# at ITS OWN edge and calls this function explicitly, before building a
+# registry -- not gated on "is pandoc installed": that would silently drop the
 # deliverable on a host missing the binary. Explicit request, loud failure.
-if os.environ.get("PUBLISHER_EMIT_IDML", "").strip().lower() in ("1", "true", "yes"):
-    from . import idml_stage  # noqa: F401 -- registers the `idml` stage
+
+
+def import_idml_if_requested(emit_idml: bool) -> None:
+    if emit_idml:
+        from . import idml_stage  # noqa: F401 -- registers the `idml` stage

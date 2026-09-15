@@ -40,11 +40,11 @@ def _extract_all_text(ast: dict) -> str:
     Chapter and section titles live in `attrs.title`, not as a `type: "text"` node
     inside `content` -- the original version of this function only walked `content`
     arrays, so it silently dropped every chapter title from the integrity check.
-    `extract`'s `_ast_to_html` DOES render titles into the HTML (as an `<h1>`), so
-    omitting them here made the two sides of the comparison structurally unequal
-    even for a perfectly faithful conversion.
+    `stages.rendering.ast_to_html` DOES render titles into the HTML (as an
+    `<h1>`), so omitting them here made the two sides of the comparison
+    structurally unequal even for a perfectly faithful conversion.
 
-    Key order below is NOT arbitrary: it must match `_ast_to_html`'s render order
+    Key order below is NOT arbitrary: it must match `ast_to_html`'s render order
     (frontMatter, then body, then backMatter). The root AST dict has all three keys
     simultaneously, so walking them in a different order -- the original code used
     ("content", "frontMatter", "backMatter", "body"), putting backMatter before
