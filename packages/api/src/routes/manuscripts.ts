@@ -13,7 +13,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { CAS_ROOT, UPLOAD_MAX_BYTES, casPath, loadOwned, pool, readCasFile } from '../db.js';
+import { CAS_ROOT, UPLOAD_MAX_BYTES, casPath, loadOwned, readCasFile, withTenant } from '../db.js';
 
 export async function registerManuscripts(server: FastifyInstance): Promise<void> {
   // Fastify 5 415s on any content type with no registered parser, and its
@@ -133,9 +133,11 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
       }
 
       const mediaType = request.headers['content-type'] ?? 'application/octet-stream';
-      await pool.query(
-        'UPDATE manuscripts SET source_sha256 = $1, source_size = $2, source_media_type = $3 WHERE id = $4',
-        [sha, size, mediaType, id]
+      await withTenant(request.tenantId, (client) =>
+        client.query(
+          'UPDATE manuscripts SET source_sha256 = $1, source_size = $2, source_media_type = $3 WHERE id = $4',
+          [sha, size, mediaType, id]
+        )
       );
       reply.code(201);
       return {
@@ -160,12 +162,14 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
       // build. No build has necessarily run yet -- report that honestly rather
       // than fabricating chapters that were never inferred.
       const artifact = (
-        await pool.query(
-          `SELECT a.sha256 FROM artifacts a
-           JOIN builds b ON b.id = a.build_id
-           WHERE b.document_id = $1 AND a.schema_id = 'ast/1'
-           ORDER BY a.created_at DESC LIMIT 1`,
-          [request.params.id]
+        await withTenant(request.tenantId, (client) =>
+          client.query(
+            `SELECT a.sha256 FROM artifacts a
+             JOIN builds b ON b.id = a.build_id
+             WHERE b.document_id = $1 AND a.schema_id = 'ast/1'
+             ORDER BY a.created_at DESC LIMIT 1`,
+            [request.params.id]
+          )
         )
       ).rows[0];
 

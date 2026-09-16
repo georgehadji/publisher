@@ -1,10 +1,17 @@
 -- Publisher durable state -- ARCHITECTURE_REMEDIATION.md A1.2, A1.3.
 --
--- Single source of truth for both tables the worker and API share across the
--- process boundary that didn't exist before this plan (findings 1, 2, 3).
--- Applied automatically by postgres's docker-entrypoint-initdb.d on first
--- container start (see docker-compose.yml); re-run manually otherwise:
---   psql "$DATABASE_URL" -f platform/db/schema.sql
+-- Migration 001 -- the initial shape (formerly platform/db/schema.sql,
+-- applied by postgres's docker-entrypoint-initdb.d on an empty data
+-- directory only -- an EXISTING deployment had no path to a schema change,
+-- E4.1/L14). This file is now immutable: apply schema changes as new
+-- numbered files in this directory (002, 003, ...), never by editing this
+-- one in place. `packages/api/src/migrate.ts` applies pending migrations in
+-- order and records each in `schema_migrations`; run it directly with:
+--   DATABASE_URL=... node packages/api/dist/migrate.js
+-- (or `docker compose up migrate`, which runs before `worker`/`api` start).
+-- Kept idempotent (CREATE ... IF NOT EXISTS / ALTER ... ADD COLUMN IF NOT
+-- EXISTS) so re-running it against a database that already has these tables
+-- from the old docker-entrypoint-initdb.d mechanism is a safe no-op.
 
 -- output_refs: artifact_kind -> {sha256, media_type, size}. A hash alone
 -- can't rehydrate a StageResult on a cache hit -- ArtifactRef requires

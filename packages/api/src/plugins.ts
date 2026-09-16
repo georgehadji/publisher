@@ -10,7 +10,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { FastifyInstance } from 'fastify';
-import { pool } from './db.js';
+import { withTenant } from './db.js';
 
 /** S1 -- constant-time token comparison. Plain `===` on a bearer token leaks
  * timing (and the comma-separated env var is a known seam to be replaced by
@@ -81,19 +81,23 @@ export async function registerAuthAndSecurity(server: FastifyInstance): Promise<
     if (typeof key !== 'string' || !key) {
       return reply.code(400).send({ error: 'Idempotency-Key header is required for mutations' });
     }
-    const inserted = await pool.query(
-      `INSERT INTO idempotency_keys (tenant_id, idem_key, status_code, body)
-       VALUES ($1, $2, 202, '{}'::jsonb)
-       ON CONFLICT (tenant_id, idem_key) DO NOTHING`,
-      [request.tenantId, key]
+    const inserted = await withTenant(request.tenantId, (client) =>
+      client.query(
+        `INSERT INTO idempotency_keys (tenant_id, idem_key, status_code, body)
+         VALUES ($1, $2, 202, '{}'::jsonb)
+         ON CONFLICT (tenant_id, idem_key) DO NOTHING`,
+        [request.tenantId, key]
+      )
     );
     if (inserted.rowCount === 0) {
       // Duplicate: either the original is still in flight (reservation 202)
       // or it has completed and the reservation was filled in.
       const cached = (
-        await pool.query(
-          'SELECT status_code, body FROM idempotency_keys WHERE tenant_id = $1 AND idem_key = $2',
-          [request.tenantId, key]
+        await withTenant(request.tenantId, (client) =>
+          client.query(
+            'SELECT status_code, body FROM idempotency_keys WHERE tenant_id = $1 AND idem_key = $2',
+            [request.tenantId, key]
+          )
         )
       ).rows[0];
       if (!cached) {
@@ -114,10 +118,12 @@ export async function registerAuthAndSecurity(server: FastifyInstance): Promise<
     if (!request.idemKey) return payload;
     try {
       const body = typeof payload === 'string' ? JSON.parse(payload) : payload;
-      await pool.query(
-        `UPDATE idempotency_keys SET status_code = $1, body = $2
-         WHERE tenant_id = $3 AND idem_key = $4`,
-        [reply.statusCode, body, request.tenantId, request.idemKey]
+      await withTenant(request.tenantId, (client) =>
+        client.query(
+          `UPDATE idempotency_keys SET status_code = $1, body = $2
+           WHERE tenant_id = $3 AND idem_key = $4`,
+          [reply.statusCode, body, request.tenantId, request.idemKey]
+        )
       );
     } catch {
       /* non-JSON payload (SSE, binary): not replayable, skip */

@@ -61,16 +61,21 @@ jobs:
       - name: Load schema
         # GitHub's `services:` Postgres has no init-script mount (unlike
         # docker-compose.yml's `/docker-entrypoint-initdb.d/`), so CI applies
-        # schema.sql itself. psycopg2, not psql, to avoid a new tool dependency.
+        # every platform/db/migrations/*.sql file itself, in order -- the same
+        # files `packages/api/src/migrate.ts` applies via the `migrate`
+        # compose service (E4.1). psycopg2, not psql, to avoid a new tool
+        # dependency; no schema_migrations bookkeeping needed for a single
+        # fresh-container run.
         run: |
           python <<'PY'
           import pathlib
           import psycopg2
           conn = psycopg2.connect("postgresql://publisher:publisher@localhost:55432/publisher")
           conn.autocommit = True
-          with conn.cursor() as cur:
-              cur.execute(pathlib.Path("platform/db/schema.sql").read_text())
-          print("schema loaded")
+          for f in sorted(pathlib.Path("platform/db/migrations").glob("*.sql")):
+              with conn.cursor() as cur:
+                  cur.execute(f.read_text())
+              print(f"applied {f.name}")
           PY
       - name: Full test suite
         # `-rs` prints skip reasons. A CI run where the 24 Postgres-backed
@@ -145,6 +150,8 @@ jobs:
         run: python tools/lint_service_deps.py
       - name: Import boundaries (E1.4)
         run: lint-imports --config .importlinter
+      - name: Tenant scoping (E4.3)
+        run: python tools/lint_tenant_scoping.py
 
   supply-chain:
     # E3.5 -- pip-audit and npm audit are gates (non-zero exit fails the job);

@@ -134,8 +134,8 @@ def test_unexpected_exception_records_failed_then_reraises(db, worker_module, mo
     monkeypatch.setattr(worker_module.DagExecutor, "execute", boom)
 
     with pytest.raises(ValueError, match="simulated engine bug"):
-        worker_module.run_build(db, {"id": build_id, "document_id": ms_id,
-                                     "profile_ids": ["Generic 6x9"]})
+        worker_module.run_build(db, {"id": build_id, "tenant_id": "test-tenant-u1-crash",
+                                     "document_id": ms_id, "profile_ids": ["Generic 6x9"]})
 
     with db.cursor() as cur:
         cur.execute("SELECT status, error_kind, error_message FROM builds WHERE id = %s", (build_id,))

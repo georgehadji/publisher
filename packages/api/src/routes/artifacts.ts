@@ -3,7 +3,7 @@
  */
 import { createReadStream } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
-import { DELIVERABLE_SCHEMAS, casBlobExists, casPath, loadOwned, pool } from '../db.js';
+import { DELIVERABLE_SCHEMAS, casBlobExists, casPath, loadOwned, withTenant } from '../db.js';
 
 export async function registerArtifacts(server: FastifyInstance): Promise<void> {
   server.get<{ Params: { id: string; kind: string } }>(
@@ -22,10 +22,9 @@ export async function registerArtifacts(server: FastifyInstance): Promise<void> 
         });
       }
       const artifact = (
-        await pool.query('SELECT * FROM artifacts WHERE build_id = $1 AND schema_id = $2', [
-          id,
-          schemaId,
-        ])
+        await withTenant(request.tenantId, (client) =>
+          client.query('SELECT * FROM artifacts WHERE build_id = $1 AND schema_id = $2', [id, schemaId])
+        )
       ).rows[0];
       if (!artifact) {
         return reply.code(404).send({ error: 'artifact not found -- this stage has not produced output yet' });
@@ -58,10 +57,9 @@ export async function registerArtifacts(server: FastifyInstance): Promise<void> 
         });
       }
       const artifact = (
-        await pool.query('SELECT * FROM artifacts WHERE build_id = $1 AND schema_id = $2', [
-          id,
-          schemaId,
-        ])
+        await withTenant(request.tenantId, (client) =>
+          client.query('SELECT * FROM artifacts WHERE build_id = $1 AND schema_id = $2', [id, schemaId])
+        )
       ).rows[0];
       if (!artifact) {
         return reply.code(404).send({ error: 'artifact not found' });

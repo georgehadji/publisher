@@ -145,50 +145,66 @@ def _claim_build(conn) -> dict | None:
     row that has already been reclaimed MAX_ATTEMPTS times is poison (bad
     input, or a bug that crashes every attempt): dead-letter it to 'dead'
     instead of looping it forever.
+
+    E4.3: `conn` connects as `publisher_worker`, which does NOT have
+    BYPASSRLS -- under the migration 002 policy it would see zero rows here
+    (this query does not know which tenant it is looking for; that is the
+    whole point of a shared queue). `publisher_worker_claim` (migration 003)
+    is the ONLY role with BYPASSRLS, granted to `publisher_worker` so it can
+    `SET ROLE` into it for exactly this function's statements, then back --
+    everything after a successful claim (run_build) runs as plain
+    publisher_worker with app.tenant_id set to the claimed build's tenant,
+    scoped by the same policy as every other connection.
     """
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            """
-            SELECT * FROM builds
-            WHERE status = 'queued'
-               OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
-            ORDER BY created_at
-            FOR UPDATE SKIP LOCKED
-            LIMIT 1
-            """
-        )
-        build = cur.fetchone()
-        if build is None:
-            return None
-
-        if build["attempt"] >= MAX_ATTEMPTS:
-            # Poison build: it has already been claimed MAX_ATTEMPTS times --
-            # bad input, or a bug that crashes every attempt. Dead-letter it
-            # whether it is stuck at 'running' or was requeued, instead of
-            # looping it forever.
+    with conn.cursor() as _role_cur:
+        _role_cur.execute("SET ROLE publisher_worker_claim")
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "UPDATE builds SET status = 'dead', completed_at = now(), "
-                "error_kind = 'exhausted', error_message = %s WHERE id = %s",
-                (f"build exceeded {MAX_ATTEMPTS} attempts -- moved to dead letter", build["id"]),
+                """
+                SELECT * FROM builds
+                WHERE status = 'queued'
+                   OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
+                ORDER BY created_at
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+                """
             )
-            _notify(conn, build["id"], {"status": "dead"})
-            conn.commit()
-            return None
+            build = cur.fetchone()
+            if build is None:
+                return None
 
-        cur.execute(
-            """
-            UPDATE builds
-            SET status = 'running',
-                started_at = COALESCE(started_at, now()),
-                attempt = attempt + 1,
-                worker_id = %s,
-                lease_expires_at = now() + %s * interval '1 second'
-            WHERE id = %s
-            """,
-            (WORKER_ID, LEASE_SECONDS, build["id"]),
-        )
-        conn.commit()
-        return dict(build)
+            if build["attempt"] >= MAX_ATTEMPTS:
+                # Poison build: it has already been claimed MAX_ATTEMPTS times --
+                # bad input, or a bug that crashes every attempt. Dead-letter it
+                # whether it is stuck at 'running' or was requeued, instead of
+                # looping it forever.
+                cur.execute(
+                    "UPDATE builds SET status = 'dead', completed_at = now(), "
+                    "error_kind = 'exhausted', error_message = %s WHERE id = %s",
+                    (f"build exceeded {MAX_ATTEMPTS} attempts -- moved to dead letter", build["id"]),
+                )
+                _notify(conn, build["id"], {"status": "dead"})
+                conn.commit()
+                return None
+
+            cur.execute(
+                """
+                UPDATE builds
+                SET status = 'running',
+                    started_at = COALESCE(started_at, now()),
+                    attempt = attempt + 1,
+                    worker_id = %s,
+                    lease_expires_at = now() + %s * interval '1 second'
+                WHERE id = %s
+                """,
+                (WORKER_ID, LEASE_SECONDS, build["id"]),
+            )
+            conn.commit()
+            return dict(build)
+    finally:
+        with conn.cursor() as _role_cur:
+            _role_cur.execute("RESET ROLE")
 
 
 def _renew_lease(conn, build_id: str) -> None:
@@ -318,27 +334,27 @@ def _initial_inputs_for(conn, build: dict, registry) -> dict:
     }
 
 
-def _record_stage(conn, build_id: str, stage_name: str, decl_version: int,
+def _record_stage(conn, build_id: str, tenant_id: str, stage_name: str, decl_version: int,
                    status: str, cache_hit: bool, duration_ms: int, metrics: dict) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO build_stages
-                (build_id, stage_name, stage_version, status, cache_hit, duration_ms, metrics, started_at, completed_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, now(), now())
+                (build_id, tenant_id, stage_name, stage_version, status, cache_hit, duration_ms, metrics, started_at, completed_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now(), now())
             ON CONFLICT (build_id, stage_name) DO UPDATE SET
                 status = EXCLUDED.status, cache_hit = EXCLUDED.cache_hit,
                 duration_ms = EXCLUDED.duration_ms, metrics = EXCLUDED.metrics,
                 completed_at = EXCLUDED.completed_at
             """,
-            (build_id, stage_name, decl_version, status, cache_hit, duration_ms,
+            (build_id, tenant_id, stage_name, decl_version, status, cache_hit, duration_ms,
              psycopg2.extras.Json(metrics)),
         )
         _notify(conn, build_id, {"stage": stage_name, "status": status})
         conn.commit()
 
 
-def _record_artifact(conn, build_id: str, kind: str, schema_id: str, sha256: str,
+def _record_artifact(conn, build_id: str, tenant_id: str, kind: str, schema_id: str, sha256: str,
                       media_type: str, size: int) -> None:
     """
     Upsert keyed on schema_id -- see the comment on the artifacts table.
@@ -357,13 +373,13 @@ def _record_artifact(conn, build_id: str, kind: str, schema_id: str, sha256: str
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO artifacts (build_id, kind, schema_id, sha256, media_type, size)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO artifacts (build_id, tenant_id, kind, schema_id, sha256, media_type, size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (build_id, schema_id) DO UPDATE SET
                 kind = EXCLUDED.kind, sha256 = EXCLUDED.sha256,
                 media_type = EXCLUDED.media_type, size = EXCLUDED.size
             """,
-            (build_id, kind, schema_id, sha256, media_type, size),
+            (build_id, tenant_id, kind, schema_id, sha256, media_type, size),
         )
         conn.commit()
 
@@ -384,6 +400,7 @@ def _fail(conn, build_id: str, error_kind: str, error_message: str) -> None:
 
 def run_build(conn, build: dict) -> None:
     build_id = build["id"]
+    tenant_id = build["tenant_id"]
     _CURRENT_BUILD.clear()
     _CURRENT_BUILD["build_id"] = build_id
     if build.get("correlation_id"):
@@ -407,12 +424,12 @@ def run_build(conn, build: dict) -> None:
     # had nothing to stream until the build was already over.
     def _on_stage(stage_name, decl, result, duration_ms):
         _record_stage(
-            conn, build_id, stage_name, decl.version, "completed",
+            conn, build_id, tenant_id, stage_name, decl.version, "completed",
             result.cache_hit, duration_ms, result.metrics,
         )
         for art in result.artifacts:
             _record_artifact(
-                conn, build_id, art.kind, decl.outputs.get(art.kind, ""),
+                conn, build_id, tenant_id, art.kind, decl.outputs.get(art.kind, ""),
                 art.hash, art.media_type, art.size,
             )
         # U1: a stage just finished -- the build is alive, extend the lease.
@@ -430,7 +447,7 @@ def run_build(conn, build: dict) -> None:
         # WHERE or WHY. The executor invokes this for both StageError and
         # wrapped crashes before re-raising.
         _record_stage(
-            conn, build_id, stage_name, decl.version, "failed",
+            conn, build_id, tenant_id, stage_name, decl.version, "failed",
             False, duration_ms,
             {"error_kind": getattr(error, "kind", ErrorKind.ENGINE_BUG).value,
              "error": getattr(error, "message", str(error))},
@@ -533,6 +550,18 @@ def main() -> int:
         try:
             build = _claim_build(conn)
             if build is not None:
+                # E4.3: session-scoped (is_local=false), not `SET LOCAL` --
+                # `run_build` issues many separate mini-transactions on this
+                # SAME connection (_record_stage/_record_artifact/_fail each
+                # commit their own), and a transaction-scoped setting would
+                # revert after the first of them. Safe because `conn` is
+                # opened fresh for exactly one build (this poll iteration)
+                # and closed in the `finally` below before the next one --
+                # never returned to a shared pool a different tenant's build
+                # could pick up with the setting still applied.
+                with conn.cursor() as cur:
+                    cur.execute("SELECT set_config('app.tenant_id', %s, false)", (build["tenant_id"],))
+                conn.commit()
                 run_build(conn, build)
                 _CURRENT_BUILD.clear()
                 continue

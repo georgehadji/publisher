@@ -252,8 +252,8 @@ def test_admin_metrics_aggregates_stages(api_server, db, register_tenant):
                 (f"test-{RUN_ID}-m{i}", ms_id),
             )
             cur.execute(
-                "INSERT INTO build_stages (build_id, stage_name, stage_version, status, duration_ms) "
-                "VALUES (%s, 'metrics-probe', 1, 'completed', %s)",
+                "INSERT INTO build_stages (build_id, tenant_id, stage_name, stage_version, status, duration_ms) "
+                "VALUES (%s, 'test-tenant-u7', 'metrics-probe', 1, 'completed', %s)",
                 (f"test-{RUN_ID}-m{i}", 100 + i * 100),
             )
     db.commit()

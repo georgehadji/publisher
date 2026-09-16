@@ -15,6 +15,7 @@ up at session start, so reruns and parallel sessions do not fight over state.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -51,6 +52,16 @@ API_DIR = REPO_ROOT / "packages" / "api"
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://publisher:publisher@localhost:55432/publisher"
+)
+# E4.3: the BYPASSRLS role /v1/admin/metrics needs for its cross-tenant
+# aggregates (adminPool in db.ts) -- same server/database as DATABASE_URL,
+# just the unprivileged-but-bypassing role instead of the owner/superuser,
+# so this exercises the same connection shape docker-compose.yml's `api`
+# service uses in production rather than piggy-backing on the superuser
+# connection just because it would also (incidentally) bypass RLS.
+ADMIN_DATABASE_URL = os.environ.get(
+    "PUBLISHER_ADMIN_DATABASE_URL",
+    re.sub(r"^postgresql://[^@]+@", "postgresql://publisher_admin:publisher_admin@", DATABASE_URL),
 )
 TOKEN = "detector-token"
 TENANT = "detector-tenant"
@@ -422,6 +433,9 @@ def api_server():
         "PUBLISHER_API_TOKENS": f"{TOKEN}:{TENANT}",
         "PUBLISHER_CORS_ORIGINS": "http://localhost",
         "DATABASE_URL": DATABASE_URL,
+        # E4.3: without this, adminPool (db.ts) gets an undefined connection
+        # string and /v1/admin/metrics fails or hits the wrong database.
+        "PUBLISHER_ADMIN_DATABASE_URL": ADMIN_DATABASE_URL,
         "PUBLISHER_CAS_ROOT": str(TEST_CAS_ROOT),
         # Small cap so the 413 (upload too large) path is testable with cheap bytes.
         "PUBLISHER_UPLOAD_MAX_BYTES": "100000",

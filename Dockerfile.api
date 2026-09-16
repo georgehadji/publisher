@@ -16,8 +16,15 @@ RUN cd packages/api && npm run build
 
 FROM node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
 WORKDIR /app
-COPY --from=build /app/packages/api/node_modules ./node_modules
-COPY --from=build /app/packages/api/dist ./dist
-COPY packages/api/package.json ./
+# E4.1: dist/node_modules keep the same repo-relative layout as local dev
+# (repo-root/packages/api/dist, .../node_modules), not flattened to /app/dist.
+# migrate.ts (compiled to dist/migrate.js) resolves the migrations directory
+# three levels up from its OWN file -- exactly what a local
+# `node packages/api/dist/migrate.js` run from the repo root sees.
+# Flattening would put dist one level too shallow and break that resolution.
+COPY --from=build /app/packages/api/node_modules ./packages/api/node_modules
+COPY --from=build /app/packages/api/dist ./packages/api/dist
+COPY packages/api/package.json ./packages/api/package.json
+COPY platform/db/migrations ./platform/db/migrations
 EXPOSE 4000
-CMD ["node", "dist/index.js"]
+CMD ["node", "packages/api/dist/index.js"]

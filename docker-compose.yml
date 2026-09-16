@@ -17,7 +17,6 @@ services:
       - "55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./platform/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U publisher"]
       interval: 2s
@@ -33,12 +32,38 @@ services:
       - default
       - dbnet
 
+  # E4.1: applies pending platform/db/migrations/*.sql (see migrate.ts) before
+  # worker/api ever start -- the old docker-entrypoint-initdb.d mount only
+  # ever ran against an EMPTY data directory, so an existing deployment (this
+  # one, once `pgdata` is no longer fresh) had no path to a schema change.
+  # Connects as `publisher`, the owner/superuser role -- it is the only
+  # service allowed to (it creates the E4.3 roles and RLS policies below).
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql://publisher:publisher@postgres:5432/publisher
+    command: ["node", "packages/api/dist/migrate.js"]
+    networks:
+      - dbnet
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # A one-shot job, not a server -- it must be allowed to exit 0 and stay
+    # exited, never restarted, or `docker compose up -d` would treat its own
+    # successful completion as a crash loop.
+    restart: "no"
+
   worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
     environment:
-      DATABASE_URL: postgresql://publisher:publisher@postgres:5432/publisher
+      # E4.3: not the owner/superuser `publisher` -- an unprivileged role RLS
+      # (E4.2) actually constrains. `_claim_build` (worker.py) SET ROLEs into
+      # publisher_worker_claim for just its cross-tenant claim query.
+      DATABASE_URL: postgresql://publisher_worker:publisher_worker@postgres:5432/publisher
       PUBLISHER_CAS_ROOT: /data/cas
       # Which render path the derived DAG binds: `css` (weasyprint) or `typst`
       # (pandoc -> Typst). Both toolchains are in the worker image; this only
@@ -95,6 +120,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     # U8 bulkhead: the worker is the memory risk in this stack -- Weasyprint on
     # a 900-page manuscript is effectively unbounded RAM (ARCHITECTURE_UPLIFT_PLAN.md
     # U8), and one such build must not be able to OOM the host and take the API
@@ -109,7 +136,16 @@ services:
       context: .
       dockerfile: Dockerfile.api
     environment:
-      DATABASE_URL: postgresql://publisher:publisher@postgres:5432/publisher
+      # E4.3: not the owner/superuser `publisher` -- an unprivileged role RLS
+      # (E4.2) actually constrains. `withTenant` (db.ts) sets app.tenant_id
+      # from the caller's auth-resolved tenant before every tenant-table query.
+      DATABASE_URL: postgresql://publisher_app:publisher_app@postgres:5432/publisher
+      # /v1/admin/metrics (admin.ts) reports GLOBAL aggregates across every
+      # tenant by design -- it is gated by its own admin-token check, not a
+      # tenant token, so there is no app.tenant_id to scope it by. A separate
+      # bypass-RLS role keeps that cross-tenant visibility confined to
+      # exactly the one route that is supposed to have it.
+      PUBLISHER_ADMIN_DATABASE_URL: postgresql://publisher_admin:publisher_admin@postgres:5432/publisher
       PORT: "4000"
       HOST: "0.0.0.0"
       PUBLISHER_API_TOKENS: "dev-token:dev-tenant"
@@ -132,6 +168,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     # U8 bulkhead: the API never renders anything -- CAS_READ_MAX_BYTES (db.ts)
     # already bounds a single read, so this only needs to survive a burst of
     # concurrent requests, not a single huge one.

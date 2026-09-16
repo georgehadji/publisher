@@ -24,12 +24,65 @@ export const CAS_ROOT = process.env.PUBLISHER_CAS_ROOT ?? './.publisher/cas';
 // (max 10, no idle/connection timeouts). With the SSE LISTEN/NOTIFY fix (S11)
 // the pool is no longer hammered by polls, but a burst of concurrent uploads or
 // SSE streams still needs a sane ceiling and must not hand out dead connections.
+//
+// E4.3: DATABASE_URL now names `publisher_app`, not the owner/superuser
+// `publisher` -- an unprivileged role the E4.2 Row-Level Security policies
+// actually constrain (an owner, or a BYPASSRLS role, bypasses RLS by
+// default regardless of the policy).
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: parseInt(process.env.PUBLISHER_PG_POOL_MAX ?? '20', 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
 });
+
+// E4.3 -- /v1/admin/metrics (admin.ts) reports GLOBAL aggregates across every
+// tenant's build_stages/builds by design: it is gated by its own admin-token
+// check (plugins.ts's isAdminToken), not a tenant token, so there is no
+// per-tenant app.tenant_id to scope a query by in the first place. A
+// dedicated BYPASSRLS role (migration 003), used ONLY here, keeps "sees
+// every tenant's data" confined to exactly the one route meant to have it --
+// `pool` (publisher_app) must never gain that ability just to serve this.
+export const adminPool = new Pool({
+  connectionString: process.env.PUBLISHER_ADMIN_DATABASE_URL,
+  max: 2,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+});
+
+/**
+ * E4.2 -- runs `fn` against a client with `app.tenant_id` set to `tenantId`
+ * for the lifetime of one transaction, so every Row-Level Security policy
+ * (migration 002) sees the caller's real, auth-resolved tenant. Every
+ * tenant-table query in this API goes through this, never a bare
+ * `pool.query` -- that is what makes E4.2's isolation a database property,
+ * not an application convention.
+ *
+ * `set_config('app.tenant_id', $1, true)` (the FUNCTION, not a bare `SET`
+ * statement) is used because it accepts a normal bind parameter; `SET
+ * app.tenant_id = $1` is not valid Postgres grammar. The third argument
+ * (`is_local = true`) scopes it to the current transaction, so it can never
+ * leak onto a pooled connection some OTHER tenant's request borrows next --
+ * a bare session-level `SET` would.
+ */
+export async function withTenant<T>(
+  tenantId: string,
+  fn: (client: pg.PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT set_config($1, $2, true)', ['app.tenant_id', tenantId]);
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 export const UPLOAD_MAX_BYTES = parseInt(process.env.PUBLISHER_UPLOAD_MAX_BYTES ?? '104857600', 10);
 
@@ -113,9 +166,16 @@ export type OwnedTable = (typeof OWNED_TABLES)[number];
  * 404-not-403 is deliberate: another tenant's resource must be
  * indistinguishable from a nonexistent one. The table name comes from a fixed
  * whitelist, so the interpolation below is not injectable.
+ *
+ * E4.2: goes through `withTenant`, so a row belonging to a DIFFERENT tenant
+ * is invisible to the query itself (RLS), not merely filtered out by the
+ * `row.tenant_id !== tenantId` check below -- that check stays anyway as the
+ * compile-time-cheap second layer E5.2 calls for, not because RLS might fail.
  */
 export async function loadOwned<T = any>(table: OwnedTable, id: string, tenantId: string): Promise<T | null> {
-  const row = (await pool.query(`SELECT * FROM ${table} WHERE id = $1`, [id])).rows[0];
-  if (!row || row.tenant_id !== tenantId) return null;
-  return row;
+  return withTenant(tenantId, async (client) => {
+    const row = (await client.query(`SELECT * FROM ${table} WHERE id = $1`, [id])).rows[0];
+    if (!row || row.tenant_id !== tenantId) return null;
+    return row;
+  });
 }

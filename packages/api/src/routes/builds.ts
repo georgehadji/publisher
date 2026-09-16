@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
-import { loadOwned, pool, readCasFile } from '../db.js';
+import { loadOwned, pool, readCasFile, withTenant } from '../db.js';
 
 // Build ids are server-generated `build-<base64url>` tokens; the SSE channel
 // name is interpolated into SQL below (LISTEN takes a literal), so the shape
@@ -34,26 +34,34 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
       if (!manuscript) {
         return reply.code(404).send({ error: 'not found' });
       }
-      const inFlight = await pool.query(
-        "SELECT count(*)::int AS count FROM builds WHERE tenant_id = $1 AND status IN ('queued', 'running')",
-        [request.tenantId]
-      );
-      if (inFlight.rows[0].count >= MAX_QUEUED_BUILDS_PER_TENANT) {
+      // One withTenant/transaction for both: the admission decision and the
+      // insert it gates must see the same tenant scope.
+      const outcome = await withTenant(request.tenantId, async (client) => {
+        const inFlight = await client.query(
+          "SELECT count(*)::int AS count FROM builds WHERE tenant_id = $1 AND status IN ('queued', 'running')",
+          [request.tenantId]
+        );
+        if (inFlight.rows[0].count >= MAX_QUEUED_BUILDS_PER_TENANT) {
+          return { admitted: false as const };
+        }
+        const id = `build-${randomBytes(9).toString('base64url')}`;
+        // U7: a correlation id joins the HTTP request to the worker's logs.
+        // The worker puts it on every log record; nothing else needs to know it.
+        const correlationId = randomBytes(16).toString('hex');
+        const result = await client.query(
+          `INSERT INTO builds (id, tenant_id, document_id, design_id, profile_ids, mode, status, correlation_id)
+           VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7) RETURNING *`,
+          [id, request.tenantId, documentId, designId, JSON.stringify(profileIds), mode, correlationId]
+        );
+        return { admitted: true as const, build: result.rows[0] };
+      });
+      if (!outcome.admitted) {
         return reply.code(429).send({
           error: 'too many in-flight builds for this tenant',
           limit: MAX_QUEUED_BUILDS_PER_TENANT,
         });
       }
-      const id = `build-${randomBytes(9).toString('base64url')}`;
-      // U7: a correlation id joins the HTTP request to the worker's logs. The
-      // worker puts it on every log record; nothing else needs to know it.
-      const correlationId = randomBytes(16).toString('hex');
-      const result = await pool.query(
-        `INSERT INTO builds (id, tenant_id, document_id, design_id, profile_ids, mode, status, correlation_id)
-         VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7) RETURNING *`,
-        [id, request.tenantId, documentId, designId, JSON.stringify(profileIds), mode, correlationId]
-      );
-      const build = result.rows[0];
+      const build = outcome.build;
       reply.code(201);
       return {
         buildId: build.id,
@@ -73,9 +81,11 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
         return reply.code(404).send({ error: 'not found' });
       }
       const stageRows = (
-        await pool.query(
-          'SELECT stage_name, status, duration_ms, cache_hit FROM build_stages WHERE build_id = $1 ORDER BY started_at',
-          [request.params.id]
+        await withTenant(request.tenantId, (client) =>
+          client.query(
+            'SELECT stage_name, status, duration_ms, cache_hit FROM build_stages WHERE build_id = $1 ORDER BY started_at',
+            [request.params.id]
+          )
         )
       ).rows;
       const stages = stageRows.map((s) => ({
@@ -188,12 +198,14 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
 
         // Initial snapshot: anything that happened before we subscribed.
         const current = (
-          await pool.query('SELECT status FROM builds WHERE id = $1', [id])
+          await withTenant(request.tenantId, (c) => c.query('SELECT status FROM builds WHERE id = $1', [id]))
         ).rows[0];
         const stages = (
-          await pool.query(
-            'SELECT stage_name, status FROM build_stages WHERE build_id = $1 ORDER BY started_at',
-            [id]
+          await withTenant(request.tenantId, (c) =>
+            c.query(
+              'SELECT stage_name, status FROM build_stages WHERE build_id = $1 ORDER BY started_at',
+              [id]
+            )
           )
         ).rows;
         for (const s of stages) {
@@ -229,9 +241,11 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
       const artifact = (
         // preflight/1, not kind='report' -- three stages emit kind='report', and
         // this route was returning finish's report as the preflight verdict.
-        await pool.query(
-          "SELECT sha256 FROM artifacts WHERE build_id = $1 AND schema_id = 'preflight/1'",
-          [request.params.id]
+        await withTenant(request.tenantId, (client) =>
+          client.query(
+            "SELECT sha256 FROM artifacts WHERE build_id = $1 AND schema_id = 'preflight/1'",
+            [request.params.id]
+          )
         )
       ).rows[0];
       if (!artifact) {

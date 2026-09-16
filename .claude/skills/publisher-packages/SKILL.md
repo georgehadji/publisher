@@ -17,8 +17,9 @@ Node 22+, ESM, Fastify 5, `pg`, Zod. Scripts: `build` (tsc), `dev` (`tsx watch`)
 |---|---|
 | `src/index.ts` | Entry shim only — six lines, imports `./app.js`. Kept so `tsx src/index.ts` / `node dist/index.js` boot paths did not change in the U6 split. |
 | `src/app.ts` | Assembles the Fastify instance: registers plugins and every route module, owns process lifecycle and graceful shutdown (U5/S10). Formerly a single 700-line `index.ts`. |
-| `src/db.ts` | **The single data-access layer.** Everything touching Postgres or the CAS filesystem lives here so routes stay thin. `loadOwned` centralizes the tenant-ownership check against a table whitelist (never interpolated input) — the one place that check was originally missing was manuscript creation, which a single helper makes structurally impossible to omit. Also `casPath` (validates `^[a-f0-9]{64}$` before `path.join` — S2/N5), `readCasFile` (size ceiling — S6/N4), `casBlobExists`, `DELIVERABLE_SCHEMAS`, `CAS_ROOT`, `pool`. |
-| `src/plugins.ts` | Cross-cutting Fastify plugins registered as one unit so the `onRequest` hooks run in a fixed order: **auth + tenancy (S1) → idempotency (S3) → tenant-keyed rate limit (S7)**, plus helmet security headers (S5) and strict CORS. Exports `isAdminToken`. |
+| `src/db.ts` | **The single data-access layer.** Everything touching Postgres or the CAS filesystem lives here so routes stay thin. **E4.2/E4.3:** `pool` connects as `publisher_app` (unprivileged — see `platform/db/migrations/003_least_privilege_roles.sql`); `withTenant(tenantId, fn)` checks out a client, sets the `app.tenant_id` GUC the Row-Level Security policies key on via `SELECT set_config('app.tenant_id', $1, true)` for the transaction, then runs `fn` — **every tenant-table query in this API goes through it**, never a bare `pool.query` (enforced by `tools/lint_tenant_scoping.py`). `adminPool` is a separate BYPASSRLS connection (`publisher_admin`) used only by `routes/admin.ts`'s cross-tenant aggregates. `loadOwned` (now internally `withTenant`-wrapped) centralizes the tenant-ownership check against a table whitelist (never interpolated input) — the one place that check was originally missing was manuscript creation, which a single helper makes structurally impossible to omit. Also `casPath` (validates `^[a-f0-9]{64}$` before `path.join` — S2/N5), `readCasFile` (size ceiling — S6/N4), `casBlobExists`, `DELIVERABLE_SCHEMAS`, `CAS_ROOT`. |
+| `src/migrate.ts` | **E4.1** — the migration runner: applies pending `platform/db/migrations/*.sql` in order, tracked in a `schema_migrations` ledger. Compiles to `dist/migrate.js`, run via `npm run migrate` or the `migrate` docker-compose service. Resolves the migrations directory as three levels up from its own compiled location — `Dockerfile.api`'s final stage keeps the same `packages/api/dist` layout as local dev specifically so this resolution doesn't need a special case for containers. |
+| `src/plugins.ts` | Cross-cutting Fastify plugins registered as one unit so the `onRequest` hooks run in a fixed order: **auth + tenancy (S1) → idempotency (S3) → tenant-keyed rate limit (S7)**, plus helmet security headers (S5) and strict CORS. Exports `isAdminToken`. Its idempotency hooks go through `withTenant` too (`idempotency_keys` is RLS-scoped since E4.2). |
 | `src/types.ts` | Fastify request augmentation — `request.tenantId` (set by the auth hook) and `request.idemKey`. Declared once because the route split made it a cross-file contract. |
 | `src/routes/titles.ts` | `POST /v1/titles`, `GET /v1/titles/:id`, `POST /v1/titles/:id/manuscripts`. **There is no list endpoint** — no `GET /v1/titles`. |
 | `src/routes/manuscripts.ts` | `PUT /v1/manuscripts/:id/upload` — streams the body straight into the shared CAS (never through the 1 MiB JSON body parser), records `manuscripts.source_sha256`, checks the DOCX/ZIP `PK` magic bytes. Also `GET /v1/manuscripts/:id/structure` and **`PATCH`** `/v1/documents/:id/overrides` (it takes an `ops` array body — the write side of the override layer, not a read). |
@@ -26,11 +27,13 @@ Node 22+, ESM, Fastify 5, `pg`, Zod. Scripts: `build` (tsc), `dev` (`tsx watch`)
 | `src/routes/artifacts.ts` | `GET /v1/builds/:id/artifacts/:kind` (metadata) and `.../download` (byte streaming off the CAS). |
 | `src/routes/webhooks.ts` | `POST/GET /v1/webhooks` with S4 URL validation at creation: https only; rejects hosts resolving to RFC1918, loopback, link-local, multicast, or cloud-metadata addresses. **DNS-rebinding re-checks must also run at delivery time** — the seam is marked in the file. |
 | `src/routes/health.ts` | `GET /v1/health` — actually checks Postgres (short timeout) and CAS readability, returning 503 with a per-check breakdown. It used to return unconditional 200 `ok`, so a load balancer happily routed to an instance whose database was gone. |
-| `src/routes/admin.ts` | `GET /v1/admin/metrics` — stage-level p50/p95 from `build_stages.duration_ms`, data that was always collected and never read. Admin-token gated via `PUBLISHER_ADMIN_TOKENS`; unconfigured means the route is effectively absent. |
+| `src/routes/admin.ts` | `GET /v1/admin/metrics` — stage-level p50/p95 from `build_stages.duration_ms`, data that was always collected and never read. Admin-token gated via `PUBLISHER_ADMIN_TOKENS`; unconfigured means the route is effectively absent. Queries `adminPool` (not `pool`) — these are GLOBAL cross-tenant aggregates by design, not scoped by `withTenant`. |
 | `package.json`, `tsconfig.json` | `tsconfig.json` **extends the monorepo root** (`packages/web` deliberately does not — see **publisher-root**) — `Dockerfile.api` must preserve the `repo-root/packages/api/` layout or `../../tsconfig.json` resolves to nothing. |
 
 ### Environment
-`DATABASE_URL`, `PORT`, `HOST`, `PUBLISHER_API_TOKENS` (`token:tenant`), `PUBLISHER_CORS_ORIGINS`,
+`DATABASE_URL` (the `publisher_app` role since E4.3), `PUBLISHER_ADMIN_DATABASE_URL` (the
+`publisher_admin` BYPASSRLS role, `adminPool`), `PORT`, `HOST`, `PUBLISHER_API_TOKENS`
+(`token:tenant`), `PUBLISHER_CORS_ORIGINS`,
 `PUBLISHER_CAS_ROOT`, `PUBLISHER_ADMIN_TOKENS`, plus the two size ceilings in `db.ts`:
 `PUBLISHER_UPLOAD_MAX_BYTES` (default 100 MiB) and `PUBLISHER_CAS_READ_MAX_BYTES` (default 64 MiB)
 — a rejected large upload is a config change, not a source patch. The API is both a CAS **reader** (artifact
@@ -53,6 +56,12 @@ Next 15 + React 19, `output: 'standalone'`, typed routes.
   it belongs in a stage or a service.
 - **Every tenant-scoped read goes through `loadOwned`.** Do not hand-roll a tenant check
   in a route.
+- **Every tenant-table query goes through `withTenant`.** Since E4.2, `builds`/`artifacts`/
+  `build_stages`/etc. have Row-Level Security keyed on the `app.tenant_id` GUC — a bare
+  `pool.query` sees zero rows (or, worse, fails a write's WITH CHECK) because that GUC is
+  unset. `tools/lint_tenant_scoping.py` (a CI gate) fails if `set_config('app.tenant_id', ...)`
+  or a literal `SET app.tenant_id` appears anywhere outside `withTenant`'s own definition in
+  `db.ts` — do not work around it by setting the GUC directly in a route.
 - **Never route upload bytes through the JSON body parser** — `bodyLimit` is 1 MiB and a
   DOCX is larger.
 - **Hardening has tests that must fail against pre-hardening code**:
@@ -61,6 +70,6 @@ Next 15 + React 19, `output: 'standalone'`, typed routes.
 
 ## Related
 
-`worker.py` (the other side of the queue) · `platform/db/schema.sql` (the shared tables) ·
-`Dockerfile.api`, `docker-compose.yml` · `tests/integration/` ·
+`worker.py` (the other side of the queue) · `platform/db/migrations/` (the shared tables,
+tenant_id/RLS, least-privilege roles) · `Dockerfile.api`, `docker-compose.yml` · `tests/integration/` ·
 `docs/ARCHITECTURE_UPLIFT_PLAN.md` U5/U6/U7 · `docs/ARCHITECTURE_REMEDIATION.md` A2.

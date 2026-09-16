@@ -5,7 +5,7 @@
  * effectively absent). No schema change needed.
  */
 import type { FastifyInstance } from 'fastify';
-import { pool } from '../db.js';
+import { adminPool } from '../db.js';
 import { isAdminToken } from '../plugins.js';
 
 export async function registerAdmin(server: FastifyInstance): Promise<void> {
@@ -20,7 +20,7 @@ export async function registerAdmin(server: FastifyInstance): Promise<void> {
     }
 
     const stages = (
-      await pool.query(
+      await adminPool.query(
         `SELECT stage_name,
                 count(*) AS runs,
                 count(*) FILTER (WHERE status = 'failed') AS failures,
@@ -33,7 +33,7 @@ export async function registerAdmin(server: FastifyInstance): Promise<void> {
     ).rows;
 
     const failures = (
-      await pool.query(
+      await adminPool.query(
         `SELECT error_kind, count(*) AS count
          FROM builds WHERE error_kind IS NOT NULL
          GROUP BY error_kind ORDER BY count DESC`
@@ -41,7 +41,7 @@ export async function registerAdmin(server: FastifyInstance): Promise<void> {
     ).rows;
 
     const queue = (
-      await pool.query(
+      await adminPool.query(
         `SELECT status, count(*) AS count FROM builds GROUP BY status ORDER BY status`
       )
     ).rows;

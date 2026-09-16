@@ -11,7 +11,7 @@
 import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import type { FastifyInstance } from 'fastify';
-import { loadOwned, pool } from '../db.js';
+import { withTenant } from '../db.js';
 
 function isBlockedIPv4(ip: string): boolean {
   const parts = ip.split('.').map(Number);
@@ -95,9 +95,11 @@ export async function registerWebhooks(server: FastifyInstance): Promise<void> {
       // Webhook signing secret -- MUST be cryptographically random. randomBytes
       // draws from the OS CSPRNG (Math.random would be a ~52-bit forgery vector).
       const secret = `sec-${randomBytes(32).toString('base64url')}`;
-      const result = await pool.query(
-        'INSERT INTO webhooks (id, tenant_id, url, events, secret) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-        [id, request.tenantId, url, JSON.stringify(events), secret]
+      const result = await withTenant(request.tenantId, (client) =>
+        client.query(
+          'INSERT INTO webhooks (id, tenant_id, url, events, secret) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+          [id, request.tenantId, url, JSON.stringify(events), secret]
+        )
       );
       const hook = result.rows[0];
       reply.code(201);
@@ -108,9 +110,10 @@ export async function registerWebhooks(server: FastifyInstance): Promise<void> {
   server.get('/v1/webhooks', async (request) => {
     // Tenant-scoped -- the prior in-memory version listed every tenant's
     // webhooks (including their target URLs) to any authenticated caller.
-    const result = await pool.query(
-      'SELECT id, url, events, created_at FROM webhooks WHERE tenant_id = $1',
-      [request.tenantId]
+    const result = await withTenant(request.tenantId, (client) =>
+      client.query('SELECT id, url, events, created_at FROM webhooks WHERE tenant_id = $1', [
+        request.tenantId,
+      ])
     );
     return { webhooks: result.rows.map((h) => ({ id: h.id, url: h.url, events: h.events, createdAt: h.created_at })) };
   });

@@ -120,6 +120,23 @@ def add_platform_to_services_import(root: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def add_tenant_id_set_outside_with_tenant(root: Path) -> None:
+    """A route sets the RLS GUC directly instead of going through
+    withTenant (E4.3) -- exactly the shape that would let a handler set it
+    to a value that never passed through auth."""
+    path = root / "packages" / "api" / "src" / "routes" / "titles.ts"
+    text = path.read_text(encoding="utf-8")
+    needle = "export async function registerTitles(server: FastifyInstance): Promise<void> {"
+    assert needle in text, "titles.ts's registerTitles signature changed; update this mutation"
+    text = text.replace(
+        needle,
+        needle + "\n  // meta-gate probe: bypasses withTenant\n"
+        "  void \"set_config('app.tenant_id', 'meta-gate-probe', true)\";\n",
+        1,
+    )
+    path.write_text(text, encoding="utf-8")
+
+
 # Every package `.importlinter`'s root_packages names, mapped to its source
 # directory relative to the repo root -- mirrors ci.yml's PUBLISHER_PKGS.
 _IMPORT_LINTER_PACKAGE_DIRS = [
@@ -253,6 +270,12 @@ GATES: list[Gate] = [
         cwd="packages/api",
         mutate=add_known_vulnerable_npm_dependency,
     ),
+    Gate(
+        id="tenant-scoping",
+        cmd=[sys.executable, "tools/lint_tenant_scoping.py"],
+        cwd=".",
+        mutate=add_tenant_id_set_outside_with_tenant,
+    ),
 ]
 
 # Maps each CI `run:` step (by its `name:`, or by the run command itself for
@@ -282,6 +305,7 @@ STEP_CLASSIFICATION: dict[str, str | None] = {
     "npm audit --audit-level=high (api)": "npm-audit",
     "npm ci (web)": None,  # dependency install, not a gate
     "npm audit --audit-level=high (web)": "npm-audit",  # same mechanism as (api), one Gate covers both
+    "Tenant scoping (E4.3)": "tenant-scoping",
 }
 
 

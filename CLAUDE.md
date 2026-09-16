@@ -15,7 +15,7 @@ carries the invariants that folder enforces and the mistakes that have already b
 | Folder | Skill | What lives there |
 |---|---|---|
 | `stages/` | **publisher-stages** | The 17 `@stage(...)` declarations. **Not one module per stage** — `prepress_stages.py` holds `preflight`/`cover`/`cover-preflight`/`finish-gs`, `cover_stages.py` holds the four `cover-brief/art/judge/compose`, and `ast-assemble` lives in `structure_stage.py`. The DAG is derived from these. |
-| `platform/` | **publisher-platform** | The substrate: CAS, build cache, the stage registry + DAG integrity checker, sandbox, `db/schema.sql`, `routing/policy.yaml`, the Rust crates (cas, pagescan), reproducibility, supply-chain. |
+| `platform/` | **publisher-platform** | The substrate: CAS, build cache, the stage registry + DAG integrity checker, sandbox, `db/migrations/`, `routing/policy.yaml`, the Rust crates (cas, pagescan), reproducibility, supply-chain. |
 | `services/` | **publisher-services** | The domain logic stages call into: ingest (DOCX→AST), structure (rules/inference/overrides), prepress (geometry, fontvault, ghostscript, preflight), cover, epub, idml, onix, alttext, agents. |
 | `schemas/` | **publisher-schemas** | JSON Schema source of truth + the Pydantic/Zod codegen. A schema ID is an API. |
 | `packages/` | **publisher-packages** | TypeScript surfaces: `api` (Fastify + Postgres REST) and `web` (Next.js review UI). Owns no pipeline logic. |
@@ -51,7 +51,7 @@ carries the invariants that folder enforces and the mistakes that have already b
 | Agent behaviour and limits | `services/agents/publisher_agents/runtime.py` |
 | HTTP route, auth, tenancy, uploads | `packages/api/src/routes/` + `src/plugins.ts` + `src/db.ts` |
 | Review UI | `packages/web/src/review/` |
-| Queue, leases, retries, dead-letter | `worker.py` + `platform/db/schema.sql` |
+| Queue, leases, retries, dead-letter | `worker.py` + `platform/db/migrations/` |
 | Run one build locally | `python tracer_bullet.py` |
 | A test failed / CI is red | **publisher-tests**, then `tools/` for the lints |
 | Why is it built this way | `docs/` — cite sections by identifier (D8, A3, U5, O1, S1) |
@@ -134,6 +134,6 @@ cross-project log directory and a sibling repo's failures got reported as Publis
 `COST_AND_STABILITY_PLAN.md` · `REMEDIATION_PLAN.md` (complete) ·
 `VERIFICATION_PLAN.md` (G1–G8 — gates that cannot fail; **draft, nothing implemented**) ·
 `CONTEXT_ARCHITECTURE.md` (C1–C4 — ICM evaluated against this repo; **research memo**) ·
-`ARCHITECTURE_SCORE_10_PLAN.md` (E0–E7 — EGFV v3.0 audit 5/10 → 10/10; **E0–E3 landed+tested (verified against real Docker builds: base images and pandoc/typst pinned by sha256 digest, `requirements.lock` with `--require-hashes`, pip-audit/npm-audit CI gates, SBOM via syft), E4+ open**)
+`ARCHITECTURE_SCORE_10_PLAN.md` (E0–E7 — EGFV v3.0 audit 5/10 → 10/10; **E0–E4 landed+tested (E4 verified against a real Docker stack: `platform/db/migrations/` + `migrate` service upgrades an existing deployment idempotently, `publisher_app`/`publisher_worker` are RLS-constrained non-owner roles with a full 9-stage build run end-to-end under them, `publisher_admin`/`publisher_worker_claim` scope BYPASSRLS to exactly the cross-tenant query each needs), E5+ open**)
 
 Full index with per-document status: the **publisher-docs** skill.

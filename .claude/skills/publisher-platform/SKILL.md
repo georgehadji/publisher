@@ -62,16 +62,37 @@ sharded `h[:2]/h[2:4]/h`.
 | `py/tests/test_security.py` | Escape attempts *are* the test suite. |
 | `py/tests/test_p5.py` | P5 scale-and-hardening tests. |
 
-### `platform/db/schema.sql`
-Single source of truth for the state the worker and API share. Applied automatically by
-Postgres's `docker-entrypoint-initdb.d` on first container start; re-run manually with
-`psql "$DATABASE_URL" -f platform/db/schema.sql`. Tables: `cache_index`, `builds`
-(with attempt/lease/`error_kind` columns for worker durability), `build_stages`,
-`artifacts`, `titles`, `manuscripts`, idempotency replay, webhooks. All `CREATE ... IF NOT
-EXISTS` plus idempotent `ALTER`s so it is safe to re-apply. Every tenant-scoped table
-carries `tenant_id` — that is what keeps the API's ownership checks meaningful. That check is
-`loadOwned()` in `packages/api/src/db.ts`; `assertTenant()` exists nowhere in the code — only in
-this schema's comments and `docs/ARCHITECTURE_REMEDIATION.md`.
+### `platform/db/migrations/`
+Numbered, immutable SQL files -- the single source of truth for the state the worker and API
+share, applied in order by `packages/api/src/migrate.ts` (via the `migrate` docker-compose
+service, which `worker`/`api` `depends_on: condition: service_completed_successfully`) and
+tracked in a `schema_migrations` ledger. **E4.1** (docs/ARCHITECTURE_SCORE_10_PLAN.md):
+this replaced a single `platform/db/schema.sql` applied only by Postgres's
+`docker-entrypoint-initdb.d` on an EMPTY data directory -- an existing deployment had no path
+to a schema change. **Never edit an existing numbered file in place; add the next number.**
+
+- `001_initial.sql` (the old schema.sql, renamed) -- `cache_index`, `builds` (attempt/lease/
+  `error_kind` for worker durability), `build_stages`, `artifacts`, `titles`, `manuscripts`,
+  idempotency replay, webhooks. All `CREATE ... IF NOT EXISTS` / idempotent `ALTER`s.
+- `002_tenant_rls.sql` (**E4.2**) -- adds `tenant_id` to `artifacts`/`build_stages` (backfilled
+  from `builds`, then a composite `(build_id, tenant_id)` FK against `builds` that makes a
+  cross-tenant row unrepresentable) and enables + writes a `tenant_isolation` RLS policy on
+  every tenant-scoped table (`current_setting('app.tenant_id', true)`).
+- `003_least_privilege_roles.sql` (**E4.3**) -- `publisher_app`/`publisher_worker` (no
+  BYPASSRLS, not owner -- RLS actually constrains them), `publisher_worker_claim` (BYPASSRLS,
+  granted to `publisher_worker` so `worker.py`'s `_claim_build` can `SET ROLE` into it for
+  just the cross-tenant claim query and back), `publisher_admin` (BYPASSRLS, used only by
+  `/v1/admin/metrics`'s global aggregates). `FORCE ROW LEVEL SECURITY` on every tenant table.
+  `publisher` (`POSTGRES_USER`) stays the table owner and is a real Postgres superuser (the
+  official image's own bootstrap behavior) -- superusers always bypass RLS regardless of
+  FORCE, which is why `tests/integration/conftest.py`'s fixtures (which connect as
+  `publisher`) needed no changes for this to land.
+
+Every tenant-scoped table carries `tenant_id` — that is what keeps the API's ownership checks
+meaningful (`loadOwned()` in `packages/api/src/db.ts`, itself now wrapped by `withTenant`, which
+sets the `app.tenant_id` GUC these RLS policies read) and, since 002/003, what the database
+itself enforces even if a query forgets a `WHERE` clause. `assertTenant()` exists nowhere in
+the code — only in these migrations' comments and `docs/ARCHITECTURE_REMEDIATION.md`.
 
 ### `platform/routing/policy.yaml`
 **The live LLM route table** — versioned data, not code. Loaded by
