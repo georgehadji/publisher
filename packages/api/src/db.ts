@@ -29,7 +29,17 @@ export const CAS_ROOT = process.env.PUBLISHER_CAS_ROOT ?? './.publisher/cas';
 // `publisher` -- an unprivileged role the E4.2 Row-Level Security policies
 // actually constrain (an owner, or a BYPASSRLS role, bypasses RLS by
 // default regardless of the policy).
-export const pool = new Pool({
+//
+// E5.2: NOT exported. RLS (E4.2) is the runtime backstop that makes a
+// tenant-scoped query safe; this is the compile-time backstop that makes an
+// UNSCOPED one impossible to write in the first place -- a route file
+// cannot `import { pool }` because there is no such export, so the only way
+// to reach a tenant table from a route is `withTenant`/`loadOwned` below.
+// The three call sites that legitimately need a raw connection for
+// something that is NOT a tenant-table query (SSE LISTEN, the health
+// check, process shutdown) get their own narrow, purpose-named export
+// instead of general pool access.
+const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: parseInt(process.env.PUBLISHER_PG_POOL_MAX ?? '20', 10),
   idleTimeoutMillis: 30_000,
@@ -82,6 +92,30 @@ export async function withTenant<T>(
   } finally {
     client.release();
   }
+}
+
+/** E5.2 -- the SSE route (routes/builds.ts) needs a connection it holds open
+ * for the lifetime of a client stream to LISTEN on, which `withTenant`
+ * cannot give it (that helper commits/releases after one call). This is not
+ * a tenant-table query -- Postgres LISTEN/NOTIFY channels aren't RLS-scoped
+ * -- so it is named for exactly what it is, not exposed as general pool
+ * access the way a bare `pool` export would be. */
+export async function openListenConnection(): Promise<pg.PoolClient> {
+  return pool.connect();
+}
+
+/** E5.2 -- `/v1/health` needs to know Postgres answers at all, not read a
+ * tenant table; a bare `SELECT 1` under a tenant scope would be a pointless
+ * transaction+GUC round trip for no benefit. */
+export async function pingDatabase(): Promise<void> {
+  await pool.query('SELECT 1');
+}
+
+/** E5.2 -- graceful shutdown (index.ts) closes both pools; the raw `pool`
+ * itself stays unexported even for this. */
+export async function closePools(): Promise<void> {
+  await pool.end();
+  await adminPool.end();
 }
 
 export const UPLOAD_MAX_BYTES = parseInt(process.env.PUBLISHER_UPLOAD_MAX_BYTES ?? '104857600', 10);

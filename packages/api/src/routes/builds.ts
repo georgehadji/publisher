@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
-import { loadOwned, pool, readCasFile, withTenant } from '../db.js';
+import { loadOwned, openListenConnection, readCasFile, withTenant } from '../db.js';
 
 // Build ids are server-generated `build-<base64url>` tokens; the SSE channel
 // name is interpolated into SQL below (LISTEN takes a literal), so the shape
@@ -25,6 +25,7 @@ const MAX_QUEUED_BUILDS_PER_TENANT = parseInt(process.env.PUBLISHER_MAX_QUEUED_B
 export async function registerBuilds(server: FastifyInstance): Promise<void> {
   server.post<{ Body: { documentId: string; designId: string; profileIds: string[]; mode?: string } }>(
     '/v1/builds',
+    { config: { auth: 'tenant' } },
     async (request, reply) => {
       const { documentId, designId, profileIds, mode = 'proof' } = request.body;
       // The document (structured manuscript) being built must belong to the
@@ -75,6 +76,7 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
 
   server.get<{ Params: { id: string } }>(
     '/v1/builds/:id',
+    { config: { auth: 'tenant' } },
     async (request, reply) => {
       const build = await loadOwned('builds', request.params.id, request.tenantId);
       if (!build) {
@@ -107,6 +109,7 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
   // state; this route holds a dedicated LISTEN connection per client.
   server.get<{ Params: { id: string } }>(
     '/v1/builds/:id/events',
+    { config: { auth: 'tenant' } },
     async (request, reply) => {
       const { id } = request.params;
       const build = await loadOwned('builds', id, request.tenantId);
@@ -157,7 +160,7 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
       request.raw.on('close', () => void close());
 
       try {
-        client = await pool.connect();
+        client = await openListenConnection();
         // LISTEN BEFORE the response headers are sent: once the client sees
         // 'connected', the subscription must already be active, or a stage
         // completing in that window is lost (the old poller had a blind spot
@@ -233,6 +236,7 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
 
   server.get<{ Params: { id: string } }>(
     '/v1/builds/:id/preflight',
+    { config: { auth: 'tenant' } },
     async (request, reply) => {
       const build = await loadOwned('builds', request.params.id, request.tenantId);
       if (!build) {

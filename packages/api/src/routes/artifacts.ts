@@ -8,6 +8,7 @@ import { DELIVERABLE_SCHEMAS, casBlobExists, casPath, loadOwned, withTenant } fr
 export async function registerArtifacts(server: FastifyInstance): Promise<void> {
   server.get<{ Params: { id: string; kind: string } }>(
     '/v1/builds/:id/artifacts/:kind',
+    { config: { auth: 'tenant' } },
     async (request, reply) => {
       const { id, kind } = request.params;
       const build = await loadOwned('builds', id, request.tenantId);
@@ -43,6 +44,7 @@ export async function registerArtifacts(server: FastifyInstance): Promise<void> 
 
   server.get<{ Params: { id: string; kind: string } }>(
     '/v1/builds/:id/artifacts/:kind/download',
+    { config: { auth: 'tenant' } },
     async (request, reply) => {
       const { id, kind } = request.params;
       const build = await loadOwned('builds', id, request.tenantId);

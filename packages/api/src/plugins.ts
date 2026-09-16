@@ -4,55 +4,104 @@
  *
  * Registered as one Fastify plugin so the onRequest hooks run in a fixed order
  * (auth before idempotency before rate-limit) for every route.
+ *
+ * E5.1 -- auth is no longer decided by matching the request URL against a
+ * hardcoded set of "special" prefixes (a new route with no entry there used
+ * to fall through as an ordinary tenant route, or worse, as unauthenticated
+ * if someone added it to the wrong set). Every route now DECLARES its zone
+ * via `config: { auth: ... }` (types.ts); this hook reads that declaration
+ * and defaults an UNDECLARED route to 'tenant' -- the strictest zone that
+ * still lets a plain route work -- so a forgotten declaration fails closed
+ * instead of open. `app.ts`'s startup assertion additionally refuses to
+ * boot at all if any route has no declaration whatsoever.
  */
-import { createHash, timingSafeEqual } from 'node:crypto';
+import argon2 from 'argon2';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { FastifyInstance } from 'fastify';
 import { withTenant } from './db.js';
+import type { AuthRequirement } from './types.js';
 
-/** S1 -- constant-time token comparison. Plain `===` on a bearer token leaks
- * timing (and the comma-separated env var is a known seam to be replaced by
- * OIDC introspection in P8 -- this keeps the seam, hardens the comparison). */
-function tokensEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ba.length !== bb.length) return false;
-  return timingSafeEqual(ba, bb);
+/** E5.3 -- PUBLISHER_API_TOKENS/PUBLISHER_ADMIN_TOKENS store an argon2id
+ * hash of each token, never the plaintext (T6: a leaked env dump or compose
+ * file used to hand over a directly usable bearer token). `argon2.verify`
+ * does its own constant-time comparison internally, so there is no separate
+ * timing-safe-compare step the way the old plaintext version needed.
+ * `packages/api/src/hash-token.ts` generates the hash for a given token --
+ * that CLI is how an operator turns a chosen secret into what goes in the
+ * env var. A malformed configured hash (e.g. the env var was set to a raw
+ * plaintext token by mistake) must not crash auth for every OTHER
+ * configured token, hence the per-entry catch.
+ *
+ * Multiple entries are `;`-separated, NOT `,`-separated: an argon2id PHC
+ * string embeds its own parameters as `m=65536,t=3,p=4` -- a literal comma
+ * inside the hash -- so `,` cannot be the list delimiter without splitting
+ * every hash apart. */
+async function verifyHash(hash: string, presented: string): Promise<boolean> {
+  try {
+    return await argon2.verify(hash, presented);
+  } catch {
+    return false;
+  }
 }
 
 /** Maps a bearer token to a tenant. Replace with OIDC introspection in P8. */
-export function resolveTenant(token: string): string | null {
+export async function resolveTenant(token: string): Promise<string | null> {
   const configured = process.env.PUBLISHER_API_TOKENS ?? '';
-  for (const pair of configured.split(',')) {
-    const [t, tenant] = pair.split(':');
-    if (t && tenant && tokensEqual(t.trim(), token)) return tenant.trim();
+  for (const pair of configured.split(';')) {
+    const [hash, tenant] = pair.split(':');
+    if (hash && tenant && (await verifyHash(hash.trim(), token))) return tenant.trim();
   }
   return null;
 }
 
-const PUBLIC_ROUTES = new Set(['/v1/health']);
-
 export async function registerAuthAndSecurity(server: FastifyInstance): Promise<void> {
   // ── Auth / tenancy ─────────────────────────────────────────
   server.addHook('onRequest', async (request, reply) => {
-    const url = request.routeOptions?.url ?? request.url;
-    if (PUBLIC_ROUTES.has(url)) return;
-    // /v1/admin/* is its own auth zone -- each admin route enforces the admin
-    // token (PUBLISHER_ADMIN_TOKENS) itself; tenant tokens are not valid here.
-    if (url.startsWith('/v1/admin')) return;
+    const auth: AuthRequirement = request.routeOptions?.config?.auth ?? 'tenant';
+
+    if (auth === 'public') {
+      // The hook still always assigns a Principal -- it never returns
+      // early without one, even for the zone that needs no credentials.
+      request.principal = { kind: 'public' };
+      return;
+    }
 
     const header = request.headers.authorization ?? '';
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+
+    if (auth === 'admin') {
+      // PUBLISHER_ADMIN_TOKENS unset means the whole admin zone does not
+      // exist in this deployment -- report absent, not merely denied.
+      if (!process.env.PUBLISHER_ADMIN_TOKENS) {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      if (token && (await isAdminToken(token))) {
+        request.principal = { kind: 'admin' };
+        return;
+      }
+      // A token that resolves as a real TENANT identity is authenticated,
+      // just for the wrong zone -- 403 (forbidden), not 401 (no/garbage
+      // credentials). Distinguishing the two is the point of L12/T3: an
+      // admin route reached with a tenant token must not look like "no
+      // token was even tried".
+      if (token && (await resolveTenant(token))) {
+        return reply.code(403).send({ error: 'admin token required' });
+      }
+      return reply.code(401).send({ error: token ? 'invalid admin token' : 'missing bearer token' });
+    }
+
+    // auth === 'tenant'
     if (!token) {
       return reply.code(401).send({ error: 'missing bearer token' });
     }
-    const tenant = resolveTenant(token);
+    const tenant = await resolveTenant(token);
     if (!tenant) {
       return reply.code(401).send({ error: 'invalid token' });
     }
     request.tenantId = tenant;
+    request.principal = { kind: 'tenant', tenantId: tenant };
   });
 
   // ── Idempotency-Key (U5/S3: reserve BEFORE the handler) ────
@@ -70,12 +119,11 @@ export async function registerAuthAndSecurity(server: FastifyInstance): Promise<
   // failure instead of leaving a perpetual 202 reservation.
   server.addHook('onRequest', async (request, reply) => {
     if (!['POST', 'PATCH', 'PUT'].includes(request.method)) return;
-    if (PUBLIC_ROUTES.has(request.routeOptions?.url ?? request.url)) return;
-    // /v1/admin/* is its own auth zone (admin token, no tenantId set) -- the
-    // idempotency INSERT keys on request.tenantId, so a mutation there would
-    // hit a NOT NULL violation. Skip the hook; admin routes today are all
-    // GET (metrics), but a future POST must not silently break on tenancy.
-    if ((request.routeOptions?.url ?? request.url).startsWith('/v1/admin')) return;
+    // Only tenant-zone routes have a request.tenantId to key the reservation
+    // on -- a public or admin mutation (none exist today) would otherwise
+    // hit a NOT NULL violation on idempotency_keys.tenant_id.
+    const auth: AuthRequirement = request.routeOptions?.config?.auth ?? 'tenant';
+    if (auth !== 'tenant') return;
 
     const key = request.headers['idempotency-key'];
     if (typeof key !== 'string' || !key) {
@@ -159,12 +207,13 @@ export async function registerAuthAndSecurity(server: FastifyInstance): Promise<
   });
 }
 
-/** Constant-time compare against the admin token list (U7 metrics). */
-export function isAdminToken(token: string): boolean {
+/** Checks a token against the argon2id-hashed admin token list (U7 metrics,
+ * E5.3). */
+export async function isAdminToken(token: string): Promise<boolean> {
   const configured = process.env.PUBLISHER_ADMIN_TOKENS ?? '';
   if (!configured) return false;
-  for (const t of configured.split(',')) {
-    if (t.trim() && tokensEqual(t.trim(), token)) return true;
+  for (const hash of configured.split(';')) {
+    if (hash.trim() && (await verifyHash(hash.trim(), token))) return true;
   }
   return false;
 }

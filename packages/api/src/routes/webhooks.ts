@@ -50,6 +50,7 @@ export async function registerWebhooks(server: FastifyInstance): Promise<void> {
   server.post<{ Body: { url: string; events: string[] } }>(
     '/v1/webhooks',
     {
+      config: { auth: 'tenant' },
       schema: {
         body: {
           type: 'object',
@@ -107,7 +108,7 @@ export async function registerWebhooks(server: FastifyInstance): Promise<void> {
     }
   );
 
-  server.get('/v1/webhooks', async (request) => {
+  server.get('/v1/webhooks', { config: { auth: 'tenant' } }, async (request) => {
     // Tenant-scoped -- the prior in-memory version listed every tenant's
     // webhooks (including their target URLs) to any authenticated caller.
     const result = await withTenant(request.tenantId, (client) =>

@@ -4,7 +4,7 @@
  * `createApp()` stays import-safe for tests (E0.4).
  */
 import { createApp } from './app.js';
-import { pool } from './db.js';
+import { closePools } from './db.js';
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -31,7 +31,7 @@ async function shutdown(signal: string) {
   try {
     await server.close();
     clearTimeout(force);
-    await pool.end();
+    await closePools();
     process.exit(0);
   } catch (err) {
     server.log.error({ err }, 'shutdown failed');

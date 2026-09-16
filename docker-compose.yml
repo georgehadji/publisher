@@ -148,7 +148,12 @@ services:
       PUBLISHER_ADMIN_DATABASE_URL: postgresql://publisher_admin:publisher_admin@postgres:5432/publisher
       PORT: "4000"
       HOST: "0.0.0.0"
-      PUBLISHER_API_TOKENS: "dev-token:dev-tenant"
+      # E5.3 -- the value is an argon2id hash, not the plaintext token; the
+      # bearer credential this hashes is "dev-token" (generate a new one with
+      # `npm run hash-token -- <token>` in packages/api). Every literal `$`
+      # is doubled to `$$` -- docker compose interpolates a bare `$word` as
+      # an env-var reference, which would otherwise silently mangle the hash.
+      PUBLISHER_API_TOKENS: "$$argon2id$$v=19$$m=65536,p=4,t=3$$mtODaDMmGidL1PGeKI/Olw$$VhzhV2ETLRLHJypvXfceZ3Wal5yKjGIru+DhsF0a+TU:dev-tenant"
       PUBLISHER_CORS_ORIGINS: "http://localhost:3000"
       # The API serves artifact bytes out of the CAS the worker wrote them to.
       # Without this mount it resolved the default relative ./.publisher/cas

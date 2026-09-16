@@ -38,7 +38,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
 
   server.put<{ Params: { id: string } }>(
     '/v1/manuscripts/:id/upload',
-    { bodyLimit: UPLOAD_MAX_BYTES },
+    { bodyLimit: UPLOAD_MAX_BYTES, config: { auth: 'tenant' } },
     async (request, reply) => {
       const { id } = request.params;
       // Defense in depth: ids are server-generated (ms- + base64url), but the id
@@ -152,6 +152,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
 
   server.get<{ Params: { id: string } }>(
     '/v1/manuscripts/:id/structure',
+    { config: { auth: 'tenant' } },
     async (request, reply) => {
       const manuscript = await loadOwned('manuscripts', request.params.id, request.tenantId);
       if (!manuscript) {
@@ -206,6 +207,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
   server.patch<{ Params: { id: string }; Body: { ops: unknown[] } }>(
     '/v1/documents/:id/overrides',
     {
+      config: { auth: 'tenant' },
       schema: {
         body: {
           type: 'object',

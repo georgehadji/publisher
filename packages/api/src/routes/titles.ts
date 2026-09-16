@@ -11,6 +11,7 @@ export async function registerTitles(server: FastifyInstance): Promise<void> {
   server.post<{ Body: { title: string; author?: string } }>(
     '/v1/titles',
     {
+      config: { auth: 'tenant' },
       schema: {
         body: {
           type: 'object',
@@ -41,6 +42,7 @@ export async function registerTitles(server: FastifyInstance): Promise<void> {
 
   server.get<{ Params: { id: string } }>(
     '/v1/titles/:id',
+    { config: { auth: 'tenant' } },
     async (request, reply) => {
       const record = await loadOwned('titles', request.params.id, request.tenantId);
       if (!record) {
@@ -54,6 +56,7 @@ export async function registerTitles(server: FastifyInstance): Promise<void> {
 
   server.post<{ Params: { id: string } }>(
     '/v1/titles/:id/manuscripts',
+    { config: { auth: 'tenant' } },
     async (request, reply) => {
       const title = await loadOwned('titles', request.params.id, request.tenantId);
       // The title must belong to the caller before a manuscript can be created

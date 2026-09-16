@@ -1,24 +1,17 @@
 /**
  * /v1/admin/metrics (U7) -- stage-level p50/p95 from data build_stages has
- * ALWAYS been collecting (duration_ms) but nobody ever read. Read-only,
- * admin-token gated (PUBLISHER_ADMIN_TOKENS; unconfigured => the route is
- * effectively absent). No schema change needed.
+ * ALWAYS been collecting (duration_ms) but nobody ever read. Read-only.
+ *
+ * E5.1 -- `config: { auth: 'admin' }` is the route's only auth statement;
+ * the plugin hook enforces it (admin token required, PUBLISHER_ADMIN_TOKENS
+ * unset => route reports 404 "effectively absent", a tenant token gets 403)
+ * before this handler ever runs. No schema change needed.
  */
 import type { FastifyInstance } from 'fastify';
 import { adminPool } from '../db.js';
-import { isAdminToken } from '../plugins.js';
 
 export async function registerAdmin(server: FastifyInstance): Promise<void> {
-  server.get('/v1/admin/metrics', async (request, reply) => {
-    if (!process.env.PUBLISHER_ADMIN_TOKENS) {
-      return reply.code(404).send({ error: 'not found' });
-    }
-    const header = request.headers.authorization ?? '';
-    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-    if (!token || !isAdminToken(token)) {
-      return reply.code(401).send({ error: 'invalid admin token' });
-    }
-
+  server.get('/v1/admin/metrics', { config: { auth: 'admin' } }, async (_request, _reply) => {
     const stages = (
       await adminPool.query(
         `SELECT stage_name,

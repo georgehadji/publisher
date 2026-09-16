@@ -14,6 +14,7 @@ up at session start, so reruns and parallel sessions do not fight over state.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import shutil
@@ -65,6 +66,32 @@ ADMIN_DATABASE_URL = os.environ.get(
 )
 TOKEN = "detector-token"
 TENANT = "detector-tenant"
+ADMIN_TOKEN = "admin-secret"
+
+TSX_BIN = API_DIR / "node_modules" / ".bin" / ("tsx.cmd" if os.name == "nt" else "tsx")
+
+
+@functools.lru_cache(maxsize=None)
+def _argon2_hash(plaintext: str) -> str:
+    """E5.3 -- PUBLISHER_API_TOKENS/PUBLISHER_ADMIN_TOKENS store an argon2id
+    hash, not the plaintext token. Shells out to hash-token.ts (the same
+    `argon2` implementation the Node server verifies with) instead of
+    reimplementing argon2 in Python, so the fixture can't drift from what
+    the server actually accepts. Cached: this is called once per distinct
+    plaintext across the whole test session, not once per api_server fixture
+    instantiation (module-scoped, so once per test module)."""
+    if not TSX_BIN.exists():
+        pytest.fail(
+            f"tsx not found at {TSX_BIN} -- run `npm install` in packages/api "
+            f"before this detector can even attempt to run."
+        )
+    result = subprocess.run(
+        [str(TSX_BIN), "src/hash-token.ts", plaintext],
+        cwd=str(API_DIR), capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"hash-token.ts failed for {plaintext!r}: {result.stderr}")
+    return result.stdout.strip()
 # Idempotency-Key is scoped (tenant, key) and rows persist in Postgres across
 # test runs -- a literal key reused run-to-run would replay a PREVIOUS run's
 # cached response instead of exercising the route again. Unique per process.
@@ -418,10 +445,9 @@ def api_server():
     Boots the real Fastify server (not a mock) so tests exercise the actual
     routes in packages/api/src/index.ts, not a stand-in for them.
     """
-    tsx = API_DIR / "node_modules" / ".bin" / ("tsx.cmd" if os.name == "nt" else "tsx")
-    if not tsx.exists():
+    if not TSX_BIN.exists():
         pytest.fail(
-            f"tsx not found at {tsx} -- run `npm install` in packages/api "
+            f"tsx not found at {TSX_BIN} -- run `npm install` in packages/api "
             f"before this detector can even attempt to run."
         )
 
@@ -430,7 +456,9 @@ def api_server():
         **os.environ,
         "PORT": str(port),
         "HOST": "127.0.0.1",
-        "PUBLISHER_API_TOKENS": f"{TOKEN}:{TENANT}",
+        # E5.3: an argon2id hash, not the plaintext -- the header this test
+        # process sends is still "Bearer {TOKEN}" (see _headers()).
+        "PUBLISHER_API_TOKENS": f"{_argon2_hash(TOKEN)}:{TENANT}",
         "PUBLISHER_CORS_ORIGINS": "http://localhost",
         "DATABASE_URL": DATABASE_URL,
         # E4.3: without this, adminPool (db.ts) gets an undefined connection
@@ -440,10 +468,10 @@ def api_server():
         # Small cap so the 413 (upload too large) path is testable with cheap bytes.
         "PUBLISHER_UPLOAD_MAX_BYTES": "100000",
         # U7 metrics endpoint gate (PUBLISHER_ADMIN_TOKENS unset => route absent).
-        "PUBLISHER_ADMIN_TOKENS": "admin-secret",
+        "PUBLISHER_ADMIN_TOKENS": _argon2_hash(ADMIN_TOKEN),
     }
     proc = subprocess.Popen(
-        [str(tsx), "src/index.ts"],
+        [str(TSX_BIN), "src/index.ts"],
         cwd=str(API_DIR),
         env=env,
         stdout=subprocess.PIPE,

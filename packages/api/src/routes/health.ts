@@ -7,15 +7,15 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { access } from 'node:fs/promises';
-import { CAS_ROOT, pool } from '../db.js';
+import { CAS_ROOT, pingDatabase } from '../db.js';
 
 export async function registerHealth(server: FastifyInstance): Promise<void> {
-  server.get('/v1/health', async (_request, reply) => {
+  server.get('/v1/health', { config: { auth: 'public' } }, async (_request, reply) => {
     const checks: Record<string, string> = {};
 
     try {
       await Promise.race([
-        pool.query('SELECT 1'),
+        pingDatabase(),
         new Promise((_, reject) => setTimeout(() => reject(new Error('postgres health check timed out')), 1500)),
       ]);
       checks.postgres = 'ok';

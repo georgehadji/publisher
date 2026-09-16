@@ -8,6 +8,7 @@
  */
 import Fastify from 'fastify';
 import './types.js';
+import type { AuthRequirement } from './types.js';
 import { registerAuthAndSecurity } from './plugins.js';
 import { registerHealth } from './routes/health.js';
 import { registerTitles } from './routes/titles.js';
@@ -16,6 +17,31 @@ import { registerBuilds } from './routes/builds.js';
 import { registerArtifacts } from './routes/artifacts.js';
 import { registerWebhooks } from './routes/webhooks.js';
 import { registerAdmin } from './routes/admin.js';
+
+// E5.1 -- registered by @fastify/cors as a catch-all preflight responder,
+// not an application route; it carries no `config` of its own to declare an
+// auth zone for, and isn't one.
+const CORS_PREFLIGHT_ROUTE = 'OPTIONS *';
+
+/** Fail-closed at deploy time, not at request time: a route with NO `auth`
+ * declaration at all (not even the implicit 'tenant' default the runtime
+ * hook applies) means someone registered a route and this file's own
+ * bookkeeping never saw a `config` object -- almost certainly a
+ * `server.<method>(url, handler)` two-arg call with no options, which is
+ * exactly the "next route quietly skips the auth check" shape L12 names. */
+export function assertEveryRouteDeclaresAuth(
+  routes: { method: string; url: string; auth: AuthRequirement | undefined }[]
+): void {
+  const undeclared = routes.filter(
+    (r) => r.auth === undefined && `${r.method} ${r.url}` !== CORS_PREFLIGHT_ROUTE
+  );
+  if (undeclared.length > 0) {
+    throw new Error(
+      'fail-closed startup check (E5.1): route(s) registered with no auth zone declared -- ' +
+        undeclared.map((r) => `${r.method} ${r.url}`).join(', ')
+    );
+  }
+}
 
 export async function createApp() {
   const server = Fastify({
@@ -40,10 +66,10 @@ export async function createApp() {
   // E0.4 -- route-coverage meta-test needs to enumerate every registered
   // route; `onRoute` is Fastify's documented hook for exactly that, and must
   // be added before any route registration below to see all of them.
-  server.decorate('publisherRoutes', [] as { method: string; url: string }[]);
+  server.decorate('publisherRoutes', [] as { method: string; url: string; auth: AuthRequirement | undefined }[]);
   server.addHook('onRoute', (opts) => {
     for (const method of ([] as string[]).concat(opts.method)) {
-      server.publisherRoutes.push({ method, url: opts.url });
+      server.publisherRoutes.push({ method, url: opts.url, auth: opts.config?.auth });
     }
   });
 
@@ -57,6 +83,8 @@ export async function createApp() {
   await registerArtifacts(server);
   await registerWebhooks(server);
   await registerAdmin(server);
+
+  assertEveryRouteDeclaresAuth(server.publisherRoutes);
 
   return server;
 }
