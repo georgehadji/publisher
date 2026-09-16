@@ -21,6 +21,9 @@ package-lock.json
 yarn.lock
 dist/
 *.tsbuildinfo
+# Next.js build output (packages/web) -- regenerates from `npm run build`/`dev`.
+.next/
+next-env.d.ts
 
 # Python
 __pycache__/
