@@ -23,10 +23,10 @@ PYTHONPATH — so a packaging change breaks production silently instead of CI lo
 | `structure/` | `publisher-structure` | `ast-assemble`, `resolve`, review UI |
 | `prepress/` | `publisher-prepress` | `design-compile`, `finish`, `finish-gs`, `preflight`, `cover` |
 | `cover/` | `publisher-cover` | `cover-brief`, `cover-art`, `cover-judge` |
-| `epub/` | `publisher-epub` | secondary output (P6) |
-| `idml/` | `publisher-idml` | secondary output (P6) |
-| `onix/` | `publisher-onix` | secondary output (P6) |
-| `alttext/` | `publisher-alttext` | accessibility + pre-ingest advisory |
+| `epub/` | `publisher-epub` | `epub` stage (E7.2 — always-on) |
+| `idml/` | `publisher-idml` | `idml` stage (opt-in, `PUBLISHER_EMIT_IDML`) |
+| `onix/` | `publisher-onix` | `onix` stage (E7.2 — always-on) |
+| `alttext/` | `publisher-alttext` | `ManuscriptDoctor` → `manuscript-advisory` stage (E7.2). `AltTextService` (figure alt-text) and `BacklistTriage` (standalone backlist audit, not per-build) remain uncalled by design — see Files below |
 | `agents/` | `publisher-agents` | runs at gate boundaries, never inside a stage |
 
 ## Files

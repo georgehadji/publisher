@@ -14,9 +14,9 @@ carries the invariants that folder enforces and the mistakes that have already b
 
 | Folder | Skill | What lives there |
 |---|---|---|
-| `stages/` | **publisher-stages** | The 17 `@stage(...)` declarations. **Not one module per stage** — `prepress_stages.py` holds `preflight`/`cover`/`cover-preflight`/`finish-gs`, `cover_stages.py` holds the four `cover-brief/art/judge/compose`, and `ast-assemble` lives in `structure_stage.py`. The DAG is derived from these. |
+| `stages/` | **publisher-stages** | The 24 `@stage(...)` declarations (mechanically checked against `tools/lint_docs_claims.py`, not hand-counted — see E7.3). **Not one module per stage** — `prepress_stages.py` holds `preflight`/`cover`/`cover-preflight`/`finish-gs`, `cover_stages.py` holds the four `cover-brief/art/judge/compose`, `ast-assemble` lives in `structure_stage.py`, and `secondary_output_stages.py` holds `epub`/`onix`. The DAG is derived from these. |
 | `platform/` | **publisher-platform** | The substrate: CAS, build cache, the stage registry + DAG integrity checker, sandbox, `db/migrations/`, `routing/policy.yaml`, the Rust crates (cas, pagescan), reproducibility, supply-chain. |
-| `services/` | **publisher-services** | The domain logic stages call into: ingest (DOCX→AST), structure (rules/inference/overrides), prepress (geometry, fontvault, ghostscript, preflight), cover, epub, idml, onix, alttext, agents. |
+| `services/` | **publisher-services** | The domain logic stages call into: ingest (DOCX→AST), structure (rules/inference/overrides), prepress (geometry, fontvault, ghostscript, preflight), cover, epub, idml, onix, alttext, agents. epub/onix/alttext are wired (E7.2) — no longer built-but-unreachable. |
 | `schemas/` | **publisher-schemas** | JSON Schema source of truth + the Pydantic/Zod codegen. A schema ID is an API. |
 | `packages/` | **publisher-packages** | TypeScript surfaces: `api` (Fastify + Postgres REST) and `web` (Next.js review UI). Owns no pipeline logic. |
 | `profiles/` | **publisher-profiles** | Vendor output profiles as YAML data (KDP, IngramSpark, Lulu, generic, Greek) + the loader. |
@@ -24,7 +24,7 @@ carries the invariants that folder enforces and the mistakes that have already b
 | `fixtures/` | **publisher-fixtures** | Versioned per-stage fixture sets the generated contract tests run over. |
 | `corpus/` | **publisher-corpus** | Golden + synthetic manuscripts and the raster-diff harness. |
 | `tests/` | **publisher-tests** | Contract tests, collection floor, Postgres-backed integration suite. Also maps the co-located unit tests. |
-| `tools/` | **publisher-tools** | The three CI-blocking lints (schema free-text, stage version bump, service deps). |
+| `tools/` | **publisher-tools** | The CI-blocking lints: schema free-text, stage version bump, service deps, tenant scoping (E4.3), docs claims (E7.3). Import boundaries (E1.4) are enforced separately via `.importlinter` + `lint-imports`, not a `tools/*.py` script. |
 | `scripts/` | **publisher-scripts** | `test.ps1` / `test.sh` — the test runners you must use instead of bare pytest. |
 | `docs/` | **publisher-docs** | Architecture, build plan (D1–D10), remediation/uplift plans and their status, cover design, LLM strategy, agent design, audits. |
 | repo root | **publisher-root** | `tracer_bullet.py`, `worker.py`, `cli.py`, `conftest.py`, Docker/compose, dependency manifests, `.github/workflows/ci.yml`, `.reasonix/`. |
@@ -127,13 +127,15 @@ cross-project log directory and a sibling repo's failures got reported as Publis
 
 ## Docs
 
-`docs/ARCHITECTURE.md` · `BUILD_PLAN.md` (phases, decisions D1–D10) ·
-`ARCHITECTURE_REMEDIATION.md` (A0–A2 landed, A3–A5 open) ·
-`ARCHITECTURE_UPLIFT_PLAN.md` (U1–U4 implemented+tested, U5–U7 implemented, U8–U9 open) ·
+`docs/ARCHITECTURE.md` (normative as of E7.1 — see its own "Status" note) ·
+`ARCHITECTURE_ROADMAP.md` (new, E7.1 — what ARCHITECTURE.md used to claim but was never built) ·
+`BUILD_PLAN.md` (phases, decisions D1–D10) ·
+`ARCHITECTURE_REMEDIATION.md` (A0–A2 landed; A3–A5 folded into `ARCHITECTURE_SCORE_10_PLAN.md`'s E1/E6/E7, landed there) ·
+`ARCHITECTURE_UPLIFT_PLAN.md` (U1–U7 implemented; U8–U9 folded into the same plan's E0.3/E2.3, landed there) ·
 `BLOCKING_FIX_PLAN.md` (D1–D3 landed in c5cfad3) ·
 `COST_AND_STABILITY_PLAN.md` · `REMEDIATION_PLAN.md` (complete) ·
-`VERIFICATION_PLAN.md` (G1–G8 — gates that cannot fail; **draft, nothing implemented**) ·
+`VERIFICATION_PLAN.md` (G1–G8 — gates that cannot fail; own header says draft, but E0 below implements and generalises it) ·
 `CONTEXT_ARCHITECTURE.md` (C1–C4 — ICM evaluated against this repo; **research memo**) ·
-`ARCHITECTURE_SCORE_10_PLAN.md` (E0–E7 — EGFV v3.0 audit 5/10 → 10/10; **E0–E6 landed+tested (E4 verified against a real Docker stack: `platform/db/migrations/` + `migrate` service upgrades an existing deployment idempotently, `publisher_app`/`publisher_worker` are RLS-constrained non-owner roles with a full 9-stage build run end-to-end under them, `publisher_admin`/`publisher_worker_claim` scope BYPASSRLS to exactly the cross-tenant query each needs; E5 verified against the same stack: every route declares `config.auth`, an undeclared route fails app boot, a tenant token on the admin route gets a real 403 and no token gets 401, `PUBLISHER_API_TOKENS`/`PUBLISHER_ADMIN_TOKENS` are argon2id hashes end-to-end including through docker-compose's `$$`-escaping; E6 verified against the same stack: `InferenceGateway` takes a real `OpenRouterProvider` by constructor injection (fabricating one moved out of the shipped image entirely, `.dockerignore`-enforced), `structure-infer` is a guarded-reachable stage wired to it, egress goes through `infra/llm-egress`'s allowlist proxy on its own network (`dbnet` stays `internal: true`, unchanged) — a real 9-stage build still completes with `OPENROUTER_API_KEY` unset, and the worker's direct route to the internet is still refused, only the proxy's allowlisted host is reachable), E7 open**)
+`ARCHITECTURE_SCORE_10_PLAN.md` (E0–E7 — EGFV v3.0 audit 5/10 → 10/10; **E0–E7 landed+tested**. E4/E5/E6 verified against a real Docker stack (migrations upgrade idempotently, RLS-constrained non-owner roles, fail-closed route auth with argon2id-hashed tokens, `structure-infer` guarded-reachable behind `infra/llm-egress`'s allowlist proxy — see git history for the full per-workstream detail). **E7**: E7.1 split `ARCHITECTURE.md` into normative (as-built §2.3/§2.13/§2.14) + `ARCHITECTURE_ROADMAP.md` (dated, triggered deferrals — Temporal pools, a third emitter + cross-emitter agreement gate, S3/R2); E7.2 wired all three previously-dead packages (`epub`/`onix`/`manuscript-advisory` are real always-on-or-guarded stages, not just built-with-no-caller) — verified end-to-end against the real compose stack (upload → build → `epub`/`onix`/`manuscript-advisory`/`finish-gs`/`preflight`/`package` all complete, all three new artifact kinds downloadable via the existing generic artifact route); E7.3 added `tools/lint_docs_claims.py` (5 mechanical checks: folder-map paths, §2.14 tree, stage count, stage names, cross-reference identifiers), registered in E0.1's meta-gate with a mutation proving it can fail.
 
 Full index with per-document status: the **publisher-docs** skill.

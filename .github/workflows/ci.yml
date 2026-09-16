@@ -152,6 +152,8 @@ jobs:
         run: lint-imports --config .importlinter
       - name: Tenant scoping (E4.3)
         run: python tools/lint_tenant_scoping.py
+      - name: Docs claims (E7.3)
+        run: python tools/lint_docs_claims.py
 
   supply-chain:
     # E3.5 -- pip-audit and npm audit are gates (non-zero exit fails the job);

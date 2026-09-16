@@ -326,6 +326,9 @@ def _initial_inputs_for(conn, build: dict, registry) -> dict:
 
     initial_inputs = {
         "ingest": {"docx_path": str(cas_path)},
+        # E7.2: same bytes ingest consumes, off a separate root input under a
+        # separate stage name -- runs in parallel, never feeds ingest.
+        "manuscript-advisory": {"docx_path": str(cas_path)},
         # The same profile drives all three: design-compile grows the page box by
         # its bleed, finish insets the TrimBox by it, preflight measures it.
         design_stage: {"designspec_path": None, "profile_name": profile_name},

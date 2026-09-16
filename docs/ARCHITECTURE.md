@@ -2,6 +2,25 @@
 
 Companion to [RESEARCH.md](RESEARCH.md). This doc answers two questions: **what happens, in what order** (workflow), and **how the system is built** (architecture).
 
+**Status (E7.1, docs/ARCHITECTURE_SCORE_10_PLAN.md).** This document is normative: it
+states the rules the code must hold to, and Parts 1–2 describe the pipeline and topology
+as built, not as first envisioned. Three sections were rewritten because they described a
+system that was never built (§2.3's `S3 / R2` box, all of §2.13, and §2.14's repo tree) —
+those parts now moved to **[ARCHITECTURE_ROADMAP.md](ARCHITECTURE_ROADMAP.md)** with dates
+and trigger conditions, and stay out of this document until built. §2.4's Temporal
+discussion is the one place this doc deliberately keeps an aspirational design alongside
+the shipped substitute — it says so explicitly, in place, rather than moving the discussion
+out.
+
+For the current, mechanically-current list of stages, folders and files, use
+**`CLAUDE.md`'s folder map and the `.claude/skills/*`** — those are kept in sync with the
+registry directly (see §2.14 below and `tools/lint_docs_claims.py`, E7.3). Part 1's stage
+table below is the conceptual pipeline this system's design is built around; it does not
+enumerate the literal current `@stage(...)` names 1:1 (some rows are folded together, e.g.
+`structure-rules`/`structure-llm` are one `ast-assemble` gate today; some don't exist yet,
+e.g. `sanitize`, `media-normalize`, `typo-optimize`, `rasterize`) — that literal list is
+`stages/`, read via the **publisher-stages** skill.
+
 ---
 
 ## Part 0 — The one idea
@@ -159,6 +178,18 @@ Dependency direction: `delivery → prepress → composition → design → stru
 ```
 
 Separate queues per **capability**, not per stage. Autoscale each independently — Chrome pods are expensive and warm, Ghostscript pods are cheap and cold, Adobe calls are rate-limited and metered.
+
+**As built today**, this is the target topology this repo's shape is built toward, not the
+deployed one: one `worker.py` process (N horizontally-scaled copies, `docker-compose.yml`'s
+`worker` service) claims from Postgres with `FOR UPDATE SKIP LOCKED` — see §2.4's own
+documented Temporal substitute — and runs every stage in-process rather than dispatching to
+per-capability pods; there is no Chrome/Playwright renderer (weasyprint or Typst, selected by
+`PUBLISHER_RENDER_ENGINE`) and no `adobe-api` queue. Artifacts live in a local
+content-addressed store (`platform/cas/`, `PUBLISHER_CAS_ROOT`), not `S3 / R2` — see §2.13.
+The worker's egress is `internal: true` (no route to the internet) except for
+`infra/llm-egress/`'s allowlist proxy, added when `structure-infer` needed one real external
+call (OpenRouter); this diagram's per-capability multi-queue autoscaling and the S3/R2 tier
+are `ARCHITECTURE_ROADMAP.md`'s **R1** and **R3**.
 
 ### 2.4 Why Temporal (and not Celery/BullMQ/Step Functions)
 
@@ -407,51 +438,84 @@ API-first from day one. The web UI is the first API consumer, not a privileged o
 
 ### 2.13 Storage layout
 
-```
-s3://pub-artifacts/
-  cas/<sha256[0:2]>/<sha256[2:4]>/<sha256>        immutable, content-addressed, no ACL per-object
-  uploads/<tenant>/<manuscript-id>/source.bin     original, retained, encrypted (SSE-KMS per tenant)
-  exports/<tenant>/<build-id>/…                   presigned, TTL'd, also usable as Adobe API input
-  fixtures/<stage>/<version>/                     stage fixture sets (§2.8.1), content-addressed
-```
-Adobe InDesign APIs take **presigned URLs** and cap assets at 2 GB — the `exports/` prefix doubles as the Adobe hand-off surface. No separate integration storage.
+**As built:** one local content-addressed store per deployment, `platform/cas/`
+(`ContentAddressedStore`), rooted at `PUBLISHER_CAS_ROOT` (default `./.publisher/cas`,
+`/data/cas` in `docker-compose.yml`'s named volume):
 
-Fixtures live in the same store as everything else, on purpose: they are ordinary artifacts, hashed and pinned like ordinary artifacts, so "run this stage against fixture v3" and "run this stage against last Tuesday's real build" are the same code path.
+```
+<PUBLISHER_CAS_ROOT>/<sha256[0:2]>/<sha256[2:4]>/<sha256>   immutable, content-addressed
+```
+
+Every artifact kind — manuscript uploads, `raw-source/1`, `pdfx/1`, `epub/1`, fixtures,
+everything a stage produces — is one blob in this one store, sharded by hash. There is no
+tenant-prefixed path and no separate uploads/exports/fixtures namespace: a manuscript's
+bytes are found via `manuscripts.source_sha256` (Postgres), not a storage path, and
+`packages/api`'s artifact-download route resolves a build's deliverable the same way
+(`db.ts`'s `DELIVERABLE_SCHEMAS` → `artifacts.schema_id` → CAS hash). This already gives
+fixtures the property the original design wanted from S3: "run this stage against fixture
+v3" and "run this stage against last Tuesday's real build" are the same code path, because
+both are just a hash in the same store.
+
+An S3/R2-backed `CasBackend` (multi-host deployment, or the local volume becoming the
+bottleneck), per-tenant encrypted upload storage, and an Adobe InDesign API hand-off surface
+(presigned URLs, 2 GB cap) are `ARCHITECTURE_ROADMAP.md`'s **R3** — not built, and the CAS
+abstraction is already the right seam for it: swapping the backend is an adapter, not a
+rewrite.
 
 ### 2.14 Repo layout (polyglot monorepo)
+
+**As built** (`tools/lint_docs_claims.py` checks every path below still exists, E7.3 —
+this is generated-checked, not hand-maintained-and-trusted):
 
 ```
 publisher/
 ├─ schemas/                     # SOURCE OF TRUTH — JSON Schema
 │   ├─ ast/ overrides/ designspec/ profile/ preflight/ manifest/
-│   ├─ typescript/ pagemap/ classification/ agent-proposal/
-│   └─ codegen/                 → py (pydantic) + ts (zod), CI-verified in sync
-├─ stages/                      # STAGE REGISTRY (§2.8.1) — declarations, one per stage
-│   └─ *.stage.py|ts            → DAG, contract tests, cache keys, dev harness all derived
-├─ fixtures/                    # per-stage fixture sets, versioned, corpus-derived (LFS)
+│   ├─ pagemap/ classification/ agent-proposal/ cover/
+│   └─ codegen/                 → py (pydantic) + ts (zod); .gen.* is gitignored, regenerate
+├─ stages/                      # STAGE REGISTRY (§2.8.1) — 24 @stage(...) declarations
+│   ├─ *_stage.py | prepress_stages.py | cover_stages.py | secondary_output_stages.py | typst_stages.py
+│   │                           → DAG, contract tests, cache keys, dev harness all derived
+│   ├─ rendering.py, media.py   # shared, non-stage helpers stages import
+│   └─ tests/
+├─ fixtures/                    # per-stage fixture sets: ast/ cover/ cover-brief/
+│   │                             design-compile/ extract/ finish/ finish-gs/
+│   │                             manuscripts/ paginate/ preflight/ structure/
 │   └─ <stage>/<version>/{inputs,expected,manifest.json}
 ├─ packages/
-│   ├─ api/            (ts)     Fastify, auth, idempotency, SSE
-│   ├─ web/            (ts)     Next.js: structure review, design, proof, preflight
-│   ├─ orchestrator/   (ts)     Temporal workflows + activity stubs
-│   └─ worker-render/  (ts)     Playwright/CDP + Paged.js (+ Prince adapter)
+│   ├─ api/            (ts)     Fastify, auth (E5), tenancy (E4), idempotency, SSE
+│   └─ web/            (ts)     Next.js: structure review UI (type-checked only, E0.4)
 ├─ services/
-│   ├─ ingest/         (py)     LibreOffice, Saxon/XSweet, docx4j-bridge, media
-│   ├─ structure/      (py)     rules, LLM classifier, AST assembly, integrity hash
-│   ├─ design/         (py)     DesignSpec → css | idml | typst emitters
-│   ├─ prepress/       (py)     Ghostscript, ICC, geometry, preflight rule engine
-│   ├─ epub/           (py)     EPUB 3 + a11y + ACE/EPUBCheck
-│   └─ idml/           (py)     AST → IDML writer (SimpleIDML / custom)
+│   ├─ ingest/         (py)     DOCX → AST (`docx_to_ast`), legacy .doc via LibreOffice
+│   ├─ structure/      (py)     rules, InferenceGateway/OpenRouterProvider, overrides
+│   ├─ prepress/       (py)     geometry, fontvault, Ghostscript, preflight
+│   ├─ cover/          (py)     art brief, model policy, image-gen port, judge
+│   ├─ epub/ onix/ alttext/ (py) wired as `epub`/`onix`/`manuscript-advisory` stages (E7.2)
+│   ├─ idml/           (py)     IDML writer, opt-in `idml` stage
+│   └─ agents/         (py)     structure_wrangler, compositor, preflight_explainer
 ├─ platform/
-│   ├─ cas/  cache/  sandbox/  telemetry/  fontvault/
-├─ profiles/                    # vendor specs as versioned data, not code
-│   ├─ kdp/*.yaml  ingramspark/*.yaml  lulu/*.yaml
-├─ templates/                   # DesignSpec presets: literary, thriller, memoir, …
-├─ corpus/                      # golden manuscripts + expected outputs (LFS)
-└─ infra/                       # per-engine images pinned by digest, k8s, terraform
+│   ├─ cas/  cache/  stages/  exec/  sandbox/     (py + ts/rs where noted)
+│   ├─ db/             SQL migrations (E4.1) + schema.sql
+│   ├─ routing/        policy.yaml — LLM route table
+│   ├─ pagescan/       (rs)     typographic defect scanner
+│   ├─ reproducibility/  supply-chain/
+├─ profiles/                    # vendor specs as versioned YAML: kdp/ ingramspark/ lulu/ generic/ greek/
+├─ templates/                   # DesignSpec presets (one module, not per-template files)
+├─ corpus/                      # generator/ manuscripts/ raster-diff/
+├─ tests/                       # contracts/ integration/ meta/ + collection-floor guard
+├─ tools/                       # CI-blocking lints (schema, stage-version, service-deps,
+│                                 tenant-scoping, docs-claims)
+├─ scripts/                     # test.ps1 / test.sh — required test runners
+├─ infra/
+│   └─ llm-egress/     tinyproxy allowlist proxy (E3.1/E6.2) — the ONE thing under infra/
+│                       actually built; k8s/terraform per-engine images are not (§0.1, roadmap)
+└─ docs/                        # this file + BUILD_PLAN, the *_PLAN remediation docs, ROADMAP
 ```
 
-Language split rationale: TS where the ecosystem is Node-shaped (Playwright, Paged.js, Temporal SDK, web); Python where the document libraries live (lxml, python-docx, PyMuPDF, pyvips, fonttools). The JSON Schema codegen is what stops the two halves from drifting.
+`packages/orchestrator`, `packages/worker-render`, and `services/design` do not exist —
+see `ARCHITECTURE_ROADMAP.md`.
+
+Language split rationale: TS where the ecosystem is Node-shaped (the API, the review UI); Python where the document libraries live (lxml, python-docx, weasyprint, fonttools) and where the pipeline itself runs; Rust for two small hot/pure cores (`platform/cas`'s hashing, `platform/pagescan`'s defect scanner). The JSON Schema codegen is what stops the Python/TS halves from drifting.
 
 ### 2.15 Testing
 

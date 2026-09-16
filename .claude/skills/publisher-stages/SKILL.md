@@ -1,6 +1,6 @@
 ---
 name: publisher-stages
-description: Map of the `stages/` folder — the build-graph stage definitions (acquire, ingest, extract, ast-assemble, resolve, design-compile, paginate, finish, finish-gs, preflight, package, cover, cover-brief/art/judge/compose, cover-preflight). Use this whenever a task touches the pipeline DAG, adds or edits a stage, changes what a stage consumes or produces, bumps a @stage version, or asks "which stage does X" / "why is this stage unreachable". Read before editing any file under stages/.
+description: Map of the `stages/` folder — the build-graph stage definitions (acquire, ingest, extract, ast-assemble, resolve, design-compile, paginate, finish, finish-gs, preflight, package, cover, cover-brief/art/judge/compose, cover-preflight, idml, epub, onix, structure-infer, manuscript-advisory). Use this whenever a task touches the pipeline DAG, adds or edits a stage, changes what a stage consumes or produces, bumps a @stage version, or asks "which stage does X" / "why is this stage unreachable". Read before editing any file under stages/.
 ---
 
 # `stages/` — the build-graph stage definitions
@@ -37,9 +37,14 @@ promoting `doc_path` to root would let a build reach a PDF without the text-inte
 | `prepress_stages.py` | **Four stages in one module** — grep for the name, not a filename: `preflight` (`pdfx/1 + profile/1 → preflight/1`, the delivery gate), `cover` (`page-count/1 + profile/1 → cover-geometry/1`), `cover-preflight` (`cover-raw-pdf/1 + profile/1 → cover-preflight/1`), and `finish-gs` (`implements="finish"`, same I/O as `finish`). |
 | `package_stage.py` | `package` · `preflight/1 → build-report/1`. Terminal. Declaring `preflight_report` as a **required non-root** input is what makes packaging without a preflight verdict structurally impossible. |
 | `cover_stages.py` | The cover art pipeline: `cover-brief` (`title-meta/1 + designspec/1 → art-brief/1`), `cover-art` (`art-brief/1 → cover-art/1 + art-provenance/1`), `cover-judge` (`cover-art/1 → art-ranking/1`), `cover-compose` (`cover-art/1 + cover-geometry/1 + designspec/1 + title-meta/1 → cover-raw-pdf/1`). |
+| `idml_stage.py` | `idml` · `doc-effective/1 (+pagemap/1, designspec/1, profile/1) → idml/1` (terminal). InDesign-openable deliverable via `publisher_idml`/pandoc html→icml. **Opt-in only**: registered via `import_idml_if_requested(emit_idml)`, called from each entry point when `PUBLISHER_EMIT_IDML` is set — needs pandoc, and both its root inputs are optional, so once registered it is unconditionally reachable on every build. Import is the only gate. |
+| `secondary_output_stages.py` | (E7.2) **Two stages**: `epub` (`doc-effective/1 → epub/1`) and `onix` (`doc-effective/1 → onix/1`), both terminal. Thin wrappers over `publisher_epub.EPUB3Writer`/`publisher_onix.ONIXWriter`. Neither needs an external toolchain, so — unlike `idml` — both register **unconditionally**: every ordinary build now produces an EPUB and ONIX metadata file alongside the interior PDF, which is what makes ARCHITECTURE.md's documented delivery step (§1.1 step 9) true. |
+| `advisory_stage.py` | (E7.2) `manuscript-advisory` · `raw-docx/1 (root) → advisory-report/1` (terminal). Wraps `publisher_alttext.doctor.ManuscriptDoctor` — format/size/structural warnings on the uploaded bytes, pre-ingest. Runs in **parallel** with `ingest` off the same uploaded bytes under its own root input (`worker.py`'s `_initial_inputs_for` supplies it unconditionally); never feeds `ingest` or anything downstream — advisory output cannot change what a build produces. Sniffs the CAS blob's real format by magic bytes (reuses `ingest_stage._is_legacy_doc`) since a content-addressed path has no file extension for `ManuscriptDoctor` to read. |
 | `tests/test_ast_assemble.py` | Mutation test for the integrity gate: delete a paragraph, the build must fail. |
 | `tests/test_bleed_geometry.py` | Asserts on `design_compile_stage._emit_css()` output only — it imports no other stage. The chain it reasons about is `design-compile` (grows the page box) → `finish` (insets TrimBox) → `preflight` (measures); only the first is executed here. |
 | `tests/test_ingest_security.py` | U5/S9 DOCX ingest hardening — zip bombs, entry caps, traversal. |
+| `tests/test_secondary_outputs.py` | (E7.2) `epub`/`onix` stage behaviour + a `plan()` reachability test proving both are in an ordinary build's reachable set (always-on, not gated like `idml`). |
+| `tests/test_advisory.py` | (E7.2) `manuscript-advisory` stage behaviour, the magic-byte format sniff, and `plan()` reachability tests proving it is gated on its OWN root input, separate from `ingest`'s. |
 
 > **Versions are deliberately not listed here.** `tools/lint_stage_versions.py` forces
 > `@stage(version=N)` to change on every touched stage module, so any copy in prose rots on
@@ -55,12 +60,17 @@ raw-source/1 → extract → typescript-html/1 ┐
 raw-source/1 ──────────────────────────────┴→ ast-assemble → ast/1  [+integrity-report]
 typescript-html/1 (+api_key root) → structure-infer → classification/1  (terminal, parallel,
                                                         reachable only with OPENROUTER_API_KEY)
+raw-docx/1 (root) → manuscript-advisory → advisory-report/1     (terminal, parallel, never feeds ingest)
 ast/1 (+overrides/1) → resolve → doc-effective/1 ┐
 designspec/1 + profile/1 → design-compile → text/css ┘
                                         → paginate → raw-pdf/1  [+pagemap]
 raw-pdf/1 + profile/1 → finish | finish-gs → pdfx/1  [+proof-pdf, finish-report]
 pdfx/1 + profile/1 → preflight → preflight/1
 preflight/1 → package → build-report/1                          (terminal)
+
+doc-effective/1 → epub → epub/1                                 (terminal, always-on)
+doc-effective/1 → onix → onix/1                                 (terminal, always-on)
+doc-effective/1 (+pagemap/1, designspec/1, profile/1) → idml → idml/1   (terminal, opt-in: PUBLISHER_EMIT_IDML)
 
 cover (parallel, page-count-free until compose):
 title-meta/1 + designspec/1 → cover-brief → art-brief/1 → cover-art → cover-art/1

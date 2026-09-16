@@ -203,6 +203,22 @@ def _pip_audit_unusable_reason() -> str | None:
     return None
 
 
+def add_nonexistent_path_to_architecture_md(root: Path) -> None:
+    """E7.3's own shape: cite a path in ARCHITECTURE.md's §2.14 repo tree that
+    does not exist -- exactly the class `L18`/`L20` were (a hand-written
+    claim nothing regenerates or checks)."""
+    path = root / "docs" / "ARCHITECTURE.md"
+    text = path.read_text(encoding="utf-8")
+    needle = "### 2.14 Repo layout"
+    assert needle in text, "ARCHITECTURE.md's §2.14 heading changed; update this mutation"
+    text = text.replace(
+        "publisher/\n",
+        "publisher/\n├─ meta-gate-probe/           # does not exist -- meta-gate probe\n",
+        1,
+    )
+    path.write_text(text, encoding="utf-8")
+
+
 def add_known_vulnerable_npm_dependency(root: Path) -> None:
     """minimatch 3.0.4 carries a published ReDoS advisory (GHSA-f8q6-p94x-37v3,
     severity high). Resolved with a real `npm install`, not a hand-edited
@@ -276,6 +292,12 @@ GATES: list[Gate] = [
         cwd=".",
         mutate=add_tenant_id_set_outside_with_tenant,
     ),
+    Gate(
+        id="docs-claims",
+        cmd=[sys.executable, "tools/lint_docs_claims.py"],
+        cwd=".",
+        mutate=add_nonexistent_path_to_architecture_md,
+    ),
 ]
 
 # Maps each CI `run:` step (by its `name:`, or by the run command itself for
@@ -306,6 +328,7 @@ STEP_CLASSIFICATION: dict[str, str | None] = {
     "npm ci (web)": None,  # dependency install, not a gate
     "npm audit --audit-level=high (web)": "npm-audit",  # same mechanism as (api), one Gate covers both
     "Tenant scoping (E4.3)": "tenant-scoping",
+    "Docs claims (E7.3)": "docs-claims",
 }
 
 

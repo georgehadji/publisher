@@ -26,9 +26,12 @@ from a manifest months later when a vendor rejects a file and someone has to fin
 
 ## What it doesn't (yet)
 
-EPUB, IDML export, and ONIX metadata generation exist as working emitters but are earlier
-and less battle-tested than the core PDF path — treat them as beta. Non-Latin scripts,
-InDesign parity, and real-time collaborative editing are explicitly out of scope; see
+EPUB and ONIX metadata are wired as always-on secondary deliverables (E7.2) — every build
+that reaches `resolve` produces both alongside the interior PDF — but ONIX coverage is
+minimal (title, ISBN, contributors, language; page count is a rough estimate, not a real
+extent). IDML export is opt-in (`PUBLISHER_EMIT_IDML`) and earlier/less battle-tested than
+the core PDF path — treat it as beta. Non-Latin scripts, InDesign parity, and real-time
+collaborative editing are explicitly out of scope; see
 [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) §10 for the full, deliberate
 non-goals list.
 

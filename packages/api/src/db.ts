@@ -190,6 +190,11 @@ export const DELIVERABLE_SCHEMAS: Readonly<Record<string, string>> = Object.free
   css: 'text/css',
   'build-report': 'build-report/1',
   'integrity-report': 'integrity-report/1',
+  // E7.2: epub/onix are always-on secondary deliverables; advisory-report is
+  // read-only manuscript advisory output (never gates or shapes a build).
+  epub: 'epub/1',
+  onix: 'onix/1',
+  'advisory-report': 'advisory-report/1',
 });
 
 const OWNED_TABLES = ['titles', 'manuscripts', 'builds', 'webhooks'] as const;

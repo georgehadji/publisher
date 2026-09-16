@@ -34,6 +34,8 @@ from . import prepress_stages  # noqa: F401
 from . import cover_stages  # noqa: F401
 from . import typst_stages  # noqa: F401 -- registers the pandoc+Typst render path
 from . import structure_infer_stage  # noqa: F401 -- registers "structure-infer" (E6.2)
+from . import secondary_output_stages  # noqa: F401 -- registers "epub", "onix" (E7.2)
+from . import advisory_stage  # noqa: F401 -- registers "manuscript-advisory" (E7.2)
 
 __all__ = [
     "acquire_stage",
@@ -49,6 +51,8 @@ __all__ = [
     "cover_stages",
     "typst_stages",
     "structure_infer_stage",
+    "secondary_output_stages",
+    "advisory_stage",
 ]
 
 # ── IDML deliverable (opt-in) ────────────────────────────────────────────────
