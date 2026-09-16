@@ -126,7 +126,11 @@ def test_build_request_produces_a_real_artifact(api_server, make_docx, worker_pr
     document_id = _make_document(api_server, make_docx)
     build = requests.post(
         f"{api_server}/v1/builds",
-        json={"documentId": document_id, "designId": "d1", "profileIds": ["p1"]},
+        # A real registered profile (see profiles/__init__.py's load_profile) --
+        # "p1" resolves to nothing, so worker.py's _resolve_profile_name raised
+        # BAD_INPUT before the build ever reached the paginate/finish engines,
+        # which looked identical to "no renderer installed" from here.
+        json={"documentId": document_id, "designId": "d1", "profileIds": ["Generic 6x9"]},
         headers=_headers("b1"),
     ).json()
     build_id = build["buildId"]
@@ -147,9 +151,11 @@ def test_build_request_produces_a_real_artifact(api_server, make_docx, worker_pr
     )
     assert status.get("status") == "completed", (
         f"build did not complete: {status}. "
-        "(On a host without weasyprint/Ghostscript, an otherwise-correct build "
-        "stops at the paginate engine gate with status='failed' -- that engine "
-        "absence is not the defect this detector targets.)"
+        "(worker_process yields None on a host without Ghostscript, expecting "
+        "the compose worker to service the queue instead -- if that worker is "
+        "also missing the real engines, an otherwise-correct build stops at the "
+        "paginate/finish engine gate with status='failed'; that engine absence "
+        "is not the defect this detector targets.)"
     )
 
     artifact = requests.get(
