@@ -33,6 +33,7 @@ from . import package_stage  # noqa: F401
 from . import prepress_stages  # noqa: F401
 from . import cover_stages  # noqa: F401
 from . import typst_stages  # noqa: F401 -- registers the pandoc+Typst render path
+from . import structure_infer_stage  # noqa: F401 -- registers "structure-infer" (E6.2)
 
 __all__ = [
     "acquire_stage",
@@ -47,6 +48,7 @@ __all__ = [
     "prepress_stages",
     "cover_stages",
     "typst_stages",
+    "structure_infer_stage",
 ]
 
 # ── IDML deliverable (opt-in) ────────────────────────────────────────────────

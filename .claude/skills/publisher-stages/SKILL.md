@@ -33,6 +33,7 @@ promoting `doc_path` to root would let a build reach a PDF without the text-inte
 | `design_compile_stage.py` | `design-compile` · `designspec/1 + profile/1 → text/css`. Emits CSS `@page` rules. Emits `bleed` as a CSS property so the renderer owns the box arithmetic; also enforces font licensing via `publisher_prepress.fontvault`. |
 | `paginate_stage.py` | `paginate` · `doc-effective/1 + text/css → raw-pdf/1` (+ terminal `pagemap/1`). Neither input is root — that is the DAG bypass fix. |
 | `finish_stage.py` | `finish` · `raw-pdf/1 + profile/1 → pdfx/1` (+ terminal `proof-pdf/1`, `finish-report/1`). Real Ghostscript CMYK/PDF-X-1a conversion via `publisher_prepress.ghostscript`. Stub path reports `"status": "stub"`, never `"passed"`. |
+| `structure_infer_stage.py` | `structure-infer` (E6.2) · `typescript-html/1 (+api_key root) → classification/1` (terminal). Real `InferenceGateway`/`OpenRouterProvider` call, guarded-reachable: `api_key` is a required root input with no producer, supplied by `worker.py` only when `OPENROUTER_API_KEY` is configured — the same reachability mechanism that keeps the cover pipeline absent from a plain interior build, not an env-var check inside the stage. Runs in parallel with `ast-assemble` (both consume `extract`'s output); never feeds `resolve`/`paginate` (D9: no LLM output enters a deterministic stage). Needs `infra/llm-egress/` (E3.1's egress allowlist proxy) for the worker to reach OpenRouter at all in production. |
 | `prepress_stages.py` | **Four stages in one module** — grep for the name, not a filename: `preflight` (`pdfx/1 + profile/1 → preflight/1`, the delivery gate), `cover` (`page-count/1 + profile/1 → cover-geometry/1`), `cover-preflight` (`cover-raw-pdf/1 + profile/1 → cover-preflight/1`), and `finish-gs` (`implements="finish"`, same I/O as `finish`). |
 | `package_stage.py` | `package` · `preflight/1 → build-report/1`. Terminal. Declaring `preflight_report` as a **required non-root** input is what makes packaging without a preflight verdict structurally impossible. |
 | `cover_stages.py` | The cover art pipeline: `cover-brief` (`title-meta/1 + designspec/1 → art-brief/1`), `cover-art` (`art-brief/1 → cover-art/1 + art-provenance/1`), `cover-judge` (`cover-art/1 → art-ranking/1`), `cover-compose` (`cover-art/1 + cover-geometry/1 + designspec/1 + title-meta/1 → cover-raw-pdf/1`). |
@@ -52,6 +53,8 @@ promoting `doc_path` to root would let a build reach a PDF without the text-inte
                     └ ingest  (real)    ┘ → raw-source/1
 raw-source/1 → extract → typescript-html/1 ┐
 raw-source/1 ──────────────────────────────┴→ ast-assemble → ast/1  [+integrity-report]
+typescript-html/1 (+api_key root) → structure-infer → classification/1  (terminal, parallel,
+                                                        reachable only with OPENROUTER_API_KEY)
 ast/1 (+overrides/1) → resolve → doc-effective/1 ┐
 designspec/1 + profile/1 → design-compile → text/css ┘
                                         → paginate → raw-pdf/1  [+pagemap]
@@ -99,4 +102,8 @@ off the critical path.
 
 `platform/stages/` (registry + integrity checker) · `services/` (the real work each stage
 calls into) · `tests/contracts/` (generated per-stage contract tests) ·
-`docs/ARCHITECTURE.md` §1.2 (canonical stage list) · `docs/BUILD_PLAN.md` §3.
+`docs/ARCHITECTURE.md` §1.2 (canonical stage list) · `docs/BUILD_PLAN.md` §3 ·
+`infra/llm-egress/` + `docker-compose.yml`'s `llm-egress`/`llm-egress-uplink` networks
+(E3.1/E6.2 -- the allowlist proxy `structure-infer` needs; the worker has no other
+route to the internet) · `services/structure/publisher_structure/inference.py`
+(`InferenceGateway`, `OpenRouterProvider`) · `docs/ARCHITECTURE_SCORE_10_PLAN.md` E6.

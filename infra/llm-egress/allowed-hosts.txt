@@ -1,0 +1,5 @@
+# Publisher LLM egress allowlist (E6.2) -- one regex per line, matched
+# against the CONNECT target hostname. Add a provider here only when a real
+# route in platform/routing/policy.yaml actually calls it -- this file is
+# the enforcement half of "routing is data", not a wishlist.
+^openrouter\.ai$

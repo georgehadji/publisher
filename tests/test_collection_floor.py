@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 
 # Known-good collected count. Bump when adding tests; never lower without justification.
-FLOOR = 290
+# 483 collected as of E6 (structure-infer + inference-provider-injection tests) --
+# left comfortable headroom below that, not pinned to the exact number (E0.5's
+# own lesson: a hardcoded exact count goes stale the moment more tests land).
+FLOOR = 460
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

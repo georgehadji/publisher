@@ -55,6 +55,33 @@ services:
     # successful completion as a crash loop.
     restart: "no"
 
+  # E3.1/E6.2 -- the ONLY route out of dbnet's `internal: true` isolation.
+  # See infra/llm-egress/tinyproxy.conf for what it allows and why.
+  #
+  # Two networks, not one -- `llm-egress` alone is ALSO `internal: true`
+  # (below), so simply joining it grants no route to the internet at all.
+  # Real connectivity comes ONLY from `llm-egress-uplink`, which ONLY this
+  # service is on. A worker container joining `llm-egress` therefore reaches
+  # this proxy and NOTHING past it; the proxy is the one thing standing with
+  # a foot in both networks. (Caught empirically: an earlier version of this
+  # file put the worker on a single non-internal `llm-egress` network, which
+  # gave the WORKER a direct internet route via that network's own gateway
+  # regardless of HTTPS_PROXY -- an application-level convention, not a
+  # network-level control -- completely defeating the point.)
+  llm-egress-proxy:
+    build:
+      context: infra/llm-egress
+    networks:
+      - llm-egress
+      - llm-egress-uplink
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    cpus: 0.25
+
   worker:
     build:
       context: .
@@ -73,6 +100,18 @@ services:
       # already in the image). Off by default: a build must not fail for want of
       # a file nobody ordered.
       PUBLISHER_EMIT_IDML: ${PUBLISHER_EMIT_IDML:-}
+      # E6.2 -- unset by default, which is what keeps structure-infer
+      # unreachable (worker.py only supplies its root input when this is
+      # set): "cleanly absent when credentials are not supplied" is a
+      # property of THIS variable being empty, not of any code path.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # `urllib.request`'s default opener honors these automatically
+      # (OpenRouterProvider, services/structure/publisher_structure/
+      # inference.py, sets no proxy of its own) -- routing through
+      # llm-egress-proxy instead of a direct connection is what makes the
+      # allowlist actually apply, not just exist.
+      HTTPS_PROXY: http://llm-egress-proxy:8888
+      HTTP_PROXY: http://llm-egress-proxy:8888
       # Without this, Python buffers stdout when it is a pipe, so `docker compose
       # logs worker` stayed empty for the whole of a build -- the per-stage prints
       # only appeared if the process exited.
@@ -108,12 +147,14 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-    # No egress: the cover-art/LLM path that would need it is unreachable in
-    # production today (L8). `postgres` joins both this network and the
-    # default one, so `api` (unchanged, still on default) keeps reaching it;
-    # `worker` reaches ONLY postgres, nothing else, in or out.
+    # `postgres` joins both this network and the default one, so `api`
+    # (unchanged, still on default) keeps reaching it. `worker` reaches
+    # postgres via dbnet and NOTHING ELSE there -- dbnet is still
+    # `internal: true` (E3.1). `llm-egress` is the one narrow exception
+    # (E6.2): it reaches the allowlist proxy, never the internet directly.
     networks:
       - dbnet
+      - llm-egress
     # Postgres restarting used to leave the queue permanently undrained: the
     # worker exited and nothing brought it back.
     restart: unless-stopped
@@ -122,6 +163,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      llm-egress-proxy:
+        condition: service_started
     # U8 bulkhead: the worker is the memory risk in this stack -- Weasyprint on
     # a 900-page manuscript is effectively unbounded RAM (ARCHITECTURE_UPLIFT_PLAN.md
     # U8), and one such build must not be able to OOM the host and take the API
@@ -188,6 +231,17 @@ networks:
   # route out.
   dbnet:
     internal: true
+  # E6.2: internal, same as dbnet -- this is the worker-facing side of the
+  # proxy. It grants no internet route on its own; see llm-egress-uplink,
+  # which only llm-egress-proxy joins, for where the proxy's OWN real
+  # connectivity comes from. `worker` is the only other member of this one.
+  llm-egress:
+    internal: true
+  # E6.2: NOT internal -- the proxy's actual route to the internet.
+  # llm-egress-proxy is the ONLY service that ever joins this network; if a
+  # future edit adds anything else to it, that thing gets an unfiltered
+  # route out, which is exactly the mistake this topology exists to prevent.
+  llm-egress-uplink:
 
 volumes:
   pgdata:

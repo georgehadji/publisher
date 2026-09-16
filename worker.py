@@ -324,7 +324,7 @@ def _initial_inputs_for(conn, build: dict, registry) -> dict:
     # selected by PUBLISHER_RENDER_ENGINE) -- same resolution, same reason.
     design_stage = registry.selected_implementation("design-compile")
 
-    return {
+    initial_inputs = {
         "ingest": {"docx_path": str(cas_path)},
         # The same profile drives all three: design-compile grows the page box by
         # its bleed, finish insets the TrimBox by it, preflight measures it.
@@ -332,6 +332,18 @@ def _initial_inputs_for(conn, build: dict, registry) -> dict:
         finish_stage: {"profile_name": profile_name},
         "preflight": {"profile_name": profile_name},
     }
+    # E6.2: `structure-infer`'s `api_key` is a required root input with no
+    # producer -- supplying it only when a real key is configured is what
+    # keeps the stage out of `_reachable_stages`'s fixpoint (publisher_exec)
+    # on every deployment that hasn't configured one, the same mechanism
+    # that keeps the whole cover pipeline absent from a build that supplies
+    # no cover root inputs. Never set this to an empty string "to be safe" --
+    # an empty non-None value IS supplied and reaches the stage as BAD_INPUT
+    # instead of leaving it unreachable.
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if openrouter_key:
+        initial_inputs["structure-infer"] = {"api_key": openrouter_key}
+    return initial_inputs
 
 
 def _record_stage(conn, build_id: str, tenant_id: str, stage_name: str, decl_version: int,
