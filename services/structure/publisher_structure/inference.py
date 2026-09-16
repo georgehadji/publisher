@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional, Protocol
 
 
 # ── Routing types ───────────────────────────────────────────────
@@ -228,6 +230,120 @@ def load_routes_from_policy(
     return routes
 
 
+# ── Provider seam (E6.1) ─────────────────────────────────────────
+#
+# `InferenceGateway` used to take a `simulate: bool` flag and decide "real vs
+# fabricated" internally -- but `classify()` called the fabricating path
+# UNCONDITIONALLY regardless of the flag's value, so the flag never actually
+# selected anything; it only gated whether the fabricating gateway could be
+# CONSTRUCTED at all. A boolean that names two implementations sharing one
+# object is the defect: a missing branch silently keeps the fabricated path
+# active. Constructor injection makes "which implementation" a decision made
+# once, by the caller, with no branch inside the gateway to get wrong.
+
+
+class InferenceProvider(Protocol):
+    """What `InferenceGateway` needs from whatever actually produces a
+    classification. `OpenRouterProvider` (below) is the real, shipped
+    implementation. The fabricating one lives in
+    services/structure/tests/fabricating_provider.py -- not part of the
+    `publisher-structure` distribution (see its own pyproject.toml) and
+    excluded from the worker image by .dockerignore, so a production
+    process cannot construct it, let alone import it by accident."""
+
+    def complete(self, request: InferenceRequest, route: RouteConfig, tier: ModelTier) -> InferenceResult: ...
+
+
+class OpenRouterProvider:
+    """Real inference provider: POST /api/v1/chat/completions on OpenRouter.
+
+    This is the production shape -- no stage constructs an InferenceGateway
+    yet (E6.2 decides whether/when one does), so this has not carried live
+    traffic. It is a genuine network client, not a stand-in: real auth, a
+    real request, real response parsing, retry on 429/5xx following the same
+    shape as services/cover/publisher_cover/image_gen_port.py's
+    OpenRouterImageGenAdapter for consistency between the two OpenRouter
+    call sites in this repo.
+
+    Deliberately NOT yet doing: `response_format` structured-output
+    enforcement, reasoning-effort/provider-pinning per platform/routing/
+    policy.yaml's fuller schema, or prompt-template loading (PromptCacheManager
+    still returns a placeholder prefix). Those are what E6.2's "wire it as a
+    stage" work puts on an executing, testable path -- inventing that contract
+    here, before anything calls this provider for real, would be guessing at
+    a schema nothing has validated yet.
+    """
+
+    _ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+    _RETRIES = 3
+
+    def __init__(self, api_key: str, *, base_url: Optional[str] = None, timeout_s: int = 30):
+        self._api_key = api_key
+        self._base_url = base_url or self._ENDPOINT
+        self._timeout_s = timeout_s
+
+    def complete(self, request: InferenceRequest, route: RouteConfig, tier: ModelTier) -> InferenceResult:
+        start = time.monotonic()
+        body = {
+            "model": route.model_id,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": f"Route: {route.route} v{route.prompt_version}\nSchema: {route.schema_version}",
+                },
+                {"role": "user", "content": json.dumps(request.inputs)},
+            ],
+        }
+        payload = self._call(body)
+        latency_ms = int((time.monotonic() - start) * 1000)
+
+        content = payload["choices"][0]["message"]["content"]
+        output = json.loads(content) if isinstance(content, str) else content
+        usage = payload.get("usage") or {}
+
+        return InferenceResult(
+            request_id=request.request_id,
+            route=request.route,
+            tier_used=tier,
+            output=output,
+            confidence=float(output.get("confidence", 1.0)) if isinstance(output, dict) else 1.0,
+            model_id=route.model_id,
+            prompt_version=route.prompt_version,
+            cache_hit=False,
+            cost_usd=float(usage.get("cost", route.cost_per_call)),
+            latency_ms=latency_ms,
+        )
+
+    def _call(self, body: dict[str, Any]) -> dict[str, Any]:
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            self._base_url,
+            data=data,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        last: Optional[Exception] = None
+        for attempt in range(self._RETRIES):
+            try:
+                with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                if exc.code == 429:
+                    last = exc
+                    time.sleep(2**attempt)
+                    continue
+                if exc.code < 500:
+                    raise
+                last = exc
+            except (urllib.error.URLError, TimeoutError) as exc:
+                last = exc
+            time.sleep(2**attempt)
+        raise RuntimeError(f"POST {self._base_url} failed after {self._RETRIES} attempts: {last}")
+
+
 # ── Inference gateway ───────────────────────────────────────────
 
 class InferenceGateway:
@@ -247,32 +363,23 @@ class InferenceGateway:
     
     def __init__(self, config: Optional[InferenceGatewayConfig] = None,
                  policy_path: Optional[str] = None, *,
-                 simulate: bool):
+                 provider: InferenceProvider):
         """
-        `simulate` is REQUIRED and has no default (U4 -- ARCHITECTURE_UPLIFT_PLAN.md).
+        `provider` is REQUIRED and has no default (E6.1 --
+        ARCHITECTURE_SCORE_10_PLAN.md, closing L7).
 
-        The only model implementation that exists today FABRICATES its
-        classifications (`_simulate_model_call` returns paragraph/0.85 for
-        everything). A fake shaped exactly like the real thing means nothing in
-        the type system stops a future change from shipping fabricated
-        classifications as real ones -- so constructing a simulated gateway is
-        an explicit, gated act:
-
-        * `simulate=False` constructs the real gateway (the production shape;
-          no live provider is wired yet, so real calls will fail loudly).
-        * `simulate=True` is refused unless PUBLISHER_ALLOW_SIMULATED_INFERENCE
-          is set -- the same dev-only escape hatch as `allow_stub_engines`
-          (tracer_bullet.py, worker.py). The worker never sets it, so
-          production can never fabricate.
+        Pre-E6.1 this took a `simulate: bool` instead: the only model
+        implementation that existed FABRICATED its classifications (called
+        unconditionally regardless of the flag's value), and a
+        `PUBLISHER_ALLOW_SIMULATED_INFERENCE` env var was the only thing
+        standing between that and production. Neither the flag nor the env
+        var exist anymore -- the caller now injects whichever
+        `InferenceProvider` it wants. Production code constructs
+        `OpenRouterProvider`; only services/structure/tests/
+        fabricating_provider.py (not shipped, not on the worker image's
+        PYTHONPATH) can construct the fabricating one.
         """
-        if simulate and os.environ.get("PUBLISHER_ALLOW_SIMULATED_INFERENCE", "") not in ("1", "true", "TRUE"):
-            raise RuntimeError(
-                "InferenceGateway(simulate=True) refused: PUBLISHER_ALLOW_"
-                "SIMULATED_INFERENCE is not set. A simulated gateway fabricates "
-                "classifications and must be explicitly enabled for dev/test "
-                "only -- the worker never sets it."
-            )
-        self._simulate = simulate
+        self._provider = provider
         self._config = config or InferenceGatewayConfig()
         self._prompt_cache = PromptCacheManager()
         self._cost_trackers: dict[str, CostTracker] = {}
@@ -338,10 +445,11 @@ class InferenceGateway:
                 cost_usd=0.0,
             )
         
-        # Run the model call. Today the only implementation is the SIMULATED
-        # one -- any result it produces is fabricated and marked `simulated`
-        # (U4). A real provider plugs in behind this call in Phase B.
-        result = self._simulate_model_call(request, route_config, start_tier)
+        # Run the model call through whichever provider was injected at
+        # construction (E6.1). Production code injects OpenRouterProvider;
+        # a fabricated result can only occur if a test injected
+        # FabricatingProvider, and it is marked `simulated: true` when it does.
+        result = self._provider.complete(request, route_config, start_tier)
         
         # Record cost
         tracker.record_call(request.route, result.cost_usd)
@@ -413,62 +521,6 @@ class InferenceGateway:
             refusal=refusal,
         )
     
-    def _simulate_model_call(self, request: InferenceRequest, config: RouteConfig,
-                             tier: ModelTier) -> InferenceResult:
-        """
-        FABRICATE a model result -- the quarantined simulation (U4).
-
-        This returns the same paragraph/0.85 classification for every input. It
-        is NOT a stand-in for a real model call: every artifact derived from it
-        carries `simulated: true` so a fabricated confidence is visible in the
-        build record rather than inferred from source reading. Production code
-        may only reach here with the explicit PUBLISHER_ALLOW_SIMULATED_
-        INFERENCE gate open (enforced in __init__).
-        """
-        # Simulate model call
-        import time
-        start = time.monotonic()
-        
-        # Build classifications for low-confidence nodes
-        nodes = request.inputs.get("nodes", [])
-        classifications = [
-            {
-                "sourceRef": n.get("sourceRef", f"node-{i}"),
-                "classification": "paragraph",  # Default classification
-                "confidence": 0.85,
-            }
-            for i, n in enumerate(nodes)
-        ]
-        
-        latency_ms = int((time.monotonic() - start) * 1000)
-        
-        return InferenceResult(
-            request_id=request.request_id,
-            route=request.route,
-            tier_used=tier,
-            output={
-                "schema": "classification/1",
-                "nodes": classifications,
-                "modelInfo": {
-                    "modelId": config.model_id,
-                    "promptVersion": config.prompt_version,
-                    "schemaVersion": config.schema_version,
-                    "cacheHit": False,
-                    "costUsd": config.cost_per_call,
-                    # U4: this classification was FABRICATED, not inferred. The
-                    # flag travels with the artifact so a simulated confidence
-                    # is visible in the build record.
-                    "simulated": True,
-                },
-            },
-            confidence=0.85,
-            model_id=config.model_id,
-            prompt_version=config.prompt_version,
-            cache_hit=False,
-            cost_usd=config.cost_per_call,
-            latency_ms=latency_ms,
-        )
-    
     def _cache_key(self, request: InferenceRequest, config: RouteConfig) -> str:
         """Compute cache key for an inference call."""
         payload = {
@@ -528,13 +580,12 @@ class InferenceGateway:
 
 # ── Convenience factory ─────────────────────────────────────────
 
-def create_gateway(config: Optional[InferenceGatewayConfig] = None, *,
-                   simulate: bool) -> InferenceGateway:
+def create_gateway(provider: InferenceProvider, config: Optional[InferenceGatewayConfig] = None) -> InferenceGateway:
     """Create a configured inference gateway.
 
-    `simulate` is required and has no default -- see InferenceGateway.__init__.
+    `provider` is required and has no default -- see InferenceGateway.__init__.
     """
     return InferenceGateway(config=config or InferenceGatewayConfig(
         routes={},
         cost_ceiling_usd=0.50,
-    ), simulate=simulate)
+    ), provider=provider)

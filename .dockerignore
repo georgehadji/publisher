@@ -1,0 +1,20 @@
+# Publisher -- excluded from every Docker build context (Dockerfile.api,
+# Dockerfile.worker). Both Dockerfiles COPY entire directory trees
+# (`COPY services/ services/`, etc.) rather than cherry-picking files, so
+# this is what keeps test-only code out of the shipped images.
+#
+# E6.1 (docs/ARCHITECTURE_SCORE_10_PLAN.md) -- this specifically closes a
+# real gap, not a hygiene nicety: Dockerfile.worker's PYTHONPATH lists each
+# service's ROOT (e.g. /app/services/structure), not something narrower like
+# a site-packages directory. Python 3's implicit namespace packages (PEP
+# 420, no __init__.py required) mean that without this file,
+# `services/structure/tests/` would be importable inside the worker
+# container as `import tests` purely because it sits next to
+# `publisher_structure/` on a PYTHONPATH entry -- regardless of the fact
+# that `tests/` is never `pip install`ed (see each service's own
+# pyproject.toml, which only includes `publisher_*`). That would make
+# services/structure/tests/fabricating_provider.py importable in production,
+# defeating the entire point of moving it out of publisher_structure/.
+**/tests/
+**/__pycache__/
+**/*.pyc

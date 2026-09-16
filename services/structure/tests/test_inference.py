@@ -1,5 +1,8 @@
 """Tests for inference gateway."""
 
+import sys
+from pathlib import Path
+
 import pytest
 
 from publisher_structure.inference import (
@@ -8,34 +11,60 @@ from publisher_structure.inference import (
     InferenceGatewayConfig,
 )
 
+# fabricating_provider.py is a sibling in this same (non-package, no
+# __init__.py) tests/ directory -- same sys.path-insert pattern
+# services/idml/tests/test_outputs.py already uses for alttext/epub/onix.
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+from fabricating_provider import FabricatingProvider  # noqa: E402
 
-@pytest.fixture(autouse=True)
-def _allow_simulation(monkeypatch):
-    """U4: simulated inference is a gated dev/test escape hatch -- the tests
-    that intentionally fabricate classifications must open the gate."""
-    monkeypatch.setenv("PUBLISHER_ALLOW_SIMULATED_INFERENCE", "1")
 
-
-def test_gateway_requires_explicit_simulation_flag(monkeypatch):
-    """U4 gate: a simulated gateway must be explicitly opted into, and the
-    opt-in is refused when the env gate is closed. Pre-U4, `InferenceGateway()`
-    constructed a fabricating gateway with no ceremony at all."""
-    # No `simulate` argument at all -- the constructor must not have a default.
+def test_gateway_requires_a_provider():
+    """E6.1: the gateway's constructor takes an InferenceProvider by
+    injection and has no default -- there is no `simulate` flag left to
+    accidentally leave at a fabricating default."""
     with pytest.raises(TypeError):
         InferenceGateway()
 
-    # Explicit simulate=True is still refused unless the env gate is open.
-    monkeypatch.delenv("PUBLISHER_ALLOW_SIMULATED_INFERENCE")
-    with pytest.raises(RuntimeError, match="SIMULATED_INFERENCE"):
-        InferenceGateway(simulate=True)
+
+def test_fabricating_provider_is_not_shipped_to_the_worker_image():
+    """E6.1 acceptance: the fabricating provider is not importable from the
+    worker image's PYTHONPATH.
+
+    Dockerfile.worker COPYs services/ wholesale and puts each service's ROOT
+    (e.g. /app/services/structure) directly on PYTHONPATH -- needed so
+    `publisher_structure` itself imports. Without .dockerignore excluding
+    test directories, Python 3's implicit namespace packages (PEP 420, no
+    __init__.py required) would make `import tests.fabricating_provider`
+    succeed inside the container purely because the file sits next to
+    `publisher_structure/` on that PYTHONPATH entry -- regardless of the
+    fact that tests/ is never `pip install`ed (see ../pyproject.toml).
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    dockerignore = repo_root / ".dockerignore"
+    assert dockerignore.is_file(), (
+        f"{dockerignore} does not exist -- nothing prevents Dockerfile.worker's "
+        "wholesale `COPY services/ services/` from shipping every tests/ "
+        "directory (fabricating_provider.py included) into the image."
+    )
+    patterns = [
+        line.strip() for line in dockerignore.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    target = Path("services") / "structure" / "tests" / "fabricating_provider.py"
+    excluded = any(pattern.strip("/").endswith("tests") for pattern in patterns)
+    assert excluded, (
+        f".dockerignore has no pattern excluding a `tests` directory, so "
+        f"{target} is not actually kept out of the build context: {patterns}"
+    )
 
 
-def test_simulated_classifications_are_marked(monkeypatch):
-    """U4: any classification produced by the simulated path carries
+def test_simulated_classifications_are_marked():
+    """Any classification produced by the fabricating provider carries
     `simulated: true` in its artifact, so a fabricated confidence is visible in
     the build record instead of being inferred from source reading."""
-    monkeypatch.setenv("PUBLISHER_ALLOW_SIMULATED_INFERENCE", "1")
-    gateway = InferenceGateway(simulate=True)
+    gateway = InferenceGateway(provider=FabricatingProvider())
     request = InferenceRequest(
         request_id="sim-marked",
         route="structure-classify",
@@ -50,7 +79,7 @@ def test_simulated_classifications_are_marked(monkeypatch):
 def test_gateway_creation():
     """A constructor cannot return None. Assert the gateway loaded its routes from
     versioned YAML (LLM_STRATEGY.md §4) rather than from hardcoded literals."""
-    gateway = InferenceGateway(simulate=True)
+    gateway = InferenceGateway(provider=FabricatingProvider())
     routes = gateway._config.routes
     assert "structure-classify" in routes
     # Routing policy is data: concrete slugs only, never a moving `-latest` alias,
@@ -63,7 +92,7 @@ def test_gateway_creation():
 
 
 def test_classify_basic():
-    gateway = InferenceGateway(simulate=True)
+    gateway = InferenceGateway(provider=FabricatingProvider())
     request = InferenceRequest(
         request_id="test-001",
         route="structure-classify",
@@ -78,7 +107,7 @@ def test_classify_basic():
 
 
 def test_classify_no_external_llm():
-    gateway = InferenceGateway(simulate=True)
+    gateway = InferenceGateway(provider=FabricatingProvider())
     request = InferenceRequest(
         request_id="test-002",
         route="structure-classify",
@@ -105,7 +134,7 @@ def test_cost_tracking():
 
 def test_cost_ceiling():
     config = InferenceGatewayConfig(cost_ceiling_usd=0.01)
-    gateway = InferenceGateway(config, simulate=True)
+    gateway = InferenceGateway(config, provider=FabricatingProvider())
     
     # Mock a tracker that's exceeded ceiling
     gateway._cost_trackers["test"] = CostTracker(tenant_id="test", total_cost=999.0)
@@ -147,7 +176,7 @@ def test_route_config():
 
 
 def test_cost_summary():
-    gateway = InferenceGateway(simulate=True)
+    gateway = InferenceGateway(provider=FabricatingProvider())
     request = InferenceRequest(
         request_id="test-summary",
         route="structure-classify",
