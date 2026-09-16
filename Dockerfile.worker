@@ -17,6 +17,17 @@ FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1
 # rather than certify an unconverted PDF -- so this package is load-bearing for
 # any build reaching completion, not an optional extra.
 #
+# Unpinned apt version, resolved to 10.05.1 against this image's pin (verified
+# via `docker run <this base image> apt-get install ghostscript && gs
+# --version`). Known caveat, not a bug here: Ghostscript 10.07.1 (e.g. a
+# Windows scoop install used for local dev) rejects some PDF/X-3 conversions
+# this exact code already handles correctly with "TrimBox does not fit inside
+# BleedBox" -- ghostscript.py's box-geometry workaround (see its own comments)
+# was verified against 10.05.1, not 10.07.1. A real end-to-end build through
+# THIS image completes finish-gs successfully; the failure is local-host-only.
+# If a future Debian bump ever moves this past 10.07, re-verify a real build
+# before assuming the workaround still holds.
+#
 # libreoffice-writer is the converter of record for legacy binary .doc uploads
 # (stages/ingest_stage.py `_convert_legacy_doc`). It is the single largest
 # thing in this image (~400 MB); it is here because "publish from .doc" is a

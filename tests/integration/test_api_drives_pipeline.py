@@ -56,6 +56,19 @@ def worker_process():
     fixture yields None rather than starting a second worker that could claim
     the build and fail it. The test still asserts a real artifact either way:
     nothing here is softened, the work just happens in the container.
+
+    Known host-Ghostscript-version caveat: a locally-spawned worker uses
+    WHATEVER `gs` is on this host's PATH, which is not necessarily the same
+    version Dockerfile.worker's pinned base image resolves (verified:
+    10.05.1 there). Ghostscript 10.07.1 (e.g. a Windows scoop install) is
+    confirmed to reject some PDF/X-3 conversions with "TrimBox does not fit
+    inside BleedBox" that 10.05.1 handles correctly -- a real end-to-end
+    build through the actual docker-compose worker completes finish-gs
+    successfully with the same manuscript/profile. If this test fails at
+    finish-gs specifically on a host with a newer local Ghostscript, that is
+    this caveat, not a pipeline regression -- verify against the compose
+    worker (`docker compose up -d worker`, no local `gs` on PATH) before
+    concluding otherwise.
     """
     import shutil
 
