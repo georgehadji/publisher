@@ -32,8 +32,8 @@ import requests
 
 from conftest import (
     DATABASE_URL, RUN_ID, _headers, api_server, create_uploaded_manuscript,
-    insert_build, make_docx, register_tenant, set_manuscript_source, spawn_worker,
-    stop_worker, wait_for_all_terminal, wait_for_terminal,
+    insert_build, insert_builds_bulk, make_docx, register_tenant, set_manuscript_source,
+    spawn_worker, stop_worker, wait_for_all_terminal, wait_for_terminal,
 )
 
 
@@ -43,11 +43,18 @@ from conftest import (
 def test_admission_cap_rejects_once_tenant_is_at_capacity(db, api_server, make_docx):
     """Default cap is 50 (packages/api/src/routes/builds.ts). Filling it via
     direct inserts (not 50 real HTTP round-trips) keeps this test fast; the
-    thing under test is the COUNT-and-compare in the route, not the insert."""
+    thing under test is the COUNT-and-compare in the route, not the insert.
+
+    All 50 in ONE transaction (`insert_builds_bulk`), not a loop of 50
+    individually-committed `insert_build` calls: this tenant's queue is the
+    same shared Postgres a `docker compose up -d worker` a developer left
+    running would also be polling, and one-at-a-time commits used to hand it
+    a wide window to claim and finish an early row while later ones were
+    still being inserted, undercounting by the time the check below fires --
+    see `insert_builds_bulk`'s docstring."""
     ms_id, _ = create_uploaded_manuscript(api_server, make_docx, "CAP NOVEL", "Body text.", tag="u8cap")
     tenant = "detector-tenant"  # conftest.TENANT -- what api_server's single token maps to
-    for i in range(50):
-        insert_build(db, f"test-{RUN_ID}-cap-{i}", ms_id, tenant, status="queued")
+    insert_builds_bulk(db, [f"test-{RUN_ID}-cap-{i}" for i in range(50)], ms_id, tenant)
 
     resp = requests.post(
         f"{api_server}/v1/builds",

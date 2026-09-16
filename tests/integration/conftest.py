@@ -219,6 +219,37 @@ def insert_build(conn, build_id: str, document_id: str, tenant: str, status: str
     conn.commit()
 
 
+def insert_builds_bulk(conn, build_ids: list[str], document_id: str, tenant: str,
+                       profile_ids: str = '["Generic 6x9"]') -> None:
+    """Insert many 'queued' rows as ONE transaction (one commit at the end),
+    for a test whose precondition is "exactly N in-flight rows exist" and
+    that precondition is then checked from a SEPARATE process (the API
+    server's own Postgres connection).
+
+    `insert_build` commits after every single row -- calling it in a loop
+    makes each row visible to any OTHER connection reading `builds` the
+    moment ITS OWN commit lands, one at a time, well before the loop
+    finishes. Anything else also polling this queue (worker.py's `FOR UPDATE
+    SKIP LOCKED` claim, including a long-lived `docker compose up -d worker`
+    a developer left running against the same DATABASE_URL -- exactly what
+    caused test_admission_cap_rejects_once_tenant_is_at_capacity to flake
+    under the full suite, never in isolation) can claim and finish one of the
+    earlier rows while later ones are still being inserted, undercounting by
+    the time the precondition is actually checked. Batching into one
+    transaction means no row is visible to any other connection until ALL of
+    them are, shrinking that window to roughly one HTTP round trip instead of
+    up to N insert round trips."""
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO builds (id, tenant_id, document_id, design_id, profile_ids, mode, status)
+            VALUES (%s, %s, %s, %s, %s, 'proof', 'queued')
+            """,
+            [(build_id, tenant, document_id, None, profile_ids) for build_id in build_ids],
+        )
+    conn.commit()
+
+
 def set_manuscript_source(conn, manuscript_id: str, data: bytes) -> str:
     """Store DOCX bytes in CAS and point the manuscript at them; return sha256."""
     sha = write_to_cas(TEST_CAS_ROOT, data)
