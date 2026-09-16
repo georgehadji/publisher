@@ -1,8 +1,23 @@
 # Node
 node_modules/
 # This is a pnpm workspace (pnpm-workspace.yaml; root scripts use `pnpm -r`).
-# An npm/yarn lockfile here would pin a second, conflicting dependency graph.
+# An npm/yarn lockfile at the repo ROOT (or in a package pnpm actually
+# manages) would pin a second, conflicting dependency graph.
+#
+# packages/api and packages/web are the exception: despite being listed in
+# pnpm-workspace.yaml's `packages/*` glob, both are installed independently
+# via plain `npm ci`/`npm install` everywhere that matters -- Dockerfile.api
+# (`RUN cd packages/api && npm install`) and .github/workflows/ci.yml's
+# `node` and `supply-chain` jobs (`npm ci` in each). Neither has ever
+# depended on another workspace package via the `workspace:*` protocol, so
+# `pnpm install` at the root has nothing to conflict with (verified: it
+# completes cleanly with both lockfiles present). Without a committed
+# lockfile, `npm ci` in CI has no lockfile to install from and fails before
+# a single test runs -- caught because it's exactly what those CI jobs do
+# on a truly clean checkout, which local dev never exercises.
 package-lock.json
+!packages/api/package-lock.json
+!packages/web/package-lock.json
 yarn.lock
 dist/
 *.tsbuildinfo
