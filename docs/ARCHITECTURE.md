@@ -188,8 +188,15 @@ per-capability pods; there is no Chrome/Playwright renderer (weasyprint or Typst
 content-addressed store (`platform/cas/`, `PUBLISHER_CAS_ROOT`), not `S3 / R2` — see §2.13.
 The worker's egress is `internal: true` (no route to the internet) except for
 `infra/llm-egress/`'s allowlist proxy, added when `structure-infer` needed one real external
-call (OpenRouter); this diagram's per-capability multi-queue autoscaling and the S3/R2 tier
-are `ARCHITECTURE_ROADMAP.md`'s **R1** and **R3**.
+call (OpenRouter); the S3/R2 tier is `ARCHITECTURE_ROADMAP.md`'s **R3**.
+
+Per-capability dispatch itself is no longer absent, but it is **not the default**: an
+opt-in `docker compose --profile temporal` path (`worker_temporal.py`,
+`platform/orchestration/`) runs each stage as a Temporal activity on the queue its own
+`@stage(...)` declares, so a render-only pool can be scaled independently. A plain
+`docker compose up -d` starts the single-`worker` topology described above and nothing
+else. The autoscaling policy, a production Temporal cluster, and workflow versioning are
+still missing — see `ARCHITECTURE_ROADMAP.md`'s **R1** for exactly what landed.
 
 ### 2.4 Why Temporal (and not Celery/BullMQ/Step Functions)
 

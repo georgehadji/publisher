@@ -50,3 +50,10 @@ Thumbs.db
 .publisher/
 .test-cas-cache/
 .cas-cache/
+
+# Claude Code tool state, not source. `.claude/skills/` IS tracked (the folder
+# maps CLAUDE.md points at), so these are named individually rather than
+# ignoring `.claude/` wholesale, which would silently drop the skills.
+.claude/claudex/
+packages/api/.claude/
+packages/web/.claude/
