@@ -72,11 +72,17 @@ book build attempting it.
 (default `./.publisher/cas`), sharded `h[:2]/h[2:4]/h`. Stages write via `ctx.cas_root` —
 never `ctx.work_dir`, which is scratch and is deleted.
 
-**Two hard gates. Neither may be softened.**
+**Hard gates. None may be softened.**
 - *Text integrity* (`ast-assemble`): `normalize(text(html)) == normalize(text(source))`.
   Fails the build outright. No override flag exists, deliberately.
 - *Preflight* (`preflight`): `package` declares `preflight_report` as a required input, so
   a build physically cannot be packaged without a preflight verdict.
+- *Composition* (inside `preflight`): `preflight` requires `pagemap/1` and gates on the
+  composition the render path measured into it — orphans over the profile's
+  `composition.maxOrphanPages` (default 0) fail; widows and runts warn. **Unmeasured is not
+  clean.** Those pagemap fields are optional, so ABSENT means "not measured" and `false`
+  means "measured, none found". Collapsing the two is what made the whole composition path
+  decorative before it existed: every book scanned clean because nothing ever measured one.
 
 **`allow_stub_engines` is a dev-only escape hatch.** Default `False`. The worker never sets
 it. It exists so a missing renderer fails loudly instead of silently certifying stub output
@@ -100,7 +106,10 @@ consume `idml/1`, and never derive a spine or a preflight verdict from it.
 **Execution tiers.** `tracer_bullet.py` is the local dev harness (one build, stdout,
 stubs allowed). `worker.py` is production: claims builds from Postgres with
 `FOR UPDATE SKIP LOCKED`, real engines only. `packages/api` is Fastify + Postgres and
-owns no pipeline logic.
+owns no pipeline logic. An opt-in Temporal path (`worker_temporal.py`,
+`platform/orchestration/`) dispatches each stage onto the queue its `@stage(queue=)` already
+declares; `docker compose --profile temporal` starts it, and a plain `docker compose up -d`
+starts nothing Temporal-related. See `docs/ARCHITECTURE_ROADMAP.md` R1.
 
 ## Commands
 
@@ -111,10 +120,51 @@ docker compose up -d        # postgres + worker + api
 python cli.py schema validate <file>
 ```
 
+**One test, not the suite.** Both runners pass extra arguments through to pytest, so
+narrow with `-k` or `-m` — never with a path:
+
+```bash
+./scripts/test.ps1 -k widow                    # one test by name  (2 passed, 514 deselected)
+./scripts/test.ps1 -k test_pagemap_measurement # one file's worth, by name
+./scripts/test.ps1 -m external                 # only the GUI-binary tests
+./scripts/test.ps1 -m requires_temporal        # only the Temporal tests
+```
+
+**A path argument does not narrow the run, it corrupts it.** The runner invokes
+`python -m pytest platform services packages stages tests @args`, so a file path is APPENDED
+to five fixed roots rather than replacing them — and the run that results is both slower and
+SMALLER than a plain one (measured: 398 passed with a path appended, 475 without). Nothing
+warns you; it just looks like a pass. Use `-k`.
+
+**Reproduce CI locally.** These are the gates `.github/workflows/ci.yml` runs; a red CI
+usually means one of them, and they are far faster to run than to reverse-engineer:
+
+```bash
+python platform/stages/integrity.py       # DAG integrity: unsatisfiable inputs, orphan outputs
+python tools/lint_stage_versions.py HEAD  # @stage(version=) bumped on every touched module
+python tools/lint_docs_claims.py          # THIS file's folder map, stage names and count
+python tools/lint_schemas.py              # no free text in structure routes
+python tools/lint_service_deps.py         # service deps declared (U3)
+python tools/lint_tenant_scoping.py       # tenant scoping (E4.3)
+lint-imports --config .importlinter        # import boundaries (E1.4) -- not a tools/*.py script
+cd schemas && node codegen/test.mjs        # generated types are valid
+```
+
+**`finish-gs` fails on Ghostscript 10.07.1** (`Unrecoverable error, exit code 1`). That is a
+local toolchain mismatch, documented in `a31c9bb`, not a regression and not a shipped bug.
+Every stage before it still runs and writes its artifacts to the CAS — inspect those by hash
+rather than concluding the build is broken.
+
 **Never run bare `pytest`.** Results were being read from a machine-global,
 cross-project log directory and a sibling repo's failures got reported as Publisher's.
 `scripts/test.ps1` writes to `.publisher/test-output.txt` and disables plugin autoload
 (~160s → ~14s). See `docs/COST_AND_STABILITY_PLAN.md` §S1.
+
+**The default suite excludes two markers.** `pyproject.toml`'s `addopts` carries
+`-m "not external and not requires_temporal"`: `external` shells out to a GUI/desktop binary
+(Scribus) and `requires_temporal` downloads a Java test-server binary on first use — a
+network dependency the default run must not have. A green suite is therefore not a full
+suite; run those markers explicitly before claiming one.
 
 ## Working here
 
@@ -136,6 +186,6 @@ cross-project log directory and a sibling repo's failures got reported as Publis
 `COST_AND_STABILITY_PLAN.md` · `REMEDIATION_PLAN.md` (complete) ·
 `VERIFICATION_PLAN.md` (G1–G8 — gates that cannot fail; own header says draft, but E0 below implements and generalises it) ·
 `CONTEXT_ARCHITECTURE.md` (C1–C4 — ICM evaluated against this repo; **research memo**) ·
-`ARCHITECTURE_SCORE_10_PLAN.md` (E0–E7 — EGFV v3.0 audit 5/10 → 10/10; **E0–E7 landed+tested**. E4/E5/E6 verified against a real Docker stack (migrations upgrade idempotently, RLS-constrained non-owner roles, fail-closed route auth with argon2id-hashed tokens, `structure-infer` guarded-reachable behind `infra/llm-egress`'s allowlist proxy — see git history for the full per-workstream detail). **E7**: E7.1 split `ARCHITECTURE.md` into normative (as-built §2.3/§2.13/§2.14) + `ARCHITECTURE_ROADMAP.md` (dated, triggered deferrals — Temporal pools, a third emitter + cross-emitter agreement gate, S3/R2); E7.2 wired all three previously-dead packages (`epub`/`onix`/`manuscript-advisory` are real always-on-or-guarded stages, not just built-with-no-caller) — verified end-to-end against the real compose stack (upload → build → `epub`/`onix`/`manuscript-advisory`/`finish-gs`/`preflight`/`package` all complete, all three new artifact kinds downloadable via the existing generic artifact route); E7.3 added `tools/lint_docs_claims.py` (5 mechanical checks: folder-map paths, §2.14 tree, stage count, stage names, cross-reference identifiers), registered in E0.1's meta-gate with a mutation proving it can fail.
+`ARCHITECTURE_SCORE_10_PLAN.md` (E0–E7 — EGFV v3.0 audit 5/10 → 10/10; **E0–E7 landed+tested**. E4/E5/E6 verified against a real Docker stack (migrations upgrade idempotently, RLS-constrained non-owner roles, fail-closed route auth with argon2id-hashed tokens, `structure-infer` guarded-reachable behind `infra/llm-egress`'s allowlist proxy — see git history for the full per-workstream detail). **E7**: E7.1 split `ARCHITECTURE.md` into normative (as-built §2.3/§2.13/§2.14) + `ARCHITECTURE_ROADMAP.md` (dated, triggered deferrals — Temporal pools (since partially built -- see R1's own status), a third emitter + cross-emitter agreement gate, S3/R2); E7.2 wired all three previously-dead packages (`epub`/`onix`/`manuscript-advisory` are real always-on-or-guarded stages, not just built-with-no-caller) — verified end-to-end against the real compose stack (upload → build → `epub`/`onix`/`manuscript-advisory`/`finish-gs`/`preflight`/`package` all complete, all three new artifact kinds downloadable via the existing generic artifact route); E7.3 added `tools/lint_docs_claims.py` (5 mechanical checks: folder-map paths, §2.14 tree, stage count, stage names, cross-reference identifiers), registered in E0.1's meta-gate with a mutation proving it can fail.
 
 Full index with per-document status: the **publisher-docs** skill.
