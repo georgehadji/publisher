@@ -224,6 +224,136 @@ services:
     mem_limit: 512m
     cpus: 1.0
 
+  # R1 (docs/ARCHITECTURE_ROADMAP.md): optional Temporal orchestration path.
+  # `docker compose --profile temporal up -d` only -- these three services
+  # do not exist for a plain `docker compose up -d`, which is unchanged.
+  # In-memory dev-mode server, zero external persistence: this profile's own
+  # scope is proving per-capability dispatch actually works (a stage lands
+  # on the queue its OWN @stage(queue=...) declares, and only a worker
+  # polling that queue ever runs it), not standing up a production Temporal
+  # cluster -- see ARCHITECTURE_ROADMAP.md R1's "genuinely missing" list,
+  # which this does not attempt to close (no autoscaling policy, no
+  # workflow-versioning story).
+  temporal:
+    image: temporalio/temporal@sha256:ad4c82c97bd12b417d1ea942610dbcd511afb250c4d5ed26c694009533df447e
+    command: ["server", "start-dev", "--ip", "0.0.0.0"]
+    profiles: ["temporal"]
+    ports:
+      - "8233:8233"   # Web UI -- inspect real workflow/activity task-queue routing
+    networks:
+      - temporal-net
+    mem_limit: 512m
+    cpus: 1.0
+
+  # Orchestrator: claims Postgres builds via the SAME claim/lease/record code
+  # `worker` uses (worker_temporal.py imports worker.py directly), and hosts
+  # every capability queue EXCEPT the two `worker-temporal-render` owns --
+  # q.ingest, q.structure, q.prepress, q.external, q.default. q.structure
+  # (structure-infer) and q.external (cover-art/-brief/-judge) are the
+  # LLM/OpenRouter-calling stages, hence llm-egress here, identical to
+  # `worker`'s own posture.
+  worker-temporal:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker-temporal
+    profiles: ["temporal"]
+    environment:
+      DATABASE_URL: postgresql://publisher_worker:publisher_worker@postgres:5432/publisher
+      PUBLISHER_CAS_ROOT: /data/cas
+      PUBLISHER_TEMPORAL_ADDRESS: temporal:7233
+      PUBLISHER_TEMPORAL_ROLE: orchestrator
+      PUBLISHER_TEMPORAL_QUEUES: "q.ingest,q.structure,q.prepress,q.external,q.default"
+      PUBLISHER_RENDER_ENGINE: ${PUBLISHER_RENDER_ENGINE:-css}
+      # Must match worker-temporal-render's own value: idml (queue
+      # q.composition, hosted by that service) is registered per-PROCESS at
+      # import time by `stages.import_idml_if_requested`. If this differs
+      # between the two services, the orchestrator can plan a build that
+      # includes idml while the render pool never registered it -- the
+      # activity's registry.get("idml") then returns None and the build
+      # fails with a confusing "unknown stage" error instead of idml simply
+      # being (correctly, consistently) absent.
+      PUBLISHER_EMIT_IDML: ${PUBLISHER_EMIT_IDML:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      HTTPS_PROXY: http://llm-egress-proxy:8888
+      HTTP_PROXY: http://llm-egress-proxy:8888
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - cas-data:/data/cas
+    read_only: true
+    tmpfs:
+      - /tmp:size=2g,noexec,nosuid,nodev
+      - /home/publisher:size=256m,nosuid,nodev,uid=10001,gid=10001,mode=0700
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - dbnet
+      - llm-egress
+      - temporal-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      llm-egress-proxy:
+        condition: service_started
+      temporal:
+        condition: service_started
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+
+  # The actual per-capability pool this workstream is FOR: hosts ONLY
+  # q.composition (weasyprint/Typst render) and q.render.html (cover-compose).
+  # Scale this independently of worker-temporal above --
+  # `docker compose --profile temporal up -d --scale worker-temporal-render=3`
+  # -- without touching the orchestrator or the other queues' capacity,
+  # which `worker`'s single-process-runs-every-stage model cannot do.
+  #
+  # No DATABASE_URL, no PUBLISHER_RENDER_ENGINE: this container's stage
+  # lookups are by exact NAME against the selection-free global registry
+  # (`get_registry().get(payload.stage_name)`, platform/orchestration), and
+  # its CAS root / Postgres DSN / render-engine selection all arrive as
+  # workflow payload DATA from the orchestrator, not from its own env --
+  # the only things that must be configured here are which queues to host,
+  # where Temporal is, and (see worker-temporal's comment) whether idml is
+  # registered. No llm-egress either: neither queue this pool hosts ever
+  # makes an external call, so it gets no network route out at all --
+  # strictly tighter than `worker`'s own posture.
+  worker-temporal-render:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker-temporal
+    profiles: ["temporal"]
+    environment:
+      PUBLISHER_TEMPORAL_ADDRESS: temporal:7233
+      PUBLISHER_TEMPORAL_ROLE: worker
+      PUBLISHER_TEMPORAL_QUEUES: "q.composition,q.render.html"
+      PUBLISHER_EMIT_IDML: ${PUBLISHER_EMIT_IDML:-}
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - cas-data:/data/cas
+    read_only: true
+    tmpfs:
+      - /tmp:size=2g,noexec,nosuid,nodev
+      - /home/publisher:size=256m,nosuid,nodev,uid=10001,gid=10001,mode=0700
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - dbnet
+      - temporal-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    restart: unless-stopped
+    mem_limit: 2g
+    cpus: 2.0
+
 networks:
   # E3.1: internal -- no default gateway to the internet for anything on it.
   # Published `ports:` mappings (postgres's 55432, api's 4000) are host-side
@@ -242,6 +372,12 @@ networks:
   # future edit adds anything else to it, that thing gets an unfiltered
   # route out, which is exactly the mistake this topology exists to prevent.
   llm-egress-uplink:
+  # R1: internal -- the Temporal dev server and its workers never need a
+  # route to the internet, only to each other. `temporal`'s published
+  # `8233:8233` (Web UI) works regardless, same DNAT-vs-internal distinction
+  # as dbnet/postgres above.
+  temporal-net:
+    internal: true
 
 volumes:
   pgdata:

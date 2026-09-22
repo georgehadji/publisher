@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "publisher-orchestration"
+version = "0.1.0"
+description = "Optional Temporal-backed per-capability dispatch (R1) -- wires stages/*.py's existing, previously-unread `queue=` declarations to real Temporal task queues. Not imported by worker.py; see worker_temporal.py."
+requires-python = ">=3.12"
+# Third-party deps are pinned centrally in requirements.txt/requirements.lock
+# (a pre-existing repo convention -- see requirements.txt's own header), not
+# here. This package needs `temporalio`, listed there.
+dependencies = []
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["publisher_orchestration*"]

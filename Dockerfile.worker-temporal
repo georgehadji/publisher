@@ -1,0 +1,69 @@
+# R1 (docs/ARCHITECTURE_ROADMAP.md): the optional Temporal-backed worker.
+# Same base image, same toolchain, same requirements.lock as Dockerfile.worker
+# -- this runs the identical stage functions, just dispatched by
+# worker_temporal.py/platform/orchestration instead of worker.py/publisher_exec.run().
+# Started only via `docker compose --profile temporal up` (docker-compose.yml);
+# the default `docker compose up -d` never builds or runs this image.
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+
+# Identical toolchain to Dockerfile.worker -- a stage dispatched onto
+# q.composition or q.prepress in THIS image must have the exact same
+# weasyprint/Ghostscript/LibreOffice/pandoc/Typst stack the Postgres-path
+# worker has, or the two paths would silently certify different output for
+# the same stage. See Dockerfile.worker's own comments for why each package
+# is here; duplicated rather than factored into a shared base stage because
+# there is no multi-stage build in this repo to hang a shared base off yet,
+# and this file must stay diffable against Dockerfile.worker at a glance.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 \
+    libffi-dev shared-mime-info fonts-liberation \
+    ghostscript \
+    libreoffice-writer \
+    curl xz-utils ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG PANDOC_VERSION=3.5
+ARG PANDOC_DEB_SHA256=4f41d817d262ef3d17953a3e6e0fefddb971aa4f2f121544a9a86db449d945e1
+ARG TYPST_VERSION=0.13.1
+ARG TYPST_TARBALL_SHA256=7d214bfeffc2e585dc422d1a09d2b144969421281e8c7f5d784b65fc69b5673f
+RUN curl -fsSL -o /tmp/pandoc.deb \
+      "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb" \
+    && echo "${PANDOC_DEB_SHA256}  /tmp/pandoc.deb" | sha256sum -c - \
+    && dpkg -i /tmp/pandoc.deb && rm /tmp/pandoc.deb \
+    && curl -fsSL -o /tmp/typst.tar.xz \
+      "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-x86_64-unknown-linux-musl.tar.xz" \
+    && echo "${TYPST_TARBALL_SHA256}  /tmp/typst.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/typst.tar.xz -C /tmp \
+    && install -m 0755 /tmp/typst-x86_64-unknown-linux-musl/typst /usr/local/bin/typst \
+    && rm -rf /tmp/typst.tar.xz /tmp/typst-x86_64-unknown-linux-musl \
+    && pandoc --list-output-formats | grep -qx typst \
+    && typst --version
+
+WORKDIR /app
+
+COPY requirements.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+
+COPY platform/ platform/
+COPY services/ services/
+COPY stages/ stages/
+COPY schemas/ schemas/
+COPY profiles/ profiles/
+COPY templates/ templates/
+COPY corpus/ corpus/
+COPY worker.py worker_temporal.py ./
+
+ENV PYTHONPATH=/app/platform/stages/py:/app/platform/cas/py:/app/platform/cache/py:/app/platform/exec/py:/app/platform/sandbox/py:/app/platform/orchestration/py:/app/platform/reproducibility:/app/platform/supply-chain:/app/services/structure:/app/services/agents:/app/services/ingest:/app/services/cover:/app/services/epub:/app/services/idml:/app/services/onix:/app/services/prepress:/app/services/alttext
+
+# Same RLIMIT_AS/thread-arena interaction Dockerfile.worker documents --
+# publisher_exec's memory_mw and deadline_mw run identically here via
+# run_single_stage (platform/exec's second entry point, R1).
+ENV MALLOC_ARENA_MAX=1
+
+RUN groupadd -r publisher && useradd -r -g publisher -u 10001 -m -d /home/publisher publisher \
+    && fc-cache -f \
+    && mkdir -p /data/cas && chown -R publisher:publisher /data/cas /home/publisher
+
+USER 10001:10001
+
+CMD ["python", "worker_temporal.py"]

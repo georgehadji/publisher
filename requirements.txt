@@ -19,3 +19,11 @@ jsonschema>=4.20,<5
 # why libreoffice-writer is in Dockerfile.worker. A host without it gets a loud
 # INFRA failure on a .doc upload, never a silent one.
 python-docx>=1.1,<2
+# platform/orchestration (R1, docs/ARCHITECTURE_ROADMAP.md): the optional
+# Temporal-backed per-capability dispatch path. Only worker_temporal.py and
+# platform/orchestration/py import this -- worker.py's default path never
+# does, so this dependency existing in the image changes nothing about how
+# the default `docker compose up -d` worker behaves. Shared with it anyway
+# (one requirements.lock, ARCHITECTURE.md convention) rather than a second
+# lock file, which would be real duplication for one optional package.
+temporalio>=1.7,<2

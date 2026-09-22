@@ -596,6 +596,69 @@ def run(
     return results
 
 
+def run_single_stage(
+    stage_name: str,
+    registry: StageRegistry,
+    *,
+    build_id: str,
+    resolved_inputs: dict[str, Any],
+    cas_root: Path | str,
+    cache_store: CacheStore,
+    allow_stub_engines: bool = False,
+) -> tuple[StageResult, dict[str, str]]:
+    """Run exactly ONE stage through the same cache/memory/deadline chain
+    `run()` composes per-build (R1, docs/ARCHITECTURE_ROADMAP.md) -- for a
+    caller that resolves inputs and sequences the DAG itself, out-of-process,
+    stage by stage (the Temporal activity `platform/orchestration` calls,
+    dispatched onto the stage's OWN declared `decl.queue` rather than run in
+    the same process as every other stage).
+
+    Deliberately NOT a change to `run()`, which still opens ONE CasConfig/
+    cache handle and composes ONE middleware chain for the whole ordered
+    plan -- that stays exactly as tested. This is a second, independent
+    entry point for a caller whose "process running this stage" and "process
+    running the next one" may be two different containers, so it cannot
+    share `run()`'s loop-local `handle`/`artifact_paths` closures. `resolved_
+    inputs` must already be the fully wired stage kwargs (root inputs plus
+    whatever upstream schema_id -> path lookups the caller has done) --
+    unlike `run()`, this function does no input wiring of its own.
+
+    Returns the StageResult and a schema_id -> CAS path map of ONLY this
+    stage's own declared outputs, so the caller (the Temporal workflow) can
+    merge it into its own running artifact_paths without reaching into this
+    function's internals.
+    """
+    decl = registry.get(stage_name)
+    if decl is None:
+        raise StageError(
+            kind=ErrorKind.ENGINE_BUG,
+            message=f"Stage '{stage_name}' not found in registry",
+        )
+    cas_root_path = Path(cas_root)
+    cas_root_path.mkdir(parents=True, exist_ok=True)
+    cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root_path))
+    artifact_paths: dict[str, str] = {}
+    handle: Next = _compose(
+        [_make_cache_mw(cache_store, cas, cas_root_path, artifact_paths), memory_mw, deadline_mw],
+        terminal=lambda inv: inv.decl.fn(inv.ctx, **inv.inputs),
+    )
+    seed = _cache_key_for(stage_name, decl, resolved_inputs)
+    started_at = datetime.now(timezone.utc)
+    with tempfile.TemporaryDirectory(prefix=f"pub-build-{build_id}-{stage_name}-") as work_dir:
+        ctx = StageCtx(
+            build_id=build_id,
+            deterministic_seed=seed,
+            deadline=started_at + timedelta(seconds=decl.timeout_s),
+            memory_budget_mb=decl.memory_budget_mb,
+            work_dir=work_dir,
+            allow_stub_engines=allow_stub_engines,
+            cas_root=str(cas_root_path),
+        )
+        invocation = StageInvocation(stage_name=stage_name, decl=decl, ctx=ctx, inputs=resolved_inputs)
+        result = handle(invocation)
+    return result, dict(artifact_paths)
+
+
 class DagExecutor:
     """Facade over `plan()` + `run()` for existing call sites.
 
@@ -635,6 +698,6 @@ class DagExecutor:
 
 
 __all__ = [
-    "ExecutionPlan", "plan", "run", "DagExecutor",
+    "ExecutionPlan", "plan", "run", "run_single_stage", "DagExecutor",
     "StageInvocation", "StageMiddleware", "Next", "deadline_mw", "memory_mw",
 ]

@@ -3,9 +3,17 @@ minversion = "8.0"
 # `-m "not external"`: a test that shells out to a GUI/desktop binary (Scribus)
 # runs only when explicitly requested (`pytest -m external`), not on every
 # default run — E0.5, closing L16's "553s suite nobody actually runs".
-addopts = "-q --strict-markers -m \"not external\" --durations=10"
+addopts = "-q --strict-markers -m \"not external and not requires_temporal\" --durations=10"
 markers = [
     "external: shells out to a GUI/desktop binary not on the worker toolchain (e.g. Scribus); excluded by default, run with -m external",
+    # R1 (docs/ARCHITECTURE_ROADMAP.md): temporalio.testing.WorkflowEnvironment
+    # downloads a Java test-server binary on first use -- a network dependency
+    # the default suite must not have (COST_AND_STABILITY_PLAN.md S1). Same
+    # exclusion shape as `external`, kept as its own marker rather than folded
+    # into it: `external` is documented specifically as GUI/desktop binaries,
+    # and conflating the two would surprise anyone running `-m external`
+    # expecting only that.
+    "requires_temporal: needs temporalio.testing.WorkflowEnvironment's downloaded test-server binary; excluded by default, run with -m requires_temporal",
 ]
 # `tests` carries the generated contract tests (§3.20) and the collection floor.
 # It was omitted, so a bare `pytest` never ran either of them and CI was the only
