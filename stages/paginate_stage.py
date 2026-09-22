@@ -325,7 +325,8 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
 
 @stage(
     name="paginate",
-    version=5,   # v5: pagemap/1 carries measured composition data (paraRanges,
+    version=6,   # v6: pagemap/1 is consumed by `preflight`, so it is no longer a
+                 # terminal output. v5: pagemap/1 carries measured composition data (paraRanges,
                  # wordCount, widow/orphan/runt flags) walked out of the
                  # renderer's box tree -- see _measure_pages. v4: pagemap/1
                  # declared terminal (U6).
@@ -338,7 +339,10 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
     # F2.1, §5.1 P0). Do not "fix" a broken reachability chain by promoting an input
     # to root; fix the chain instead.
     outputs={"pdf": "raw-pdf/1", "pagemap": "pagemap/1"},
-    terminal_outputs=["pagemap"],   # delivered via the API, never consumed
+    # No longer terminal: `preflight` declares `pagemap_path: "pagemap/1"` as a
+    # required input and gates on the composition measured into it. Leaving it
+    # listed here would suppress the orphan-output check on an output that now
+    # has a real consumer -- and the declaration would simply be false.
     # Alternative impl of one step: `paginate-typst` renders the same
     # doc-effective/1 through pandoc + Typst. stages/__init__.py selects one.
     implements="paginate",

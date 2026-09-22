@@ -364,10 +364,123 @@ def _fmt_bytes(n: int) -> str:
         return f"{n / 1024 / 1024:.1f} MB"
 
 
+# ── Composition (typographic) defects ──────────────────────────
+
+# Severities mirror platform/pagescan/src/lib.rs's own policy rather than
+# inventing a second one: an orphan is an error there (weight 4.0), a widow
+# (3.0) and a runt (2.0) are warnings. That crate is not reachable from this
+# runtime -- it has no PyO3 module and the pipeline is pure Python -- so the
+# decision is reused, not the code.
+_COMPOSITION_FLAGS = {
+    "hasOrphans": "orphans",
+    "hasWidows": "widows",
+    "hasRunts": "runts",
+}
+
+
+def scan_composition(pagemap: dict | None) -> dict:
+    """Count composition defects over a `pagemap/1`'s MEASURED pages.
+
+    A page counts as measured only if it actually carries the flags. Absent
+    means "not measured" and `false` means "measured, none found" -- the
+    property `stages.paginate_stage._measure_pages` exists to preserve, and the
+    reason an unmeasured book must not report as clean here. Pages the renderer
+    could not measure (the Typst path lays out without a box tree to walk) are
+    counted in `pages` and excluded from `measured`.
+    """
+    pages = (pagemap or {}).get("pages") or []
+    found: dict = {"pages": len(pages), "measured": 0,
+                   "orphans": [], "widows": [], "runts": []}
+    for page in pages:
+        if not isinstance(page, dict) or not any(f in page for f in _COMPOSITION_FLAGS):
+            continue
+        found["measured"] += 1
+        number = page.get("pageNumber")
+        for flag, bucket in _COMPOSITION_FLAGS.items():
+            if page.get(flag) is True:
+                found[bucket].append(number)
+    return found
+
+
+def _pages_phrase(numbers: list) -> str:
+    """"page 4" / "pages 4, 9" / "pages 4, 9 and 3 more" -- bounded (D6)."""
+    shown = ", ".join(str(n) for n in numbers[:6])
+    more = len(numbers) - 6
+    return (f"page{'s' if len(numbers) != 1 else ''} {shown}"
+            + (f" and {more} more" if more > 0 else ""))
+
+
+@preflight_check("composition")
+def check_composition(pdf_info: dict, profile: dict) -> PreflightCheck:
+    """Typographic composition gate, read off the render path's measured pagemap.
+
+    Three outcomes, and the middle one is the point:
+      - no page measured -> WARN. Not a pass: nothing looked at the composition,
+        which is exactly what the pagescan path used to report as clean.
+      - orphans over the profile's allowance -> FAIL, blocking delivery.
+      - widows or runts -> WARN. Real defects, but ones a typesetter routinely
+        accepts; failing on them would block every book ever set.
+    """
+    found = scan_composition(pdf_info.get("pagemap"))
+
+    if found["measured"] == 0:
+        c = _warn(
+            "composition",
+            f"Composition not measured on any of {found['pages']} page(s) — "
+            f"widows, orphans and runts are UNKNOWN, not absent",
+            suggestedFix="Render via the CSS path (PUBLISHER_RENDER_ENGINE=css), "
+                         "which walks the renderer's box tree; the Typst path "
+                         "composes without one.",
+            value={"pages": found["pages"], "measured": 0},
+        )
+        c.sourceRef = "pagemap/1"
+        return c
+
+    policy = profile.get("composition") or {}
+    allowed = int(policy.get("maxOrphanPages", 0))
+    orphans, widows, runts = found["orphans"], found["widows"], found["runts"]
+
+    if len(orphans) > allowed:
+        c = _fail(
+            "composition",
+            f"{len(orphans)} page(s) begin a paragraph with a single line "
+            f"stranded at the foot: {_pages_phrase(orphans)}",
+            suggestedFix="Raise `orphans` in the DesignSpec's paragraph style, or "
+                         "set composition.maxOrphanPages in the vendor profile if "
+                         "this house style tolerates them.",
+            value=len(orphans),
+            expected=allowed,
+        )
+        c.sourceRef = f"pagemap/1#page={orphans[0]}"
+        return c
+
+    if widows or runts:
+        parts = []
+        if widows:
+            parts.append(f"{len(widows)} widow page(s) ({_pages_phrase(widows)})")
+        if runts:
+            parts.append(f"{len(runts)} runt page(s) ({_pages_phrase(runts)})")
+        c = _warn(
+            "composition",
+            "Composition defects found: " + "; ".join(parts),
+            suggestedFix="Adjust tracking or the hyphenation zone on the offending "
+                         "paragraphs; neither defect blocks delivery.",
+            value={"widows": len(widows), "runts": len(runts)},
+        )
+        c.sourceRef = f"pagemap/1#page={(widows or runts)[0]}"
+        return c
+
+    return _pass(
+        "composition",
+        f"No widows, orphans or runts across {found['measured']} measured page(s)",
+    )
+
+
 # ── Runner ─────────────────────────────────────────────────────
 
 def run_preflight(pdf_path: str | Path, profile: dict,
-                  created_at: str | None = None) -> PreflightReport:
+                  created_at: str | None = None,
+                  pagemap: dict | None = None) -> PreflightReport:
     """
     Run all preflight checks against a PDF and vendor profile.
     
@@ -382,6 +495,10 @@ def run_preflight(pdf_path: str | Path, profile: dict,
         )
 
     pdf_info = probe_pdf(pdf_path)
+    # Composition is measured by the render path, not readable from the PDF
+    # bytes, so it arrives alongside rather than out of `probe_pdf`. Passed
+    # through the same dict so the CheckFn signature stays (pdf_info, profile).
+    pdf_info["pagemap"] = pagemap
 
     # A file that is not a PDF cannot be preflighted, and must never collect a
     # row of passes because each individual check found its field absent.

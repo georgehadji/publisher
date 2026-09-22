@@ -33,7 +33,9 @@ def _deterministic_timestamp(ctx: StageCtx) -> str:
 
 @stage(
     name="preflight",
-    version=6,   # v6: module-level bump -- same file as cover/finish-gs (U6); v5 fixed the page count
+    version=7,   # v7: consumes pagemap/1 and gates on composition (widows/orphans/
+                 # runts) -- see preflight.check_composition. v6: module-level bump --
+                 # same file as cover/finish-gs (U6); v5 fixed the page count
                  # for every Ghostscript-produced file (see preflight._PAGE_RE).
     # Input dict KEYS are bound to the stage function's parameter names by the
     # executor (`decl.fn(ctx, **stage_inputs)`), not just documentation. The
@@ -41,8 +43,14 @@ def _deterministic_timestamp(ctx: StageCtx) -> str:
     # parameters (`pdf_path`, `profile_name`) -- a TypeError waiting to happen the
     # first time this stage actually ran with resolved inputs. It never had, because
     # nothing imported stages.prepress_stages before F2.3 (see tracer_bullet.py).
-    inputs={"pdf_path": "pdfx/1", "profile_name": "profile/1"},
+    inputs={"pdf_path": "pdfx/1", "profile_name": "profile/1",
+            "pagemap_path": "pagemap/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
+    # `pagemap_path` is NOT root: pagemap/1 comes from whichever render path the
+    # registry bound (paginate or paginate-typst), the same path that produced the
+    # PDF being preflighted. Declaring it required is what stops a book reaching
+    # delivery with its composition never looked at -- the same mechanism by which
+    # `package` requiring preflight/1 stops one being packaged unverified.
     outputs={"report": "preflight/1"},
     toolchain=["pdfprobe"],
     fixtures="fixtures/preflight/v1",
@@ -55,15 +63,25 @@ def _deterministic_timestamp(ctx: StageCtx) -> str:
     queue="q.prepress",
     description="Vendor preflight gate — blocks delivery on any error-level failure",
 )
-def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -> StageResult:
+def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "",
+                    pagemap_path: str = "") -> StageResult:
     """
     Run preflight checks against a vendor profile.
     """
     if not pdf_path:
         raise StageError(kind=ErrorKind.BAD_INPUT, message="pdf_path is required")
-    
+
+    # An absent pagemap is not an error here: `check_composition` reports it as
+    # "not measured" (a warning), which is the honest verdict and distinct from
+    # "measured, clean". The DAG is what guarantees one is normally present.
+    pagemap = None
+    if pagemap_path and Path(pagemap_path).exists():
+        pagemap = json.loads(Path(pagemap_path).read_bytes())
+
     profile = load_profile(profile_name) if profile_name else _default_profile()
-    report = run_preflight(pdf_path, profile, created_at=_deterministic_timestamp(ctx))
+    report = run_preflight(pdf_path, profile,
+                           created_at=_deterministic_timestamp(ctx),
+                           pagemap=pagemap)
     report_dict = report.to_dict()
     
     cas_root = Path(ctx.cas_root)
@@ -122,7 +140,7 @@ def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -
 
 @stage(
     name="cover",
-    version=3,   # v3: page_count input schema "integer" -> "page-count/1" (U6); v2 dropped the
+    version=4,   # v4: module-level bump -- same file as preflight (U6). v3: page_count input schema "integer" -> "page-count/1"; v2 dropped the
                  # cover_art root input (art generation is the separate cover-brief/cover-art/
                  # cover-judge fan-out in stages/cover_stages.py -- see COVER_DESIGN.md §0/§1).
     # "profile" -> "profile_name" to match this function's actual parameter name;
@@ -193,7 +211,7 @@ def cover_stage(ctx: StageCtx, page_count: int = 0, profile_name: str = "") -> S
 
 @stage(
     name="cover-preflight",
-    version=2,   # v2: module-level bump -- same file as cover/finish-gs (U6)
+    version=3,   # v3: module-level bump -- same file as preflight (U6); v2 likewise
     inputs={"pdf_path": "cover-raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
     # Distinct output kind from `preflight`'s -- both stages emit content that
@@ -259,7 +277,7 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
 
 @stage(
     name="finish-gs",
-    version=8,   # v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
+    version=9,   # v9: module-level bump -- same file as preflight (U6); v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     # "pdf" -> "pdf_path", "profile" -> "profile_name": see the note on preflight
     # above for why the input dict's KEYS must exactly match this function's

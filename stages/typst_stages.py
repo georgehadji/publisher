@@ -259,7 +259,7 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
 
 @stage(
     name="design-compile-typst",
-    version=1,
+    version=2,   # v2: module-level bump (U6) -- pagemap/1 is no longer terminal
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"typ": TYPST_SCHEMA},
     root_inputs=["designspec_path", "profile_name"],
@@ -510,10 +510,13 @@ class _MeasuredPage:
 
 @stage(
     name="paginate-typst",
-    version=1,
+    version=2,   # v2: module-level bump (U6) -- pagemap/1 is no longer terminal
     inputs={"doc_path": "doc-effective/1", "typ_path": TYPST_SCHEMA},
     outputs={"pdf": "raw-pdf/1", "pagemap": "pagemap/1"},
-    terminal_outputs=["pagemap"],
+    # Not terminal: `preflight` consumes pagemap/1 (see stages/paginate_stage.py).
+    # This path composes without a box tree to walk, so the pages it emits carry
+    # no composition flags and preflight reports them as "not measured" rather
+    # than clean.
     implements="paginate",   # alternative to the weasyprint/CSS renderer
     toolchain=["typst", "pandoc"],
     fixtures=None,
