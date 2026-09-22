@@ -125,6 +125,126 @@ def _chapter_start_pages(chapters: list[dict], rendered_pages) -> dict[str, int]
     return starts
 
 
+# Words on a paragraph's final line at or below which the line reads as a runt.
+# One word is the uncontroversial case; two is already a judgement call, so the
+# threshold stays where nobody has to argue about it.
+RUNT_MAX_WORDS = 1
+
+# schemas/pagemap/pagemap.schema.json caps paraRanges at 200 entries per page.
+MAX_PARA_RANGES = 200
+
+
+def _measure_pages(rendered_pages) -> dict[int, dict]:
+    """Per-page composition measurements, walked out of the renderer's box tree.
+
+    Returns `{pageNumber: {...pagemap/1 page fields...}}`, or `{}` when nothing
+    could be measured.
+
+    That distinction is the whole point, and it is why this never falls back to
+    emitting the flags as False. In `pagemap/1` these fields are optional, so
+    ABSENT means "not measured" and `false` means "measured, none found". A
+    consumer that cannot tell those apart certifies unmeasured books as clean --
+    which is precisely what the pagescan path did before this function existed:
+    `platform/pagescan`'s detectors read these hints, nothing ever set them, so
+    every book scanned clean.
+
+    The definitions here are the typographic ones. `platform/pagescan/src/lib.rs`
+    inverts them in its own comments -- its `detect_orphans` describes a widow --
+    so do not "fix" these to agree with it:
+      - orphan: a paragraph's FIRST line, alone at the BOTTOM of a page.
+      - widow:  a paragraph's LAST line, alone at the TOP of a page.
+      - runt:   a multi-line paragraph whose last line holds a single word.
+
+    ponytail: reads weasyprint's private `_page_box`; 62.x exposes no public box
+    tree. If that attribute goes away this degrades to unmeasured (fields
+    absent), never to wrong -- the blanket except below is what guarantees that,
+    so keep it blanket.
+    """
+    if not rendered_pages:
+        return {}
+    # The Typst path calls `_build_pagemap` with `_MeasuredPage` shims that carry
+    # anchors/width/height and no box tree (stages/typst_stages.py). Those pages
+    # are legitimately unmeasurable, not an error, so leave without the warning.
+    if not hasattr(rendered_pages[0], "_page_box"):
+        return {}
+    try:
+        from weasyprint.formatting_structure import boxes
+    except ImportError:
+        return {}
+
+    para_index: dict = {}                     # element -> index, document order
+    lines: dict[int, dict[int, int]] = {}     # page -> para index -> lines here
+    words: dict[int, int] = {}                # page -> word count
+    total_lines: dict[int, int] = {}          # para index -> lines everywhere
+    last_line_words: dict[int, int] = {}      # para index -> words on final line
+
+    try:
+        for page_number, page in enumerate(rendered_pages, start=1):
+            page_lines: dict[int, int] = {}
+            page_words = 0
+            for box in page._page_box.descendants():
+                if not isinstance(box, boxes.LineBox):
+                    continue
+                element = getattr(box, "element", None)
+                if element is None:
+                    continue   # anonymous box: no source paragraph to attribute
+                if element not in para_index:
+                    para_index[element] = len(para_index)
+                index = para_index[element]
+                page_lines[index] = page_lines.get(index, 0) + 1
+                total_lines[index] = total_lines.get(index, 0) + 1
+                line_words = sum(
+                    len(child.text.split())
+                    for child in box.descendants()
+                    if isinstance(child, boxes.TextBox)
+                )
+                page_words += line_words
+                # Overwritten per line; pages and the boxes within them both walk
+                # in document order, so the value left standing when the walk ends
+                # is that paragraph's genuinely final line.
+                last_line_words[index] = line_words
+            lines[page_number] = page_lines
+            words[page_number] = page_words
+    except Exception as exc:
+        print(f"  [paginate] composition not measured ({type(exc).__name__}: {exc})")
+        return {}
+
+    spans: dict[int, list[int]] = {}
+    for page_number, page_lines in lines.items():
+        for index in page_lines:
+            spans.setdefault(index, []).append(page_number)
+
+    measured: dict[int, dict] = {}
+    for page_number, page_lines in lines.items():
+        orphan = widow = runt = False
+        for index, count in page_lines.items():
+            where = spans[index]
+            if count == 1 and len(where) > 1:
+                if page_number == where[0]:
+                    orphan = True    # first line stranded, paragraph continues
+                elif page_number == where[-1]:
+                    widow = True     # last line stranded, paragraph began earlier
+            if (
+                page_number == where[-1]
+                and total_lines.get(index, 0) > 1
+                and last_line_words.get(index, 0) <= RUNT_MAX_WORDS
+            ):
+                runt = True
+        entry: dict = {
+            "hasOrphans": orphan,
+            "hasWidows": widow,
+            "hasRunts": runt,
+            "wordCount": words[page_number],
+        }
+        if page_lines:
+            entry["paraRanges"] = [
+                {"paraIndex": i, "linesOnPage": c}
+                for i, c in sorted(page_lines.items())
+            ][:MAX_PARA_RANGES]
+        measured[page_number] = entry
+    return measured
+
+
 def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dict:
     """Assemble a `pagemap/1` describing which chapter occupies which page.
 
@@ -180,8 +300,14 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
         width_pt = float(getattr(rendered_pages[0], "width", width_pt))
         height_pt = float(getattr(rendered_pages[0], "height", height_pt))
 
-    pages = [
-        {
+    # Composition measurements, where the renderer laid out a box tree to walk.
+    # Pages missing from this map keep only the structural fields below, which
+    # reads downstream as "not measured" rather than "measured and clean".
+    measured = _measure_pages(rendered_pages)
+
+    pages = []
+    for p in range(1, page_count + 1):
+        entry = {
             "pageNumber": p,
             "folio": p,
             "side": "recto" if p % 2 == 1 else "verso",
@@ -191,15 +317,18 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
             # requires a chapterId, so they are attributed to chapter one.
             "chapterId": owner_of_page.get(p, first_chapter),
         }
-        for p in range(1, page_count + 1)
-    ]
+        entry.update(measured.get(p, {}))
+        pages.append(entry)
 
     return {"schema": "pagemap/1", "pages": pages, "chapters": entries}
 
 
 @stage(
     name="paginate",
-    version=4,   # v4: pagemap/1 declared terminal (U6)
+    version=5,   # v5: pagemap/1 carries measured composition data (paraRanges,
+                 # wordCount, widow/orphan/runt flags) walked out of the
+                 # renderer's box tree -- see _measure_pages. v4: pagemap/1
+                 # declared terminal (U6).
     inputs={"doc_path": "doc-effective/1", "css_path": "text/css"},
     # NEITHER is a root input: `css_path`'s schema (text/css) is produced by
     # `design-compile`; `doc_path`'s (doc-effective/1) by `resolve`, which itself
