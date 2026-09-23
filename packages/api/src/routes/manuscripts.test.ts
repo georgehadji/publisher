@@ -12,6 +12,7 @@ import { LOW_CONFIDENCE_BELOW, orphanedOps, structureView } from './manuscripts.
 const para = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text }] });
 const chapter = (n: number, title: string, confidence?: number) => ({
   type: 'chapter',
+  sourceRef: { docxId: `chapter:${n}` },
   attrs: { number: n, id: `ch${n}`, title },
   content: [para(`prose of ${title}`)],
   ...(confidence === undefined ? {} : { confidence }),
@@ -37,11 +38,38 @@ describe('structureView', () => {
       backMatter: [{ type: 'colophon', content: [para('COLOPHON')], confidence: 0.9 }],
     });
     expect(lowConfidenceNodes).toEqual([
-      { root: 'frontMatter', index: 0, type: 'titlePage', title: null,
+      { root: 'frontMatter', index: 0, type: 'titlePage', title: null, docxId: null,
         text: 'DEDICATION', confidence: 0.5 },
-      { root: 'body', index: 1, type: 'chapter', title: 'NO!',
+      { root: 'body', index: 1, type: 'chapter', title: 'NO!', docxId: 'chapter:2',
         text: 'prose of NO!', confidence: 0.7 },
     ]);
+  });
+
+  it('gives each chapter the id an override op targets it by', () => {
+    const { chapters } = structureView({ body: [chapter(1, 'One'), chapter(2, 'Two')] });
+    expect(chapters.map((c: any) => c.docxId)).toEqual(['chapter:1', 'chapter:2']);
+  });
+
+  it('an untagged node is untargetable, not given a made-up id', () => {
+    // An AST from before ingest v4: nothing carries a sourceRef.
+    const { chapters } = structureView({
+      body: [{ type: 'chapter', attrs: { number: 1, id: 'ch1', title: 'One' }, content: [] }],
+    });
+    expect(chapters[0].docxId).toBeNull();
+  });
+
+  it('every id the view shows is one an op can land on', () => {
+    // The view and orphanedOps share one notion of target; if they drifted, a
+    // reviewer could aim an op at a shown id and see it reported orphaned.
+    const ast = { body: [chapter(1, 'One', 0.5), chapter(2, 'Two', 0.95)] };
+    const { chapters, lowConfidenceNodes } = structureView(ast);
+    const shown = [...chapters, ...(lowConfidenceNodes ?? [])].map((n: any) => n.docxId);
+    expect(shown.every((id: any) => typeof id === 'string')).toBe(true);
+    const ops = shown.map((docxId: string, i: number) => ({
+      id: `ov-${i}`, sourceRef: { docxId }, op: 'retitle', value: 'X', actor: 'u',
+      at: '2026-01-01T00:00:00Z',
+    }));
+    expect(orphanedOps(ast, ops)).toEqual([]);
   });
 
   it('the review line is exclusive, as in rules.find_low_confidence', () => {

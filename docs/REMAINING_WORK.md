@@ -99,10 +99,14 @@ the report lives where the reviewer looks, not in the build log.
 node with no `attrs.title` (a paragraph) is returned unchanged by `_t_retitle`, and nothing
 reports that either.
 
-**Work:** expose each node's `docxId` in the structure view so a reviewer, or the UI, can
-aim an op at it; then one Next.js route that renders the panel. Front- and
-back-matter section wrappers carry no `sourceRef` in the schema, so they can't be targeted
-directly; their contents can. The web client's `OverrideOp` type
+**Node ids — done.** `GET /v1/manuscripts/:id/structure` gives every chapter and every
+`lowConfidenceNodes` entry a `docxId`: the id an op must carry to target it, or `null` when
+nothing can (a front/back-matter section wrapper — the schema gives it no `sourceRef`, only
+its contents — or any node of a pre-v4 AST). The view and `orphanedOps` share one
+`docxIdOf`, and a test pins that every id the view shows is one an op lands on.
+
+**Work:** one Next.js route that renders the panel. The panel's own types still drift from
+the API: `ChapterReview.id` and `.ambiguities` are declared but never sent. The web client's `OverrideOp` type
 (`packages/web/src/types.ts`) is also not the schema's shape — `sourceRef: string`,
 `createdAt` — so what it sends is now correctly refused with a 400.
 
@@ -337,5 +341,5 @@ into impossible states.
    to surface bugs nobody has predicted.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
-3. **§1.1 — expose node ids in the structure view.** The override loop works end to end
-   and orphaned ops are reported, but a reviewer can't see the `docxId` to aim a new op at.
+3. **§1.1 — mount the review panel.** The override loop works end to end, orphaned ops are
+   reported, and the structure view exposes the ids ops target. Nothing renders it yet.

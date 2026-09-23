@@ -349,6 +349,19 @@ function firstText(node: any): string {
 }
 
 /**
+ * The id an override op must carry to target `node`, or `null` when nothing can
+ * target it. The one definition of "target" -- `structureView` exposes these and
+ * `orphanedOps` matches against them, so an id the view shows is never reported
+ * orphaned. Mirrors publisher_structure.overrides `_matches`: `sourceRef.docxId`,
+ * a bare-string sourceRef, or sourceRefLink.
+ */
+function docxIdOf(node: any): string | null {
+  const src = node?.sourceRef ?? node?.sourceRefLink;
+  if (typeof src === 'string') return src;
+  return typeof src?.docxId === 'string' ? src.docxId : null;
+}
+
+/**
  * The structure review's view of an `ast/1` document.
  *
  * Confidence is reported as the AST carries it, never defaulted. It used to be a
@@ -360,6 +373,12 @@ function firstText(node: any): string {
  * all (one built before ingest v3): "not measured" and "measured, nothing low"
  * are different answers, and collapsing them is what certified unmeasured books
  * as clean on the composition path too.
+ *
+ * Each entry carries `docxId`, the id an override op aims at -- without it a
+ * reviewer could see a doubtful chapter and have no way to address it. `null`
+ * means untargetable: a front/back-matter section wrapper (the schema gives it
+ * no sourceRef; its contents have one), or any node of an AST from before
+ * ingest v4.
  */
 export function structureView(ast: any) {
   const chapters = (ast?.body ?? [])
@@ -367,6 +386,7 @@ export function structureView(ast: any) {
     .map((node: any) => ({
       number: node.attrs?.number ?? null,
       title: node.attrs?.title ?? '',
+      docxId: docxIdOf(node),
       confidence: typeof node.confidence === 'number' ? node.confidence : null,
     }));
 
@@ -388,6 +408,7 @@ export function structureView(ast: any) {
           index,
           type: node.type,
           title: node.attrs?.title ?? null,
+          docxId: docxIdOf(node),
           text: firstText(node).slice(0, 100),
           confidence: node.confidence,
         }))
@@ -409,8 +430,8 @@ export function structureView(ast: any) {
  *
  * Mirrors publisher_structure.overrides `_matches` and `_CHILD_KEYS` exactly --
  * any node reached through content/frontMatter/backMatter/body, matched on
- * `sourceRef.docxId` (or a bare-string sourceRef, or sourceRefLink) -- so an op
- * is reported orphaned here exactly when resolve would skip it.
+ * `docxIdOf` -- so an op is reported orphaned here exactly when resolve would
+ * skip it.
  */
 export function orphanedOps(ast: any, ops: any[]) {
   const ids = new Set<string>();
@@ -420,9 +441,8 @@ export function orphanedOps(ast: any, ops: any[]) {
       return;
     }
     if (!node || typeof node !== 'object') return;
-    const src = node.sourceRef ?? node.sourceRefLink;
-    if (typeof src === 'string') ids.add(src);
-    else if (typeof src?.docxId === 'string') ids.add(src.docxId);
+    const id = docxIdOf(node);
+    if (id !== null) ids.add(id);
     for (const key of ['content', 'frontMatter', 'backMatter', 'body']) walk(node[key]);
   };
   walk(ast);

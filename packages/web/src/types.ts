@@ -23,6 +23,8 @@ export interface ChapterReview {
   title: string;
   id: string;
   pageCount?: number;
+  /** The `sourceRef.docxId` an override op targets; `null` = untargetable. */
+  docxId: string | null;
   /** As the AST carries it; `null` means unscored, never "certain". */
   confidence: number | null;
   ambiguities: Ambiguity[];
@@ -37,6 +39,8 @@ export interface LowConfidenceNode {
   index: number;
   type: string;
   title: string | null;
+  /** `null` for a front/back-matter section wrapper: the schema gives it no sourceRef. */
+  docxId: string | null;
   text: string;
   confidence: number;
 }
