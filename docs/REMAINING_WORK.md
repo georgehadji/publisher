@@ -48,17 +48,19 @@ The "first human gate" is three disconnected pieces.
 
 So: the panel cannot be opened, and nothing carries the now-stored log to a build.
 
-**Blocker for the consumer, found while persisting:** `resolve` parses ops with
-`OverrideOp(**op)`, and the Python `OverrideOp` dataclass does not match the schema it
-reads. It has `from_value`/`to_value`/`created_at` where `overrides/1` has `from`/`to`/`at`,
-and a string `sourceRef` where the schema has an object. A schema-valid op, exactly
-what the API now stores, crashes it: `TypeError: OverrideOp.__init__() got an unexpected
-keyword argument 'from'`. It has only ever been fed the dataclass's own shape, by
-`tracer_bullet.py` and tests.
+**Parser — done.** `resolve` used to build ops with `OverrideOp(**op)`, and the Python
+dataclass does not match the schema (`from_value`/`to_value`/`created_at` for
+`from`/`to`/`at`, a flat string `sourceRef` for the schema's object). So the first
+schema-valid op raised `TypeError: … unexpected keyword argument 'from'`. It now goes
+through `publisher_structure.overrides.parse_overrides`: strict (an unknown field is an
+error, not dropped), it requires `schema: "overrides/1"`, and it checks the schema's
+per-op requirements. Each mapping table is pinned to the schema file by a test. A
+malformed log is `BAD_INPUT` with an `override-log-malformed` diagnostic. `resolve` is
+at v3.
 
-**Work:** make `resolve` parse `overrides/1` ops (the schema is the contract); have the
-worker write a manuscript's log to the CAS and pass it as `overrides_path`; add one Next.js
-route that renders the panel. The web client's `OverrideOp` type
+**Work:** have the worker write a manuscript's log from `override_ops` to the CAS and pass
+it to the build as `overrides_path` (the worker role also needs `SELECT` on
+`override_ops`); add one Next.js route that renders the panel. The web client's `OverrideOp` type
 (`packages/web/src/types.ts`) is also not the schema's shape — `sourceRef: string`,
 `createdAt` — so what it sends is now correctly refused with a 400.
 
@@ -293,5 +295,5 @@ into impossible states.
    to surface bugs nobody has predicted.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
-3. **§1.1 — make `resolve` read `overrides/1` ops, then feed the stored log to a build.**
-   Persistence is done; the Python parser is the one thing that would crash on real ops.
+3. **§1.1 — feed the stored log to a build.** Ops are persisted and `resolve` reads their
+   shape; the worker passing `override_ops` as `overrides_path` is the last link.

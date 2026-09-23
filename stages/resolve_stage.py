@@ -27,14 +27,16 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "structure"))
 from publisher_structure.overrides import (
-    apply_overrides, OverrideOp, UnsupportedOverrideOp,
+    apply_overrides, parse_overrides, MalformedOverrideOp, OverrideOp, UnsupportedOverrideOp,
 )
 
 
 @stage(
     name="resolve",
-    version=2,   # v2: an override op with no transform now fails the build instead of
+    version=3,   # v2: an override op with no transform now fails the build instead of
                  # being skipped -- see publisher_structure.overrides.UnsupportedOverrideOp.
+                 # v3: reads the overrides/1 shape (`from`/`to`/`at`, object sourceRef)
+                 # via parse_overrides; v2's OverrideOp(**op) raised TypeError on it.
     inputs={"ast": "ast/1", "overrides_path": "overrides/1"},
     root_inputs=["overrides_path"],
     optional_root_inputs=["overrides_path"],  # absence means zero overrides, not missing
@@ -61,8 +63,21 @@ def resolve(ctx: StageCtx, ast: str | None = None, overrides_path: str | None = 
         ops_path = Path(overrides_path)
         if not ops_path.exists():
             raise StageError(kind=ErrorKind.BAD_INPUT, message=f"Overrides input not found: {overrides_path}")
-        raw_ops = json.loads(ops_path.read_bytes()).get("ops", [])
-        ops = [OverrideOp(**op) for op in raw_ops]
+        try:
+            ops = parse_overrides(json.loads(ops_path.read_bytes()))
+        except (MalformedOverrideOp, json.JSONDecodeError) as exc:
+            raise StageError(
+                kind=ErrorKind.BAD_INPUT,
+                message=f"override log is not a valid overrides/1 document: {exc}",
+                diagnostics=[Diagnostic(
+                    code="override-log-malformed",
+                    severity="error",
+                    human_message=str(exc),
+                    suggested_fix="Override ops enter through PATCH /v1/documents/:id/overrides, "
+                                  "which validates them against overrides/1; a log written "
+                                  "any other way must match that schema exactly.",
+                )],
+            ) from exc
 
     try:
         effective = apply_overrides(ast_doc, ops)

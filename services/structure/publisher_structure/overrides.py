@@ -382,6 +382,74 @@ class UnsupportedOverrideOp(ValueError):
     """
 
 
+# ── Reading `overrides/1` ───────────────────────────────────────
+#
+# `OverrideOp` predates schemas/overrides/overrides.schema.json and names four
+# things differently: the schema's `from`/`to`/`at` are `from_value`/`to_value`/
+# `created_at` here, and the schema's `sourceRef` OBJECT is flattened into three
+# attributes. `resolve` used to do `OverrideOp(**op)`, so the first schema-valid
+# op -- exactly what the API stores -- raised `TypeError: unexpected keyword
+# argument 'from'`. These tables are the one place the two shapes meet;
+# test_override_schema_parsing.py pins each of them to the schema file.
+
+_OP_FIELDS = {
+    "id": "id", "op": "op", "actor": "actor", "path": "path",
+    "from": "from_value", "to": "to_value", "value": "value",
+    "rationale": "rationale", "at": "created_at",
+}
+_SOURCE_REF_FIELDS = {
+    "docxId": "sourceRef", "contentHash": "sourceContentHash", "fallbackText": "sourceFallbackText",
+}
+_REQUIRED = ("id", "sourceRef", "op", "actor", "at")
+# The schema's allOf/if/then: fields an op is meaningless without. A reclassify
+# with no `to` would set the node's type to None.
+_OP_REQUIRES = {"reclassify": ("from", "to"), "retitle": ("value",), "flag_ambiguity": ("rationale",)}
+
+
+class MalformedOverrideOp(ValueError):
+    """An override log entry that is not a valid `overrides/1` op."""
+
+
+def parse_override_op(raw: Any) -> OverrideOp:
+    """One `overrides/1` op -> `OverrideOp`. Strict: an unknown field is an
+    error, not dropped -- a field this layer does not read is a decision it
+    would silently ignore."""
+    if not isinstance(raw, dict):
+        raise MalformedOverrideOp(f"override op must be an object, got {type(raw).__name__}")
+    label = raw.get("id", "<no id>")
+    missing = [k for k in _REQUIRED if k not in raw]
+    missing += [k for k in _OP_REQUIRES.get(raw.get("op"), ()) if k not in raw]
+    unknown = sorted(set(raw) - set(_OP_FIELDS) - {"sourceRef"})
+    ref = raw.get("sourceRef")
+    if "sourceRef" in raw:
+        if not isinstance(ref, dict) or "docxId" not in ref:
+            missing.append("sourceRef.docxId")
+        else:
+            unknown += [f"sourceRef.{k}" for k in sorted(set(ref) - set(_SOURCE_REF_FIELDS))]
+    if missing or unknown:
+        raise MalformedOverrideOp(
+            f"override {label!r} is not a valid overrides/1 op"
+            + (f"; missing: {', '.join(missing)}" if missing else "")
+            + (f"; unknown: {', '.join(unknown)}" if unknown else "")
+        )
+    fields = {attr: raw[k] for k, attr in _OP_FIELDS.items() if k in raw}
+    fields.update({attr: ref[k] for k, attr in _SOURCE_REF_FIELDS.items() if k in ref})
+    return OverrideOp(**fields)
+
+
+def parse_overrides(document: Any) -> list[OverrideOp]:
+    """An `overrides/1` document -> its ops, in log order."""
+    if not isinstance(document, dict) or document.get("schema") != "overrides/1":
+        # Anything else read as "no ops" would build the book as if no reviewer
+        # had touched it.
+        found = document.get("schema") if isinstance(document, dict) else type(document).__name__
+        raise MalformedOverrideOp(f"expected an overrides/1 document, got {found!r}")
+    ops = document.get("ops")
+    if not isinstance(ops, list):
+        raise MalformedOverrideOp("overrides/1 document has no `ops` list")
+    return [parse_override_op(op) for op in ops]
+
+
 def apply_overrides(ast: dict, ops: list[OverrideOp]) -> dict:
     """
     Apply override operations to an AST.
