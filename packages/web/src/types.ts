@@ -12,7 +12,8 @@ export interface StructureReview {
   buildId: string;
   title: string;
   chapters: ChapterReview[];
-  lowConfidenceNodes: LowConfidenceNode[];
+  /** `null` when the AST carries no scores: not measured, which is not "none low". */
+  lowConfidenceNodes: LowConfidenceNode[] | null;
   overrides: OverrideOp[];
 }
 
@@ -22,17 +23,22 @@ export interface ChapterReview {
   title: string;
   id: string;
   pageCount?: number;
-  confidence: number;
+  /** As the AST carries it; `null` means unscored, never "certain". */
+  confidence: number | null;
   ambiguities: Ambiguity[];
 }
 
-/** A node the rules engine marked as low-confidence. */
+/**
+ * A section whose structural type ingest was unsure of (below 0.8) -- a
+ * chapter, or a front/back-matter section. Mirrors the API's `structureView`.
+ */
 export interface LowConfidenceNode {
-  blockIndex: number;
+  root: "frontMatter" | "body" | "backMatter";
+  index: number;
+  type: string;
+  title: string | null;
   text: string;
-  suggested: string;
   confidence: number;
-  alternatives: string[];
 }
 
 /** An ambiguity flagged for human attention. */

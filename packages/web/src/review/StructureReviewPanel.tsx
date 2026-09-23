@@ -55,7 +55,11 @@ export function StructureReviewPanel({
             Select a chapter to review its structure and low-confidence nodes.
           </p>
         )}
-        {review.lowConfidenceNodes.length > 0 && (
+        {review.lowConfidenceNodes === null ? (
+          <p style={styles.placeholder}>
+            This build's structure was not scored, so nothing here has been checked.
+          </p>
+        ) : review.lowConfidenceNodes.length > 0 && (
           <LowConfidenceSection
             nodes={review.lowConfidenceNodes}
             onOverride={onOverride}
@@ -75,7 +79,9 @@ function ChapterCard({
   active: boolean;
   onClick: () => void;
 }) {
-  const hasIssues = chapter.ambiguities.length > 0 || chapter.confidence < 0.8;
+  // Unscored counts as an issue: not measured is not certain.
+  const hasIssues = chapter.ambiguities.length > 0
+    || chapter.confidence === null || chapter.confidence < 0.8;
   return (
     <div
       onClick={onClick}
@@ -89,7 +95,8 @@ function ChapterCard({
         Ch. {chapter.number}: {chapter.title}
       </div>
       <div style={styles.chapterMeta}>
-        Confidence: {(chapter.confidence * 100).toFixed(0)}%
+        Confidence:{" "}
+        {chapter.confidence === null ? "unscored" : `${(chapter.confidence * 100).toFixed(0)}%`}
         {hasIssues && <span style={{ color: "#f0ad4e" }}> ⚠</span>}
       </div>
     </div>
@@ -144,16 +151,11 @@ function LowConfidenceSection({
       <h3>Low-Confidence Nodes ({nodes.length})</h3>
       {nodes.map((node, i) => (
         <div key={i} style={styles.lowConfCard}>
-          <p style={styles.contextText}>"{node.text}"</p>
+          <p style={styles.contextText}>"{node.title ?? node.text}"</p>
           <p>
-            Suggested: <strong>{node.suggested}</strong> (confidence:{" "}
+            Read as <strong>{node.type}</strong> in {node.root} (confidence:{" "}
             {(node.confidence * 100).toFixed(0)}%)
           </p>
-          {node.alternatives?.length > 0 && (
-            <div style={styles.alternatives}>
-              Alternatives: {node.alternatives.join(", ")}
-            </div>
-          )}
         </div>
       ))}
     </div>
@@ -233,10 +235,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: "#555",
     fontStyle: "italic",
-  },
-  alternatives: {
-    fontSize: 12,
-    color: "#888",
-    marginTop: 4,
   },
 };

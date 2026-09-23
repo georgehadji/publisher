@@ -98,11 +98,14 @@ same; multi-line titles take the weakest line; front matter carries the boundary
 confidence (0.85 found by prose, 0.5 fallback); back matter by pattern 0.9. `ingest`
 stage bumped to v3. `query_nodes` now filters only types that can carry a score.
 
+**Also done:** the API's `GET /v1/manuscripts/:id/structure` reads those scores through
+`structureView` (`packages/api/src/routes/manuscripts.ts`) instead of hardcoding
+`confidence: 1.0` and `lowConfidenceNodes: []`. An unscored chapter reports `null`, not 1.0.
+`lowConfidenceNodes` lists every section below 0.8 across all three roots, and is `null` —
+not `[]` — when the AST carries no scores or no build has run. The web contract
+(`packages/web/src/types.ts`) and panel were brought in line.
+
 **Still open:**
-- `packages/api/src/routes/manuscripts.ts:193` still hardcodes `confidence: 1.0` for every
-  chapter; it should read the node's value (absent → `null`, and `packages/web/src/types.ts`
-  `confidence: number` then needs to allow `null`).
-- `manuscripts.ts:182` and `:200` still hardcode `lowConfidenceNodes: []`.
 - The six `corpus/manuscripts/*.ast.json` predate this and carry no scores. They're valid
   (the field is optional), but they exercise only the unscored path.
 - Nothing consumes `classification/1` (probably `resolve` should, as proposed overrides).
@@ -279,8 +282,7 @@ into impossible states.
 
 1. **§3.1 — get real DOCX files into `corpus/`.** Cheapest, and the only item here likely
    to surface bugs nobody has predicted.
-2. **§1.3 — make the API read the confidence the AST now carries.** The AST half is done.
-   The hardcoded `confidence: 1.0` and `lowConfidenceNodes: []` in `manuscripts.ts` are
-   now the only thing between measured scores and an honest review UI.
+2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
+   API reports them without defaulting. What's left there is consuming `classification/1`.
 3. **§1.1 — persist override ops on PATCH and feed them to a build's root input.** Closes
    the one loop where every other piece is already built and tested.

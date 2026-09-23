@@ -179,25 +179,16 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
           manuscriptId: request.params.id,
           status: 'pending',
           chapters: [],
-          lowConfidenceNodes: [],
+          lowConfidenceNodes: null,   // nothing measured yet -- see structureView
           overrides: [],
         };
       }
 
       const ast = JSON.parse(await readCasFile(artifact.sha256));
-      const chapters = (ast.body ?? [])
-        .filter((node: any) => node.type === 'chapter')
-        .map((node: any) => ({
-          number: node.attrs?.number ?? null,
-          title: node.attrs?.title ?? '',
-          confidence: 1.0,
-        }));
-
       return {
         manuscriptId: request.params.id,
         status: 'ready',
-        chapters,
-        lowConfidenceNodes: [],
+        ...structureView(ast),
         overrides: [],
       };
     }
@@ -231,4 +222,70 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
       };
     }
   );
+}
+
+/**
+ * Below this, a structural decision goes to review. The same line
+ * `publisher_structure.rules.find_low_confidence` and ingest's scores are set
+ * against (LLM_STRATEGY.md §5).
+ */
+export const LOW_CONFIDENCE_BELOW = 0.8;
+
+const SECTION_ROOTS = ['frontMatter', 'body', 'backMatter'] as const;
+
+function firstText(node: any): string {
+  if (node?.type === 'text') return node.text ?? '';
+  for (const child of Array.isArray(node?.content) ? node.content : []) {
+    const text = firstText(child);
+    if (text) return text;
+  }
+  return '';
+}
+
+/**
+ * The structure review's view of an `ast/1` document.
+ *
+ * Confidence is reported as the AST carries it, never defaulted. It used to be a
+ * literal 1.0 for every chapter, beside a literal `lowConfidenceNodes: []` -- so
+ * every book reviewed as certain, because nothing read the scores ingest now
+ * records.
+ *
+ * `lowConfidenceNodes` is `null`, not `[]`, when the AST carries no scores at
+ * all (one built before ingest v3): "not measured" and "measured, nothing low"
+ * are different answers, and collapsing them is what certified unmeasured books
+ * as clean on the composition path too.
+ */
+export function structureView(ast: any) {
+  const chapters = (ast?.body ?? [])
+    .filter((node: any) => node?.type === 'chapter')
+    .map((node: any) => ({
+      number: node.attrs?.number ?? null,
+      title: node.attrs?.title ?? '',
+      confidence: typeof node.confidence === 'number' ? node.confidence : null,
+    }));
+
+  const sections = SECTION_ROOTS.flatMap((root) =>
+    (Array.isArray(ast?.[root]) ? ast[root] : []).map((node: any, index: number) => ({
+      root,
+      index,
+      node,
+    }))
+  );
+  const scored = sections.some(({ node }) => typeof node?.confidence === 'number');
+
+  const lowConfidenceNodes = scored
+    ? sections
+        .filter(({ node }) => typeof node.confidence === 'number'
+          && node.confidence < LOW_CONFIDENCE_BELOW)
+        .map(({ root, index, node }) => ({
+          root,
+          index,
+          type: node.type,
+          title: node.attrs?.title ?? null,
+          text: firstText(node).slice(0, 100),
+          confidence: node.confidence,
+        }))
+    : null;
+
+  return { chapters, lowConfidenceNodes };
 }
