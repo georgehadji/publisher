@@ -166,7 +166,10 @@ def _check_zip_limits(source: Path) -> None:
     # v2: a legacy binary .doc is converted to .docx with LibreOffice before
     # parsing. v1 rejected those bytes outright, so no v1 result may be replayed
     # for an upload this version now accepts.
-    version=2,
+    # v3: chapters and front/back-matter sections carry `confidence`, scored by
+    # docx_to_ast from the evidence each decision rested on. A cached v2 AST has
+    # none, and would read downstream as "unscored" for every book.
+    version=3,
     inputs={"docx_path": "raw-docx/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["docx_path"],

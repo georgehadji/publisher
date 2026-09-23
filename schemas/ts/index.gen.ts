@@ -58,6 +58,9 @@ export const SourceRefLinkSchema = z.object({
 });
 export type SourceRefLink = z.infer<typeof SourceRefLinkSchema>;
 
+export const ConfidenceSchema = z.number().min(0).max(1);
+export type Confidence = z.infer<typeof ConfidenceSchema>;
+
 export const Part_TypeSchema: z.ZodTypeAny = z.enum(["part"]);
 export type Part_Type = z.infer<typeof Part_TypeSchema>;
 
@@ -594,6 +597,7 @@ export const ChapterSchema = z.object({
   "attrs": z.lazy(() => Chapter_AttrsSchema),
   "content": z.array(z.lazy(() => BlockNodeSchema)).min(1),
   "sourceRef": SourceRefLinkSchema.optional(),
+  "confidence": ConfidenceSchema.optional(),
 });
 export type Chapter = z.infer<typeof ChapterSchema>;
 

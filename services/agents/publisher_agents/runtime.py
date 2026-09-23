@@ -424,6 +424,18 @@ class ToolUnavailable(RuntimeError):
     """
 
 
+# The node types `ast/1` lets carry a `confidence`: chapters and the front/back
+# matter sections. Mirrored from the schema rather than read from it at runtime;
+# test_agent_tools asserts the two stay equal.
+SCORED_TYPES = frozenset({
+    "chapter",
+    "halfTitle", "titlePage", "copyrightPage", "dedication", "toc",
+    "foreword", "preface", "acknowledgments", "prologue",
+    "epilogue", "afterword", "appendix", "notes", "bibliography", "index",
+    "aboutTheAuthor", "alsoBy", "colophon",
+})
+
+
 def _walk_nodes(ast: dict):
     """Every node of an `ast/1` document, depth-first, in document order.
 
@@ -481,10 +493,16 @@ def _init_default_tools():
             if wanted is not None and node.get("type") not in wanted:
                 continue
             if confidence_below is not None:
+                # Only types whose structure a heuristic DECIDED can carry a score
+                # (ast.schema.json's `confidence`). A paragraph or a text run has
+                # no decision to doubt; counting it as unscored would return the
+                # whole book.
+                if node.get("type") not in SCORED_TYPES:
+                    continue
                 confidence = node.get("confidence")
-                # A node carrying no score is UNSCORED, not perfectly confident.
-                # Reading a missing score as 1.0 would hide exactly the nodes a
-                # confidence query exists to surface.
+                # A scorable node carrying no score is UNSCORED, not perfectly
+                # confident. Reading a missing score as 1.0 would hide exactly the
+                # nodes a confidence query exists to surface.
                 if confidence is not None and confidence >= confidence_below:
                     continue
             found.append(node)

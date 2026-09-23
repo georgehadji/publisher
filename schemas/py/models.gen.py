@@ -101,6 +101,9 @@ class SourceRefLink(BaseModel):
         return v
 
 
+Confidence = float
+
+
 class Part_Type(str, Enum):
     PART = "part"
 
@@ -768,6 +771,7 @@ class Chapter(BaseModel):
     attrs: Chapter_Attrs
     content: list[BlockNode]
     sourceRef: Optional[SourceRefLink] = Field(default=None)
+    confidence: Optional[Confidence] = Field(default=None)
 
 
 class Part(BaseModel):

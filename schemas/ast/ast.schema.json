@@ -99,6 +99,12 @@
       "required": ["docxId"],
       "additionalProperties": false
     },
+    "confidence": {
+      "description": "How sure the producer was that this node is the structural type it was given, on the rules engine's scale (below 0.8 escalates for review). Carried only by nodes whose type a heuristic DECIDED -- chapters and front/back-matter sections. ABSENT means not measured, which is not the same as 1.0: a reader must never default it to confident.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
     "bodyNode": {
       "oneOf": [
         { "$ref": "#/$defs/part" },
@@ -149,7 +155,8 @@
           "items": { "$ref": "#/$defs/blockNode" },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": { "$ref": "#/$defs/sourceRefLink" },
+        "confidence": { "$ref": "#/$defs/confidence" }
       },
       "required": ["type", "attrs", "content"],
       "additionalProperties": false
@@ -779,7 +786,8 @@
               "type": "array",
               "items": { "$ref": "#/$defs/blockNode" },
               "minItems": 1
-            }
+            },
+            "confidence": { "$ref": "#/$defs/confidence" }
           },
           "required": ["type", "content"],
           "additionalProperties": false
@@ -797,7 +805,8 @@
               "type": "array",
               "items": { "$ref": "#/$defs/blockNode" },
               "minItems": 1
-            }
+            },
+            "confidence": { "$ref": "#/$defs/confidence" }
           },
           "required": ["type", "content"],
           "additionalProperties": false

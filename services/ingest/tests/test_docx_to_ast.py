@@ -185,10 +185,96 @@ def test_grouping_keeps_leading_matter_untitled():
     front, body = _para("front line"), _para("body line")
     blocks = [
         Block("front line", "Normal", False, (front,)),
-        Block("TITLE", "Normal", True),
+        Block("TITLE", "Normal", True, heading_confidence=0.7),
         Block("body line", "Normal", False, (body,)),
     ]
-    assert _group_headings(blocks) == [("", [front]), ("TITLE", [body])]
+    assert _group_headings(blocks) == [("", [front], None), ("TITLE", [body], 0.7)]
+
+
+# ── Confidence: scored where the structural decision is made ────
+#
+# `rules.py` scores HTML blocks, but the real AST is built HERE, from a DOCX,
+# by heuristics that never recorded how sure they were. Every downstream reader
+# (review UI, agent tools, the API) then had nothing to read and reported the
+# book as certain. These pin both halves: the score reflects the evidence the
+# decision rested on, and the AST that carries it is still schema-valid.
+
+from publisher_ingest.docx_to_ast import (  # noqa: E402
+    BACK_MATTER_BY_PATTERN,
+    BODY_SPLIT_BY_PROSE,
+    BODY_SPLIT_FALLBACK,
+    STYLED_HEADING,
+    STYLED_UPPER_HEADING,
+    UPPER_ONLY_HEADING,
+)
+
+
+def _chapter_confidence(tmp_path, title, style):
+    path = _write(tmp_path, [(title, style), (PROSE, None)])
+    (chapter,) = docx_to_ast(path)["body"]
+    return chapter["confidence"]
+
+
+@pytest.mark.parametrize("title,style,expected", [
+    ("CHAPTER ONE", "Heading 1", STYLED_UPPER_HEADING),
+    ("Chapter One", "Heading 1", STYLED_HEADING),
+    ("CHAPTER ONE", None, UPPER_ONLY_HEADING),
+])
+def test_chapter_confidence_follows_the_evidence(tmp_path, title, style, expected):
+    assert _chapter_confidence(tmp_path, title, style) == expected
+
+
+def test_capitalisation_alone_escalates_for_review(tmp_path):
+    """The unstyled manuscript is the common case, and upper case is also what a
+    shouted line of dialogue looks like. Below 0.8 is where rules.py escalates."""
+    assert _chapter_confidence(tmp_path, "NO!", None) < 0.8
+
+
+def test_a_multi_line_title_is_as_sure_as_its_weakest_line(tmp_path):
+    path = _write(tmp_path, [("PART ONE", "Heading 1"), ("THE ROAD", None), (PROSE, None)])
+    (chapter,) = docx_to_ast(path)["body"]
+    assert chapter["attrs"]["title"] == "PART ONE THE ROAD"
+    assert chapter["confidence"] == UPPER_ONLY_HEADING
+
+
+def test_front_matter_confidence_is_the_body_boundarys(tmp_path):
+    found = docx_to_ast(_write(tmp_path, [
+        ("DEDICATION", None), ("for mum", None), ("ONE", None), (PROSE, None),
+    ]))
+    assert [f["confidence"] for f in found["frontMatter"]] == [BODY_SPLIT_BY_PROSE]
+
+    # No section clears the prose bar (a poetry collection looks like this), so
+    # the boundary is the TOC marker by default -- a guess, and scored as one.
+    (tmp_path / "guess").mkdir()
+    guessed = docx_to_ast(_write(tmp_path / "guess", [
+        ("DEDICATION", None), ("for mum", None),
+        ("ΠΕΡΙΕΧΟΜΕΝΑ", None), ("ONE", None), ("short", None),
+    ]))
+    assert [f["confidence"] for f in guessed["frontMatter"]] == [BODY_SPLIT_FALLBACK]
+
+
+def test_back_matter_confidence(tmp_path):
+    ast = docx_to_ast(_write(tmp_path, [("ONE", None), (PROSE, None), ("COLOPHON", None), ("Set in Garamond", None)]))
+    assert [b["confidence"] for b in ast["backMatter"]] == [BACK_MATTER_BY_PATTERN]
+
+
+def test_scored_ast_is_schema_valid(tmp_path):
+    """The schema is `additionalProperties: false` on every node; before
+    `confidence` was declared there, emitting it would have failed validation."""
+    jsonschema = pytest.importorskip("jsonschema")
+    import json
+    from pathlib import Path
+
+    schema_path = Path(__file__).resolve().parents[3] / "schemas" / "ast" / "ast.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    ast = docx_to_ast(_write(tmp_path, [
+        ("DEDICATION", None), ("for mum", None), ("CHAPTER ONE", "Heading 1"), (PROSE, None),
+        ("COLOPHON", None), ("Set in Garamond", None),
+    ]))
+    sections = ast["frontMatter"] + ast["body"] + ast["backMatter"]
+    assert len(ast["frontMatter"]) == len(ast["body"]) == len(ast["backMatter"]) == 1
+    assert all("confidence" in n for n in sections)
+    jsonschema.validate(ast, schema)
 
 
 # ── U5/S9: XXE verification ────────────────────────────────────

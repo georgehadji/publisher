@@ -29,22 +29,33 @@ def call(name: str, **kwargs):
     return REGISTRY.call(name, None, **kwargs)
 
 
+def _para(text: str) -> dict:
+    return {"type": "paragraph", "content": [{"type": "text", "text": text}]}
+
+
+def _chapter(n: int, title: str, *, confidence: float | None = None) -> dict:
+    node = {"type": "chapter", "attrs": {"number": n, "id": f"ch{n}", "title": title},
+            "content": [_para(f"prose of {title}")]}
+    if confidence is not None:
+        node["confidence"] = confidence
+    return node
+
+
+# Schema-valid on purpose (test_fixture_is_a_valid_ast): an earlier version put
+# `confidence` on paragraphs, which ast.schema.json forbids, so the tool was
+# being tested against a shape no real AST can have.
 AST = {
     "schema": "ast/1",
-    "frontMatter": [{"type": "dedication", "text": "For no one", "confidence": 0.95}],
+    "metadata": {"title": "Fixture"},
+    "frontMatter": [{"type": "dedication", "content": [_para("For no one")], "confidence": 0.95}],
     "body": [
-        {
-            "type": "chapter",
-            "attrs": {"number": 1, "title": "One"},
-            "confidence": 0.99,
-            "content": [
-                {"type": "paragraph", "text": "sure", "confidence": 0.91},
-                {"type": "heading", "text": "maybe", "confidence": 0.42},
-                {"type": "paragraph", "text": "unscored"},
-            ],
-        }
+        _chapter(1, "One", confidence=0.99),
+        _chapter(2, "NO!", confidence=0.42),   # shouted dialogue read as a heading
+        _chapter(3, "Three"),                  # scorable, but never scored
     ],
-    "backMatter": [{"type": "colophon", "text": "Set in Garamond", "confidence": 0.88}],
+    "backMatter": [{"type": "colophon", "content": [_para("Set in Garamond")], "confidence": 0.88}],
+    "integrityHash": "sha256:" + "0" * 64,
+    "sourceRef": {"manuscriptId": "fixture", "inferenceVersion": 1},
 }
 
 PAGEMAP = {
@@ -76,25 +87,66 @@ def test_query_nodes_walks_all_three_roots():
     types = [n["type"] for n in call("query_nodes", ast=AST)]
     assert types[0] == "dedication", "frontMatter comes first, in document order"
     assert "colophon" in types and "chapter" in types
-    assert types.count("paragraph") == 2, "nested content is walked, not just the roots"
+    assert types.count("paragraph") == 5, "nested content is walked, not just the roots"
 
 
 def test_query_nodes_filters_by_type():
-    found = call("query_nodes", ast=AST, types=["heading"])
-    assert [n["text"] for n in found] == ["maybe"]
+    found = call("query_nodes", ast=AST, types=["chapter"])
+    assert [n["attrs"]["title"] for n in found] == ["One", "NO!", "Three"]
 
 
 def test_an_unscored_node_is_not_treated_as_confident():
     """The absent-vs-value distinction again, one layer up.
 
-    A node with no confidence is UNSCORED. Reading that as 1.0 would hide
-    exactly the nodes a low-confidence query exists to surface.
+    A scorable node with no confidence is UNSCORED. Reading that as 1.0 would
+    hide exactly the nodes a low-confidence query exists to surface.
     """
     found = call("query_nodes", ast=AST, confidence_below=0.8)
-    texts = {n.get("text") for n in found}
-    assert "maybe" in texts, "0.42 is below the threshold"
-    assert "unscored" in texts, "a node with no score must not be filtered out"
-    assert "sure" not in texts, "0.91 is above the threshold"
+    titles = [(n.get("attrs") or {}).get("title") for n in found]
+    assert titles == ["NO!", "Three"], "0.42 is below; unscored is not above; the rest are"
+
+
+def test_a_confidence_query_skips_types_that_carry_no_decision():
+    """Paragraphs and text runs have no structural decision to doubt.
+
+    Counting them as unscored would return the whole book, burying the few
+    chapters that actually need a look.
+    """
+    found = call("query_nodes", ast=AST, confidence_below=0.8)
+    assert {n["type"] for n in found} == {"chapter"}
+
+
+def test_fixture_is_a_valid_ast():
+    jsonschema = pytest.importorskip("jsonschema")
+    jsonschema.validate(AST, _ast_schema())
+
+
+def test_scored_types_match_the_schema():
+    """SCORED_TYPES mirrors which ast/1 node types may carry `confidence`.
+
+    Drift in either direction is a silent bug: a type the schema scores but the
+    tool skips is never surfaced; a type the tool expects but the schema forbids
+    is always "unscored".
+    """
+    from publisher_agents.runtime import SCORED_TYPES
+
+    defs = _ast_schema()["$defs"]
+    declared: set[str] = set()
+    candidates = [d for d in defs.values() if isinstance(d, dict)]
+    candidates += [o for d in candidates for o in d.get("oneOf", []) if "properties" in o]
+    for d in candidates:
+        props = d.get("properties") or {}
+        if "confidence" in props:
+            declared.update(props["type"]["enum"])
+    assert SCORED_TYPES == declared
+
+
+def _ast_schema() -> dict:
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / "schemas" / "ast" / "ast.schema.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def test_query_nodes_refuses_a_non_document():

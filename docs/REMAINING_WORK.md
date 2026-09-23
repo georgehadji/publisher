@@ -79,23 +79,33 @@ The stage makes a real OpenRouter call, parses a real response, writes a `classi
 artifact — and **nothing consumes it**. The stage's own docstring (`:18`) calls it
 "advisory input", which is accurate and also the problem: nothing takes the advice.
 
-Worse, upstream: `services/structure/publisher_structure/rules.py` computes a per-block
-`confidence` (`:349`, `:360`, `:373`…), but `stages/structure_stage.py` (`ast-assemble`)
-**never writes confidence into the AST** — grep for `confidence` in that file returns zero
-hits. Consequences, all verified:
+Upstream, confidence never reached the AST at all. **Now fixed — see below.** What the
+survey got wrong about *where*: it blamed `ast-assemble` and pointed at
+`rules.classify_blocks`. In fact the real AST is built by
+`services/ingest/publisher_ingest/docx_to_ast.py`, which never ran `rules.py`: it makes
+its own structural decisions (heading from style and/or capitals, front/body boundary from
+a prose threshold, back matter from a pattern) and recorded none of the evidence.
+`ast-assemble` only passes that AST through. And `ast.schema.json` sets
+`additionalProperties: false` on every node with no `confidence` field anywhere, so
+emitting one would have failed validation. `rules.build_ast_draft` *does* emit confidence,
+but it's schema-invalid and called only from tests.
 
-- All six `corpus/manuscripts/*.ast.json` contain zero `confidence` fields.
-- `packages/api/src/routes/manuscripts.ts:193` hardcodes `confidence: 1.0` for every chapter.
-- `manuscripts.ts:182` and `:200` hardcode `lowConfidenceNodes: []`.
+**Done:** `ast.schema.json` declares an optional `confidence` on `chapter` and the
+front/back-matter section objects (absent = not measured, never defaulted). `docx_to_ast`
+scores each decision where it's made: styled and upper-case 0.95; style alone 0.85;
+**capitals alone 0.7, below the 0.8 escalation line**, since a shouted "NO!" looks the
+same; multi-line titles take the weakest line; front matter carries the boundary's
+confidence (0.85 found by prose, 0.5 fallback); back matter by pattern 0.9. `ingest`
+stage bumped to v3. `query_nodes` now filters only types that can carry a score.
 
-That last pair is exactly the shape-2 defect: the review UI would be told *every* book has
-no uncertain nodes, because nothing ever recorded one. Same collapse as the composition
-path before `65f5834`.
-
-**Work:** carry `confidence` from `rules.classify_blocks` into the AST nodes
-`ast-assemble` emits; populate `lowConfidenceNodes` from it in the API; let something
-consume `classification/1` (probably `resolve`, as proposed overrides). The first step is
-small and unblocks the other two.
+**Still open:**
+- `packages/api/src/routes/manuscripts.ts:193` still hardcodes `confidence: 1.0` for every
+  chapter; it should read the node's value (absent → `null`, and `packages/web/src/types.ts`
+  `confidence: number` then needs to allow `null`).
+- `manuscripts.ts:182` and `:200` still hardcode `lowConfidenceNodes: []`.
+- The six `corpus/manuscripts/*.ast.json` predate this and carry no scores. They're valid
+  (the field is optional), but they exercise only the unscored path.
+- Nothing consumes `classification/1` (probably `resolve` should, as proposed overrides).
 
 ### 1.4 Both Rust crates are unreachable from Python
 
@@ -269,8 +279,8 @@ into impossible states.
 
 1. **§3.1 — get real DOCX files into `corpus/`.** Cheapest, and the only item here likely
    to surface bugs nobody has predicted.
-2. **§1.3 — carry `confidence` from `rules.py` into the AST.** One stage edit. It is the
-   single blocker behind the hardcoded `confidence: 1.0` and `lowConfidenceNodes: []` in
-   the API, and therefore behind any honest review UI.
+2. **§1.3 — make the API read the confidence the AST now carries.** The AST half is done.
+   The hardcoded `confidence: 1.0` and `lowConfidenceNodes: []` in `manuscripts.ts` are
+   now the only thing between measured scores and an honest review UI.
 3. **§1.1 — persist override ops on PATCH and feed them to a build's root input.** Closes
    the one loop where every other piece is already built and tested.

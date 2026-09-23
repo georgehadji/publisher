@@ -86,6 +86,22 @@ BACK_MATTER_PATTERNS = (
     re.compile(r"^\s*(BACK\s+COVER|COLOPHON)\s*$", re.IGNORECASE),
 )
 
+# Confidence that a section is the structural type ingest gave it, on the rules
+# engine's scale: below 0.8 escalates for review (publisher_structure.rules,
+# LLM_STRATEGY.md §5). Scored where the decision is made, from the evidence that
+# made it -- nothing downstream can recover which signal a heading rested on.
+#
+# ponytail: one number per signal combination. Corroborating evidence (numbering,
+# the prose that follows, position in the book) would lift the upper-case-only
+# case; add it when review shows unstyled chapters flagged that were never wrong.
+STYLED_UPPER_HEADING = 0.95   # a `Heading N` style AND capitalisation agree
+STYLED_HEADING = 0.85         # the style alone, on a short line
+UPPER_ONLY_HEADING = 0.7      # capitalisation alone -- also true of a shouted "NO!"
+UNTITLED_SECTION = 0.5        # prose that no heading introduced, made a chapter anyway
+BODY_SPLIT_BY_PROSE = 0.85    # front/body boundary found by the prose threshold
+BODY_SPLIT_FALLBACK = 0.5     # nothing cleared that bar; the first heading was taken
+BACK_MATTER_BY_PATTERN = 0.9  # the title matched an explicit back-matter string
+
 
 @dataclass(frozen=True)
 class Block:
@@ -100,6 +116,7 @@ class Block:
     style: str
     is_heading_candidate: bool
     nodes: tuple[dict, ...] = ()
+    heading_confidence: float | None = None
 
 
 def _is_upper(text: str) -> bool:
@@ -164,8 +181,13 @@ def read_blocks(
         # `Heading N` is trusted only when it is also short -- see the
         # 419-character `Heading 1` paragraph noted in the module docstring.
         short = len(text) <= MAX_HEADING_CHARS
-        is_heading = bool(text) and short and (_is_upper(text) or style.startswith("Heading"))
-        blocks.append(Block(text, style, is_heading, tuple(nodes)))
+        upper, styled = _is_upper(text), style.startswith("Heading")
+        is_heading = bool(text) and short and (upper or styled)
+        confidence = None
+        if is_heading:
+            confidence = (STYLED_UPPER_HEADING if upper and styled
+                          else STYLED_HEADING if styled else UPPER_ONLY_HEADING)
+        blocks.append(Block(text, style, is_heading, tuple(nodes), confidence))
 
     return blocks, sources
 
@@ -185,26 +207,37 @@ def _node_text(node) -> str:
     return _node_text(node.get("content") or [])
 
 
-def _group_headings(blocks: list[Block]) -> list[tuple[str, list[dict]]]:
-    """Split blocks into (title, body_paragraphs) sections.
+def _group_headings(blocks: list[Block]) -> list[tuple[str, list[dict], float | None]]:
+    """Split blocks into (title, body_paragraphs, title_confidence) sections.
 
     Consecutive heading candidates collapse into a single title: a display
     title set over three lines ("Β΄ ΕΝΟΤΗΤΑ" / "ΜΗΧΑΝΙΚΗ ΨΥΧΗ" / "ΚΑΙ" /
-    "ΕΥΧΑΡΙΣΤΙΑΚΟ ΠΟΤΗΡΙΟ") is one heading, not four empty chapters.
+    "ΕΥΧΑΡΙΣΤΙΑΚΟ ΠΟΤΗΡΙΟ") is one heading, not four empty chapters -- and is
+    only as certain as its least certain line.
 
-    The leading run before the first heading is returned with an empty title.
+    The leading run before the first heading is returned with an empty title
+    and no confidence: no heading decision was made for it.
     """
-    sections: list[tuple[str, list[dict]]] = []
-    title_parts: list[str] = []
+    sections: list[tuple[str, list[dict], float | None]] = []
+    title_parts: list[Block] = []
     body: list[dict] = []
     current_title = ""
+    current_confidence: float | None = None
     seen_heading = False
 
+    def take_title() -> None:
+        nonlocal current_title, current_confidence
+        current_title = " ".join(b.text for b in title_parts)
+        scores = [b.heading_confidence for b in title_parts if b.heading_confidence is not None]
+        current_confidence = min(scores) if scores else None
+        title_parts.clear()
+
     def close() -> None:
-        nonlocal current_title, body
+        nonlocal current_title, current_confidence, body
         if current_title or body:
-            sections.append((current_title, body))
+            sections.append((current_title, body, current_confidence))
         current_title = ""
+        current_confidence = None
         body = []
 
     for block in blocks:
@@ -216,16 +249,16 @@ def _group_headings(blocks: list[Block]) -> list[tuple[str, list[dict]]]:
                 # too -- and the whole table of contents collapses into chapter
                 # one's heading.
                 if title_parts:
-                    current_title = " ".join(title_parts)
-                    title_parts.clear()
+                    take_title()
                 close()
                 current_title = block.text
+                current_confidence = block.heading_confidence
                 seen_heading = True
                 continue
             if not title_parts:
                 # Starting a new heading: close out the previous section.
                 close()
-            title_parts.append(block.text)
+            title_parts.append(block)
             # A heading contributes its text as the section title, so its
             # paragraph node is redundant -- but a footnote or figure hanging
             # off that same `w:p` is not, and dropping it is exactly the silent
@@ -235,15 +268,13 @@ def _group_headings(blocks: list[Block]) -> list[tuple[str, list[dict]]]:
             continue
 
         if title_parts:
-            current_title = " ".join(title_parts)
-            title_parts.clear()
+            take_title()
         elif not seen_heading:
             current_title = ""
         body.extend(block.nodes)
 
     if title_parts:
-        current_title = " ".join(title_parts)
-        title_parts.clear()
+        take_title()
     close()
 
     return sections
@@ -257,7 +288,11 @@ def _is_toc_marker(title: str) -> bool:
     return any(p.search(title) for p in TOC_PATTERNS)
 
 
-def _find_body_start(sections: list[tuple[str, list[dict]]]) -> int:
+def _is_substantive(nodes: list[dict]) -> bool:
+    return any(len(_node_text(n)) >= SUBSTANTIVE_PARAGRAPH_CHARS for n in nodes)
+
+
+def _find_body_start(sections: list[tuple]) -> int:
     """Index of the first section that belongs to the book's body.
 
     Everything before it -- title page, dedication, epigraphs, table of
@@ -266,14 +301,13 @@ def _find_body_start(sections: list[tuple[str, list[dict]]]) -> int:
     contents page is not mistaken for chapter one.
     """
     start = 0
-    for i, (title, _) in enumerate(sections):
+    for i, (title, *_) in enumerate(sections):
         if _is_toc_marker(title):
             start = i
             break
 
     for i in range(start, len(sections)):
-        _, nodes = sections[i]
-        if any(len(_node_text(n)) >= SUBSTANTIVE_PARAGRAPH_CHARS for n in nodes):
+        if _is_substantive(sections[i][1]):
             return i
 
     # No section anywhere clears the prose bar. Treat the first heading as the
@@ -360,6 +394,12 @@ def docx_to_ast(
 
     sections = _group_headings(blocks)
     body_start = _find_body_start(sections)
+    # Front matter's confidence is in its PLACEMENT (before the body, not chapter
+    # one), which is only as good as the boundary. Its subtype is deliberately
+    # not scored: FRONT_MATTER_TYPE lumps title page, dedication and epigraphs
+    # on purpose, and flagging that lump would bury every real question.
+    split_found = body_start < len(sections) and _is_substantive(sections[body_start][1])
+    front_confidence = BODY_SPLIT_BY_PROSE if split_found else BODY_SPLIT_FALLBACK
 
     front_matter: list[dict] = []
     body: list[dict] = []
@@ -367,7 +407,7 @@ def docx_to_ast(
     chapter_number = 0
     seen_toc = False
 
-    for index, (section_title, section_nodes) in enumerate(sections):
+    for index, (section_title, section_nodes, title_confidence) in enumerate(sections):
         content = list(section_nodes)
 
         if index < body_start:
@@ -381,29 +421,37 @@ def docx_to_ast(
                 {
                     "type": "toc" if seen_toc else FRONT_MATTER_TYPE,
                     "content": content,
+                    "confidence": front_confidence,
                 }
             )
             continue
 
         if _is_back_matter(section_title):
             back_matter.append(
-                {"type": "colophon", "content": [_paragraph(section_title), *content]}
+                {
+                    "type": "colophon",
+                    "content": [_paragraph(section_title), *content],
+                    "confidence": BACK_MATTER_BY_PATTERN,
+                }
             )
             continue
 
         chapter_number += 1
-        body.append(
-            {
-                "type": "chapter",
-                "attrs": {
-                    "number": chapter_number,
-                    "title": section_title,
-                    "id": f"ch{chapter_number}",
-                    "startsOn": "recto",
-                },
-                "content": content,
-            }
-        )
+        chapter = {
+            "type": "chapter",
+            "attrs": {
+                "number": chapter_number,
+                "title": section_title,
+                "id": f"ch{chapter_number}",
+                "startsOn": "recto",
+            },
+            "content": content,
+        }
+        # Absent, never defaulted: a heading block with no score was not measured.
+        confidence = title_confidence if section_title else UNTITLED_SECTION
+        if confidence is not None:
+            chapter["confidence"] = confidence
+        body.append(chapter)
 
     if not body:
         raise IngestError(
