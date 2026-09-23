@@ -50,6 +50,7 @@ for sub in ("platform/stages/py", "platform/cas/py", "platform/cache/py", "platf
 
 import stages  # noqa: F401 -- registration side effect
 from publisher_cache import PostgresCacheStore
+from publisher_cas import MediaType, new_local_store
 from publisher_stages import ErrorKind, StageError, RegistryConfig, RenderEngine, build_registry
 from publisher_exec import DagExecutor
 
@@ -270,6 +271,42 @@ def _resolve_profile_name(build: dict) -> str:
     return name
 
 
+def _override_log_for(conn, document_id: str) -> str | None:
+    """The manuscript's override log as an `overrides/1` document in the CAS,
+    or None when it has no ops.
+
+    Written into the CAS rather than a temp file so the path is content-derived:
+    the same log is the same blob, so it is also the same `resolve` cache key,
+    and a changed log is a different one. Serialised with sorted keys and no
+    whitespace so identical ops always produce identical bytes -- JSONB does not
+    preserve the key order the API received.
+
+    Ops come back in `seq` order, the order the API received them.
+    apply_overrides is order-sensitive.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT op FROM override_ops WHERE manuscript_id = %s ORDER BY seq",
+            (document_id,),
+        )
+        ops = [row[0] for row in cur.fetchall()]
+    if not ops:
+        return None
+    document = {
+        "schema": "overrides/1",
+        "documentId": document_id,
+        # ponytail: constant. The log is not yet rebased on re-ingest
+        # (rebase_overrides exists but no stage calls it), so there is no AST
+        # lineage to version against. Real value lands with rebasing.
+        "astVersion": 1,
+        "ops": ops,
+    }
+    data = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ref = new_local_store(CAS_ROOT).put(data, media_type=MediaType("application/json"))
+    digest = str(ref.hash)
+    return str(CAS_ROOT / digest[:2] / digest[2:4] / digest)
+
+
 def _initial_inputs_for(conn, build: dict, registry) -> dict:
     """
     Maps a build's {documentId, designId, profileIds} to real DagExecutor
@@ -346,6 +383,12 @@ def _initial_inputs_for(conn, build: dict, registry) -> dict:
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
     if openrouter_key:
         initial_inputs["structure-infer"] = {"api_key": openrouter_key}
+    # The reviewer's override log. Supplied only when there is one: `resolve`
+    # declares overrides_path an OPTIONAL root input whose absence means zero
+    # overrides, so a book nobody has reviewed keeps the cache key it had.
+    overrides_path = _override_log_for(conn, document_id)
+    if overrides_path:
+        initial_inputs["resolve"] = {"overrides_path": overrides_path}
     return initial_inputs
 
 
