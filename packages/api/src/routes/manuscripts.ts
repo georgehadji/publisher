@@ -189,6 +189,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
           chapters: [],
           lowConfidenceNodes: null,   // nothing measured yet -- see structureView
           overrides,
+          orphanedOps: null,          // no AST yet to check them against
         };
       }
 
@@ -198,6 +199,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
         status: 'ready',
         ...structureView(ast),
         overrides,
+        orphanedOps: orphanedOps(ast, overrides),
       };
     }
   );
@@ -392,4 +394,39 @@ export function structureView(ast: any) {
     : null;
 
   return { chapters, lowConfidenceNodes };
+}
+
+/**
+ * Stored override ops that target no node in `ast` -- `overrides/1`'s
+ * `orphanedOps`, reason `no_source_ref`.
+ *
+ * `resolve` applies an op only where some node's `sourceRef.docxId` equals the
+ * op's, and skips one that matches nothing without a word: no error, no warning,
+ * no metric. So a reviewer's decision could sit in the log having no effect on
+ * the book while every surface reported it recorded. This is where it shows.
+ * Not fatal on purpose: the log is append-only, so failing the build on an
+ * orphan would leave the manuscript unbuildable for good.
+ *
+ * Mirrors publisher_structure.overrides `_matches` and `_CHILD_KEYS` exactly --
+ * any node reached through content/frontMatter/backMatter/body, matched on
+ * `sourceRef.docxId` (or a bare-string sourceRef, or sourceRefLink) -- so an op
+ * is reported orphaned here exactly when resolve would skip it.
+ */
+export function orphanedOps(ast: any, ops: any[]) {
+  const ids = new Set<string>();
+  const walk = (node: any): void => {
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    const src = node.sourceRef ?? node.sourceRefLink;
+    if (typeof src === 'string') ids.add(src);
+    else if (typeof src?.docxId === 'string') ids.add(src.docxId);
+    for (const key of ['content', 'frontMatter', 'backMatter', 'body']) walk(node[key]);
+  };
+  walk(ast);
+  return ops
+    .filter((op) => !ids.has(op?.sourceRef?.docxId))
+    .map((op) => ({ op, reason: 'no_source_ref' as const }));
 }

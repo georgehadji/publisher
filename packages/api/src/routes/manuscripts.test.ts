@@ -7,7 +7,7 @@
  * and "not measured" (null) stays distinct from "measured, nothing low" ([]).
  */
 import { describe, expect, it } from 'vitest';
-import { LOW_CONFIDENCE_BELOW, structureView } from './manuscripts.js';
+import { LOW_CONFIDENCE_BELOW, orphanedOps, structureView } from './manuscripts.js';
 
 const para = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text }] });
 const chapter = (n: number, title: string, confidence?: number) => ({
@@ -61,5 +61,51 @@ describe('structureView', () => {
   it('a scored AST with nothing low is an empty list, not null', () => {
     const { lowConfidenceNodes } = structureView({ body: [chapter(1, 'CHAPTER ONE', 0.95)] });
     expect(lowConfidenceNodes).toEqual([]);
+  });
+});
+
+// ── orphanedOps: decisions that would have no effect ──────────────────────
+
+const tagged = (type: string, docxId: string, extra: object = {}) => ({
+  type, sourceRef: { docxId }, content: [para(docxId)], ...extra,
+});
+const op = (id: string, docxId: string) => ({
+  id, sourceRef: { docxId }, op: 'retitle', value: 'X', actor: 'u', at: '2026-01-01T00:00:00Z',
+});
+
+describe('orphanedOps', () => {
+  const ast = {
+    frontMatter: [{ type: 'titlePage', content: [tagged('paragraph', 'paragraph:front')] }],
+    body: [{
+      type: 'chapter', attrs: { number: 1, id: 'ch1', title: 'One' },
+      sourceRef: { docxId: 'chapter:one' },
+      content: [tagged('paragraph', 'paragraph:body')],
+    }],
+    backMatter: [{ type: 'colophon', content: [tagged('paragraph', 'paragraph:back')] }],
+  };
+
+  it('finds a target at any depth, in any root', () => {
+    const ops = ['chapter:one', 'paragraph:body', 'paragraph:front', 'paragraph:back']
+      .map((ref, i) => op(`ov-${i}`, ref));
+    expect(orphanedOps(ast, ops)).toEqual([]);
+  });
+
+  it('reports an op whose target is in no node, as overrides/1 names it', () => {
+    const lost = op('ov-lost', 'paragraph:gone');
+    expect(orphanedOps(ast, [op('ov-ok', 'chapter:one'), lost]))
+      .toEqual([{ op: lost, reason: 'no_source_ref' }]);
+  });
+
+  it('an AST that tags nothing orphans every op -- ingest before v4', () => {
+    // The state every book was in until ingest emitted sourceRefs: every stored
+    // op reached resolve and matched nothing, and nothing said so.
+    const untagged = { body: [{ type: 'chapter', attrs: { number: 1, id: 'ch1', title: 'One' },
+                                content: [para('x')] }] };
+    expect(orphanedOps(untagged, [op('ov-1', 'chapter:one')])).toHaveLength(1);
+  });
+
+  it('keeps log order', () => {
+    const ops = [op('ov-b', 'nope-b'), op('ov-a', 'nope-a')];
+    expect(orphanedOps(ast, ops).map((o: any) => o.op.id)).toEqual(['ov-b', 'ov-a']);
   });
 });

@@ -86,12 +86,21 @@ are keyed by title, so editing prose doesn't orphan a retitle. Repeated content 
 apart by occurrence order. `ingest` is at v4. An end-to-end test takes a real DOCX,
 ingests it, retitles its chapter through `resolve`, and checks the title changed.
 
-**Decided: an unmatched ("orphaned") op is reported, not fatal.** Fatal plus an
-append-only log would leave a manuscript unbuildable for good. It is still *silent* today:
-`apply_overrides` skips it with no signal. **Work:** have `resolve` (or the structure view)
-report orphaned ops, e.g. as `overrides/1`'s existing `orphanedOps` with a reason on
-`GET /v1/manuscripts/:id/structure`; expose each node's `docxId` there so a reviewer, or
-the UI, can aim an op at it; then one Next.js route that renders the panel. Front- and
+**Orphaned ops — reported, not fatal (decided).** Fatal plus an append-only log would leave
+a manuscript unbuildable for good. `GET /v1/manuscripts/:id/structure` now returns
+`orphanedOps`, in `overrides/1`'s own shape (`{op, reason: "no_source_ref"}`): every stored
+op that targets no node in the manuscript's latest AST. `orphanedOps` is `null` when no build
+has produced an AST yet (unknown, not "none"). The check (`orphanedOps` in `manuscripts.ts`)
+mirrors `overrides._matches`/`_CHILD_KEYS` exactly, so an op is reported exactly when
+`resolve` would skip it. `resolve` itself still skips orphans silently inside the build;
+the report lives where the reviewer looks, not in the build log.
+
+**Still silent:** an op that matches a node but can't act on it. A `retitle` aimed at a
+node with no `attrs.title` (a paragraph) is returned unchanged by `_t_retitle`, and nothing
+reports that either.
+
+**Work:** expose each node's `docxId` in the structure view so a reviewer, or the UI, can
+aim an op at it; then one Next.js route that renders the panel. Front- and
 back-matter section wrappers carry no `sourceRef` in the schema, so they can't be targeted
 directly; their contents can. The web client's `OverrideOp` type
 (`packages/web/src/types.ts`) is also not the schema's shape — `sourceRef: string`,
@@ -328,6 +337,5 @@ into impossible states.
    to surface bugs nobody has predicted.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
-3. **§1.1 — report orphaned override ops.** The loop now works end to end (stored, read,
-   handed to `resolve`, matched by ingest's ids), but an op that matches nothing is still
-   skipped silently.
+3. **§1.1 — expose node ids in the structure view.** The override loop works end to end
+   and orphaned ops are reported, but a reviewer can't see the `docxId` to aim a new op at.

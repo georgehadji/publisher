@@ -79,6 +79,9 @@ def test_ops_are_stored_in_the_order_sent_and_read_back(api_server, manuscript):
         headers={"Authorization": f"Bearer {TOKEN}"},
     ).json()
     assert structure["overrides"] == ops, "the log is returned verbatim, in order"
+    # No build has run, so there is no AST to check the ops against: unknown,
+    # not "none orphaned".
+    assert structure["status"] == "pending" and structure["orphanedOps"] is None
 
 
 def test_a_logged_op_cannot_be_resent(api_server, manuscript):
