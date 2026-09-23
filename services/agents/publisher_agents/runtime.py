@@ -413,18 +413,82 @@ class AgentRuntime:
 
 # ── Default tool set ────────────────────────────────────────────
 
+class ToolUnavailable(RuntimeError):
+    """A declared tool whose underlying capability this deployment does not have.
+
+    Raised instead of returning a plausible-looking value. A tool that answers
+    "no defects", "no nodes", or a `crop://page-3` reference to an image it never
+    rendered is worse than a missing one: the agent reasons on the answer, the
+    proposal it then does or does not make looks considered, and nothing in the
+    run records that the question was never actually asked.
+    """
+
+
+def _walk_nodes(ast: dict):
+    """Every node of an `ast/1` document, depth-first, in document order.
+
+    `frontMatter`, `body` and `backMatter` are the three roots; any node may
+    carry its own `content` list (a chapter's blocks, a list's items).
+    """
+    stack: list = []
+    for root in ("backMatter", "body", "frontMatter"):
+        stack.extend(reversed(ast.get(root) or []))
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        yield node
+        children = node.get("content")
+        if isinstance(children, list):
+            stack.extend(reversed(children))
+
+
 def _init_default_tools():
-    """Register the default set of agent tools."""
-    
+    """Register the default set of agent tools.
+
+    Every tool here is PURE: it takes the artifact it reads as an argument and
+    returns a value. None of them reaches into an ambient build, because none of
+    them can — there is no session, no CAS handle and no database in this layer,
+    and tools that pretended otherwise are how this file came to hold five
+    functions that answered questions they had no way to ask (D7: a module
+    receives capabilities explicitly, never ambient access).
+    """
+
     @register_tool(ToolSpec(
         name="query_nodes",
-        description="Query AST nodes by type, role, or confidence threshold",
-        parameters={"types": {"type": "array", "items": {"type": "string"}}},
+        description="Query the nodes of a given AST by type and/or confidence threshold",
+        parameters={
+            "ast": {"type": "object", "description": "an ast/1 document"},
+            "types": {"type": "array", "items": {"type": "string"}},
+            "confidence_below": {"type": "number"},
+        },
     ))
-    def query_nodes(types: list[str] = None, confidence_below: float = None) -> list[dict]:
-        """Query nodes from the AST."""
-        # Stub — in production queries the AST
-        return []
+    def query_nodes(ast: dict, types: list[str] | None = None,
+                    confidence_below: float | None = None) -> list[dict]:
+        """Nodes of `ast` matching every filter given, in document order.
+
+        Read-only by construction: nodes are returned as they are, and an agent's
+        only way to act on one is `propose_override`. Nothing here can write an
+        AST, which is the structural form of AGENT_DESIGN.md §0's "never the AST".
+        """
+        if not isinstance(ast, dict):
+            raise TypeError(
+                f"query_nodes needs an ast/1 document, got {type(ast).__name__}"
+            )
+        wanted = set(types) if types else None
+        found = []
+        for node in _walk_nodes(ast):
+            if wanted is not None and node.get("type") not in wanted:
+                continue
+            if confidence_below is not None:
+                confidence = node.get("confidence")
+                # A node carrying no score is UNSCORED, not perfectly confident.
+                # Reading a missing score as 1.0 would hide exactly the nodes a
+                # confidence query exists to surface.
+                if confidence is not None and confidence >= confidence_below:
+                    continue
+            found.append(node)
+        return found
     
     @register_tool(ToolSpec(
         name="propose_override",
@@ -450,43 +514,122 @@ def _init_default_tools():
     
     @register_tool(ToolSpec(
         name="crop",
-        description="Crop a region of a page for visual inspection",
+        description="Crop a region of a page for visual inspection "
+                    "(UNAVAILABLE: needs a page-raster pipeline)",
         parameters={"page": {"type": "integer"}, "bbox": {"type": "object"}},
     ))
-    def crop(page: int, bbox: dict = None) -> str:
-        """Crop a page region. Returns a data URL or ref."""
-        # Stub — in production renders via CAS raster
-        return f"crop://page-{page}"
+    def crop(page: int, bbox: dict | None = None) -> str:
+        """Unavailable: cropping needs a rasterised page, and nothing rasterises one.
+
+        This used to return `crop://page-3` — a well-formed reference to an image
+        that was never rendered and that no resolver anywhere knows how to fetch.
+        The Compositor's entire loop is crop → look → propose, so a fabricated
+        crop does not degrade that loop, it invents the evidence it runs on.
+        """
+        raise ToolUnavailable(
+            f"crop(page={page}) is unavailable: this deployment has no page-raster "
+            f"pipeline. The render path produces a PDF, not per-page images."
+        )
     
     @register_tool(ToolSpec(
         name="scan_pagemap",
-        description="Scan the pagemap for defects (code exec wrapper)",
-        parameters={"filter": {"type": "string"}},
+        description="Scan a pagemap for composition defects (widows, orphans, runts)",
+        parameters={
+            "pagemap": {"type": "object", "description": "a pagemap/1 document"},
+            "filter": {"type": "string", "description": "defect-type substring"},
+        },
     ))
-    def scan_pagemap(filter: str = "") -> dict:
-        """Run pagescan over the current pagemap."""
-        # Stub — in production calls the Rust pagescan via PyO3
-        return {"defects": []}
+    def scan_pagemap(pagemap: dict, filter: str = "") -> dict:
+        """Composition defects in `pagemap`, plus how much of it was measured.
+
+        Delegates "what counts as a defect, and how bad is it" to
+        `publisher_prepress.preflight.scan_composition` — the same function the
+        delivery gate itself runs — rather than carrying a second opinion that
+        could drift from the gate the agent is trying to help a book pass.
+
+        `measuredPages` rides along deliberately. Zero defects across zero
+        measured pages is not a clean book, and an agent handed only the defect
+        list has no way to tell those two apart.
+        """
+        from publisher_prepress.preflight import scan_composition
+
+        found = scan_composition(pagemap)
+        # Severities follow platform/pagescan/src/lib.rs, as the preflight gate does.
+        kinds = (
+            ("orphans", "orphan", "error",
+             "first line of a paragraph stranded at the foot of the page"),
+            ("widows", "widow", "warning",
+             "last line of a paragraph stranded at the top of the page"),
+            ("runts", "runt", "warning",
+             "a multi-line paragraph ending in a single word"),
+        )
+        defects = [
+            {
+                "defect_type": defect_type,
+                "page_number": page,
+                "severity": severity,
+                "description": f"Page {page}: {description}",
+            }
+            for bucket, defect_type, severity, description in kinds
+            if not filter or filter in defect_type
+            for page in found[bucket]
+        ]
+        defects.sort(key=lambda d: (d["page_number"], d["defect_type"]))
+        return {
+            "defects": defects,
+            "pages": found["pages"],
+            "measuredPages": found["measured"],
+        }
     
     @register_tool(ToolSpec(
         name="render_range",
-        description="Re-render a page range with adjustments applied",
+        description="Re-render a page range with adjustments applied "
+                    "(UNAVAILABLE: re-rendering is a stage, not a tool)",
         parameters={"start_page": {"type": "integer"}, "end_page": {"type": "integer"}},
     ))
     def render_range(start_page: int, end_page: int) -> str:
-        """Re-render a range of pages."""
-        # Stub
-        return f"render://pages-{start_page}-to-{end_page}"
+        """Unavailable: a re-render is a build, and agents do not run builds.
+
+        Rendering happens in `paginate`, from a DesignSpec, inside the DAG —
+        which is what makes a rendered page reproducible from its cache key. An
+        agent reaches a new render by proposing a DesignSpec patch and letting
+        the build re-run, never by rendering privately (AGENT_DESIGN.md §0:
+        agents run at gate boundaries, never inside deterministic stages).
+        """
+        raise ToolUnavailable(
+            f"render_range({start_page}, {end_page}) is unavailable: re-rendering runs "
+            f"as the `paginate` stage inside the DAG. Propose a DesignSpec patch instead."
+        )
     
     @register_tool(ToolSpec(
         name="read_preflight",
-        description="Read the preflight report for a build",
-        parameters={"build_id": {"type": "string"}},
+        description="Read a preflight report, optionally filtered by check status",
+        parameters={
+            "report": {"type": "object", "description": "a preflight/1 document"},
+            "status": {"type": "string", "enum": ["pass", "fail", "warn", "skip"]},
+        },
     ))
-    def read_preflight(build_id: str) -> dict:
-        """Read the preflight report."""
-        # Stub
-        return {"checks": []}
+    def read_preflight(report: dict, status: str | None = None) -> dict:
+        """The checks of `report`, optionally only those with one status.
+
+        Takes the report rather than a `build_id`: this layer holds no database
+        handle and no CAS root, so a `build_id` was a parameter it could not
+        honour — it accepted the id and returned `{"checks": []}`, which reads as
+        a book that passed everything.
+        """
+        if not isinstance(report, dict):
+            raise TypeError(
+                f"read_preflight needs a preflight/1 document, got {type(report).__name__}"
+            )
+        checks = [c for c in (report.get("checks") or []) if isinstance(c, dict)]
+        if status is not None:
+            checks = [c for c in checks if c.get("status") == status]
+        return {
+            "status": report.get("status"),
+            "profileId": report.get("profileId"),
+            "checks": checks,
+            "summary": report.get("summary") or {},
+        }
 
 
 _init_default_tools()

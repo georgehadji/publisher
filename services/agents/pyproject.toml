@@ -11,7 +11,10 @@ requires-python = ">=3.12"
 # publisher_structure.rules -- declare it so CI breaks loudly if packaging ever
 # changes, instead of production breaking quietly on one PYTHONPATH. Enforced by
 # tools/lint_service_deps.py in CI.
-dependencies = ["publisher-structure"]
+# publisher-prepress: runtime.py's `scan_pagemap` tool calls
+# publisher_prepress.preflight.scan_composition -- the SAME function the delivery
+# gate runs -- so an agent and the gate cannot disagree about what a defect is.
+dependencies = ["publisher-structure", "publisher-prepress"]
 optional-dependencies = {test = ["pytest>=8.0"]}
 
 [tool.setuptools.packages.find]
