@@ -18,17 +18,23 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef
+from publisher_stages import (
+    stage, StageCtx, StageResult, StageError, ErrorKind, Diagnostic,
+    ArtifactRef as StageArtifactRef,
+)
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "structure"))
-from publisher_structure.overrides import apply_overrides, OverrideOp
+from publisher_structure.overrides import (
+    apply_overrides, OverrideOp, UnsupportedOverrideOp,
+)
 
 
 @stage(
     name="resolve",
-    version=1,
+    version=2,   # v2: an override op with no transform now fails the build instead of
+                 # being skipped -- see publisher_structure.overrides.UnsupportedOverrideOp.
     inputs={"ast": "ast/1", "overrides_path": "overrides/1"},
     root_inputs=["overrides_path"],
     optional_root_inputs=["overrides_path"],  # absence means zero overrides, not missing
@@ -58,7 +64,24 @@ def resolve(ctx: StageCtx, ast: str | None = None, overrides_path: str | None = 
         raw_ops = json.loads(ops_path.read_bytes()).get("ops", [])
         ops = [OverrideOp(**op) for op in raw_ops]
 
-    effective = apply_overrides(ast_doc, ops)
+    try:
+        effective = apply_overrides(ast_doc, ops)
+    except UnsupportedOverrideOp as exc:
+        # BAD_INPUT, not an internal error: the override log is a valid `overrides/1`
+        # document asking for something this layer cannot do. Surfaced as a diagnostic
+        # rather than a traceback, because a reviewer made this decision and has to be
+        # told it did not take effect (§3.15).
+        raise StageError(
+            kind=ErrorKind.BAD_INPUT,
+            message=str(exc),
+            diagnostics=[Diagnostic(
+                code="override-op-unsupported",
+                severity="error",
+                human_message=str(exc),
+                suggested_fix="Remove the override, or express the same intent with an "
+                              "implemented op (reclassify, retitle, delete, flag_ambiguity).",
+            )],
+        ) from exc
 
     cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))

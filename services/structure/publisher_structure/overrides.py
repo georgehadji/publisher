@@ -361,6 +361,26 @@ _TRANSFORMS = {
     "flag_ambiguity": _t_flag_ambiguity,
 }
 
+# Ops `schemas/overrides/overrides.schema.json` accepts that no transform above
+# implements. Kept as an explicit list rather than derived from the schema at
+# runtime: the point is that adding a transform REQUIRES deleting its name from
+# here, so the two cannot drift apart silently the way they already did once.
+UNIMPLEMENTED_OPS = frozenset({
+    "split", "merge", "promote", "demote",
+    "insert", "rename", "set_attr", "resolve_ambiguity",
+})
+
+
+class UnsupportedOverrideOp(ValueError):
+    """An override the schema accepts but this layer cannot apply.
+
+    Raised rather than skipped. An override is a human or agent decision about a
+    book; dropping one silently produces an effective document that disagrees
+    with what the reviewer was told happened, and nothing anywhere reports the
+    loss -- not a diagnostic, not a metric, not a log line. Eight of the twelve
+    ops the schema declares used to land here, under a comment naming two.
+    """
+
 
 def apply_overrides(ast: dict, ops: list[OverrideOp]) -> dict:
     """
@@ -379,7 +399,15 @@ def apply_overrides(ast: dict, ops: list[OverrideOp]) -> dict:
     for op in ops:
         make_transform = _TRANSFORMS.get(op.op)
         if make_transform is None:
-            continue  # split/merge not implemented yet
+            raise UnsupportedOverrideOp(
+                f"override {op.id!r} uses op {op.op!r}, which this layer cannot apply "
+                + (
+                    "(the schema accepts it, but no transform implements it yet)"
+                    if op.op in UNIMPLEMENTED_OPS
+                    else "(not a valid override op at all)"
+                )
+                + f". Implemented: {', '.join(sorted(_TRANSFORMS))}."
+            )
         effective = _rewrite(effective, op.sourceRef, make_transform(op))
     return effective
 
