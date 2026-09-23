@@ -43,18 +43,27 @@ The "first human gate" is three disconnected pieces.
 | Piece | Where | State |
 |---|---|---|
 | Review UI | `packages/web/src/review/StructureReviewPanel.tsx:23` | Exported, **never imported**. `packages/web` has no `src/app/` or `src/pages/` — there is no Next.js route that mounts it. |
-| Override API | `packages/api/src/routes/manuscripts.ts:208` | Accepts `PATCH /v1/documents/:id/overrides`, validates the body, checks tenancy — then **discards `ops`** and returns `{applied: ops.length}` (`:229`). Nothing is persisted. |
+| Override API | `packages/api/src/routes/manuscripts.ts` | **Done.** `PATCH /v1/documents/:id/overrides` validates each op against `overrides/1`, refuses (422) ops `resolve` cannot apply, and appends to `override_ops` (migration `004`) in one transaction. The log is append-only (the app role holds SELECT and INSERT only), tenant-isolated by RLS, and ordered by `seq`. A reused op id is a 409. `GET .../structure` returns the log in order instead of `[]`. |
 | Override consumer | `stages/resolve_stage.py:38` | `resolve` takes `overrides_path` as an **optional root input**. Nothing in `packages/api/src/routes/builds.ts` ever supplies one (grep for `override` in that file returns zero hits). |
 
-So: the panel cannot be opened, the endpoint that would receive its edits throws them
-away, and even if it stored them there is no path from storage to a build's root input.
-`services/structure/publisher_structure/overrides.py` — the one piece that actually
-works, and now refuses ops it cannot apply (`dc6a6f3`) — is reachable only from
+So: the panel cannot be opened, and nothing carries the now-stored log to a build.
+
+**Blocker for the consumer, found while persisting:** `resolve` parses ops with
+`OverrideOp(**op)`, and the Python `OverrideOp` dataclass does not match the schema it
+reads. It has `from_value`/`to_value`/`created_at` where `overrides/1` has `from`/`to`/`at`,
+and a string `sourceRef` where the schema has an object. A schema-valid op, exactly
+what the API now stores, crashes it: `TypeError: OverrideOp.__init__() got an unexpected
+keyword argument 'from'`. It has only ever been fed the dataclass's own shape, by
 `tracer_bullet.py` and tests.
 
-**Work:** persist ops on PATCH; add an overrides root input to build submission; add one
-Next.js route that renders the panel. Smallest honest version is the API half — a stored,
-buildable override log is useful without a UI.
+**Work:** make `resolve` parse `overrides/1` ops (the schema is the contract); have the
+worker write a manuscript's log to the CAS and pass it as `overrides_path`; add one Next.js
+route that renders the panel. The web client's `OverrideOp` type
+(`packages/web/src/types.ts`) is also not the schema's shape — `sourceRef: string`,
+`createdAt` — so what it sends is now correctly refused with a 400.
+
+Also: the log has no undo. Ops are immutable and the schema has no revert op, so a
+reviewer's mistake can only be superseded by a later op, never removed.
 
 ### 1.2 Nothing dispatches the agent tools
 
@@ -284,5 +293,5 @@ into impossible states.
    to surface bugs nobody has predicted.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
-3. **§1.1 — persist override ops on PATCH and feed them to a build's root input.** Closes
-   the one loop where every other piece is already built and tested.
+3. **§1.1 — make `resolve` read `overrides/1` ops, then feed the stored log to a build.**
+   Persistence is done; the Python parser is the one thing that would crash on real ops.

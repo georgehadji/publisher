@@ -45,8 +45,14 @@ MIGRATIONS_DIR = REPO_ROOT / "platform" / "db" / "migrations"
 
 TENANT_TABLES = [
     "titles", "manuscripts", "builds", "artifacts", "build_stages",
-    "webhooks", "idempotency_keys",
+    "webhooks", "idempotency_keys", "override_ops",
 ]
+
+# Every migration on disk, by its numeric prefix -- what migrate.ts applies.
+# Derived rather than hand-listed: a literal [1, 2, 3] had to be edited by
+# every new migration, and still passed if a file on disk was never applied
+# so long as the literal was stale too.
+EXPECTED_VERSIONS = sorted(int(p.name.split("_")[0]) for p in MIGRATIONS_DIR.glob("*.sql"))
 
 
 def _admin_dsn(dbname: str = "publisher") -> str:
@@ -168,12 +174,12 @@ def test_migrate_upgrades_an_existing_deployment_and_is_idempotent(scratch_db):
     for table in TENANT_TABLES:
         assert after["rls"][table]["relrowsecurity"], f"{table} does not have RLS enabled"
         assert after["rls"][table]["relforcerowsecurity"], f"{table} does not FORCE RLS"
-    assert after["versions"] == [1, 2, 3], f"expected all 3 migrations applied, got {after['versions']}"
+    assert after["versions"] == EXPECTED_VERSIONS, f"expected {EXPECTED_VERSIONS} applied, got {after['versions']}"
 
     # Re-running must be a no-op: same ledger, no error.
     _apply_pending_migrations(scratch_db)
     idempotent = _table_shape(scratch_db)
-    assert idempotent["versions"] == [1, 2, 3]
+    assert idempotent["versions"] == EXPECTED_VERSIONS
 
 
 def test_rls_isolates_tenants_with_no_where_clause(scratch_db):

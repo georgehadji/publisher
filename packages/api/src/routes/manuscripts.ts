@@ -162,17 +162,25 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
       // Structure comes from the `ast` artifact of the manuscript's most recent
       // build. No build has necessarily run yet -- report that honestly rather
       // than fabricating chapters that were never inferred.
-      const artifact = (
-        await withTenant(request.tenantId, (client) =>
-          client.query(
+      const { artifact, overrides } = await withTenant(request.tenantId, async (client) => ({
+        artifact: (
+          await client.query(
             `SELECT a.sha256 FROM artifacts a
              JOIN builds b ON b.id = a.build_id
              WHERE b.document_id = $1 AND a.schema_id = 'ast/1'
              ORDER BY a.created_at DESC LIMIT 1`,
             [request.params.id]
           )
-        )
-      ).rows[0];
+        ).rows[0],
+        // The override log, in the order it will be applied. Independent of
+        // whether a build has run: a reviewer's decisions exist either way.
+        overrides: (
+          await client.query(
+            'SELECT op FROM override_ops WHERE manuscript_id = $1 ORDER BY seq',
+            [request.params.id]
+          )
+        ).rows.map((row) => row.op),
+      }));
 
       if (!artifact) {
         return {
@@ -180,7 +188,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
           status: 'pending',
           chapters: [],
           lowConfidenceNodes: null,   // nothing measured yet -- see structureView
-          overrides: [],
+          overrides,
         };
       }
 
@@ -189,13 +197,17 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
         manuscriptId: request.params.id,
         status: 'ready',
         ...structureView(ast),
-        overrides: [],
+        overrides,
       };
     }
   );
 
   // ── Overrides ────────────────────────────────────────────────
-  server.patch<{ Params: { id: string }; Body: { ops: unknown[] } }>(
+  //
+  // Appends to the manuscript's override log (platform/db/migrations/004). This
+  // used to validate, check tenancy, return `{applied: ops.length}` -- and store
+  // nothing, so every reviewer decision was acknowledged and thrown away.
+  server.patch<{ Params: { id: string }; Body: { ops: OverrideOp[] } }>(
     '/v1/documents/:id/overrides',
     {
       config: { auth: 'tenant' },
@@ -203,25 +215,117 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
         body: {
           type: 'object',
           required: ['ops'],
-          properties: { ops: { type: 'array' } },
+          properties: {
+            ops: { type: 'array', minItems: 1, maxItems: 10000, items: OVERRIDE_OP_SCHEMA },
+          },
+          additionalProperties: false,
         },
       },
     },
     async (request, reply) => {
+      const { ops } = request.body;
+      // The schema accepts twelve ops; `resolve` applies four and fails the
+      // build on the rest (publisher_structure.overrides.UNIMPLEMENTED_OPS).
+      // The log is append-only, so storing one would make every later build of
+      // this manuscript fail with no way to take it back. Refuse it here.
+      const unapplicable = ops.filter((op) => !APPLICABLE_OPS.includes(op.op));
+      if (unapplicable.length > 0) {
+        return reply.code(422).send({
+          error: `override op(s) the build cannot apply yet: `
+            + unapplicable.map((op) => `${op.id} (${op.op})`).join(', ')
+            + `. Applicable: ${APPLICABLE_OPS.join(', ')}.`,
+        });
+      }
+
       // A "document" is a structured manuscript -- same store, same ownership
       // check as /v1/manuscripts/:id/structure.
       const manuscript = await loadOwned('manuscripts', request.params.id, request.tenantId);
       if (!manuscript) {
         return reply.code(404).send({ error: 'not found' });
       }
-      const { ops } = request.body;
-      return {
-        documentId: request.params.id,
-        applied: ops.length,
-        timestamp: new Date().toISOString(),
-      };
+
+      try {
+        // One transaction: a batch lands whole or not at all. One INSERT per op,
+        // in body order, so `seq` records exactly the order they were sent in.
+        await withTenant(request.tenantId, async (client) => {
+          for (const op of ops) {
+            await client.query(
+              `INSERT INTO override_ops (manuscript_id, tenant_id, id, op)
+               VALUES ($1, $2, $3, $4)`,
+              [request.params.id, request.tenantId, op.id, JSON.stringify(op)]
+            );
+          }
+        });
+      } catch (err: any) {
+        if (err?.code === '23505') {
+          // An op is immutable once logged. Re-sending one (a retry without an
+          // Idempotency-Key, or a reused id) must not silently overwrite it.
+          return reply.code(409).send({
+            error: 'an override op with this id is already in the log; ops are immutable. '
+              + 'Retry with an Idempotency-Key, or send the change as a new op with a new id.',
+            detail: err.detail,
+          });
+        }
+        throw err;
+      }
+
+      reply.code(201);
+      return { documentId: request.params.id, appended: ops.map((op) => op.id) };
     }
   );
+}
+
+/**
+ * One `overrides/1` op, verbatim from schemas/overrides/overrides.schema.json
+ * `$defs.overrideOp`. Inlined because the API image does not ship `schemas/`;
+ * manuscripts.test.ts fails if this and the schema file differ at all.
+ */
+export const OVERRIDE_OP_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', pattern: '^ov-[a-zA-Z0-9_-]+$', maxLength: 64 },
+    sourceRef: {
+      type: 'object',
+      properties: {
+        docxId: { type: 'string', maxLength: 128 },
+        contentHash: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+        fallbackText: { type: 'string', maxLength: 256 },
+      },
+      required: ['docxId'],
+      additionalProperties: false,
+    },
+    op: {
+      type: 'string',
+      enum: [
+        'reclassify', 'split', 'merge', 'promote', 'demote', 'delete',
+        'insert', 'retitle', 'rename', 'set_attr', 'flag_ambiguity', 'resolve_ambiguity',
+      ],
+    },
+    path: { type: 'string', maxLength: 256, description: 'JSON Pointer to the target within the AST' },
+    from: { type: 'string', maxLength: 64 },
+    to: { type: 'string', maxLength: 64 },
+    value: {},
+    rationale: { type: 'string', maxLength: 4096 },
+    actor: { type: 'string', maxLength: 64 },
+    at: { type: 'string', format: 'date-time' },
+  },
+  required: ['id', 'sourceRef', 'op', 'actor', 'at'],
+  additionalProperties: false,
+  allOf: [
+    { if: { properties: { op: { const: 'reclassify' } } }, then: { required: ['from', 'to'] } },
+    { if: { properties: { op: { const: 'retitle' } } }, then: { required: ['value'] } },
+    { if: { properties: { op: { const: 'flag_ambiguity' } } }, then: { required: ['rationale'] } },
+  ],
+} as const;
+
+/** The ops `resolve` can apply: the schema's enum minus
+ * publisher_structure.overrides.UNIMPLEMENTED_OPS. Pinned by manuscripts.test.ts. */
+export const APPLICABLE_OPS: readonly string[] = ['reclassify', 'retitle', 'delete', 'flag_ambiguity'];
+
+export interface OverrideOp {
+  id: string;
+  op: string;
+  [field: string]: unknown;
 }
 
 /**
