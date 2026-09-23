@@ -46,13 +46,17 @@ downloads) and, since the upload route landed, a CAS **writer** — the compose 
 
 ## `packages/web` — Next.js review UI
 
-Next 15 + React 19, `output: 'standalone'`, typed routes.
+Next 16 + React 19, `output: 'standalone'`, typed routes. **Next 16 differs from what you
+remember** — read `node_modules/next/dist/docs/` first (the package's own `AGENTS.md` says so).
 
 | File | What it does |
 |---|---|
-| `src/types.ts` | The API contract for the UI: `StructureReview`, `ChapterReview`, `LowConfidenceNode`, `OverrideOp`, `ReviewSession`. Covers structure review, quality review (widow/orphan/runt/river with one-click fixes), and the raster view with proposal-outcome instrumentation. |
-| `src/review/StructureReviewPanel.tsx` | The first human gate — chapter map, style overrides, front/back matter. |
-| `src/review/api.ts` | Client for the API: fetch structure review, submit overrides, query build status. Base URL from `NEXT_PUBLIC_API_URL`, default `http://localhost:4000/v1`. |
+| `src/app/layout.tsx` | Root layout. |
+| `src/app/manuscripts/[id]/review/page.tsx` | The structure review page. A Server Component: fetches via `src/review/server.ts`, 404s an unknown manuscript, renders the panel. |
+| `src/types.ts` | The API contract for the UI. `StructureReview`/`ChapterReview`/`LowConfidenceNode`/`OrphanedOp` are **exactly** what `GET /v1/manuscripts/:id/structure` returns, and `OverrideOp` is `overrides/1`'s op. Keep them that way: the panel once read fields the API never sent. `QualityIssue`/`AgentProposal`/`ReviewSession` describe routes that don't exist yet. |
+| `src/review/StructureReviewPanel.tsx` | The first human gate: chapter map, each node's override target id, the ops logged against it, orphaned ops. **Read-only**, it writes no op. |
+| `src/review/server.ts` | `import "server-only"`. Fetches from the API with `PUBLISHER_API_TOKEN` (never `NEXT_PUBLIC_`, since a browser-visible token is a leaked token) at `PUBLISHER_API_URL`, default `http://localhost:4000/v1`. |
+| `src/review/api.ts` | Browser client: submit overrides, query build status. Base URL from `NEXT_PUBLIC_API_URL`. **Sends no token and no `Idempotency-Key`, so every call it makes is refused.** Writes belong in a Server Action. |
 | `package.json`, `tsconfig.json`, `next.config.js` | Workspace config. |
 
 ## Rules that bite

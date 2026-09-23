@@ -42,11 +42,9 @@ The "first human gate" is three disconnected pieces.
 
 | Piece | Where | State |
 |---|---|---|
-| Review UI | `packages/web/src/review/StructureReviewPanel.tsx:23` | Exported, **never imported**. `packages/web` has no `src/app/` or `src/pages/` — there is no Next.js route that mounts it. |
+| Review UI | `packages/web/src/app/manuscripts/[id]/review/page.tsx` | **Mounted, read-only.** A Server Component fetches the structure with a server-only `PUBLISHER_API_TOKEN` and renders the panel. The panel can't write an op yet. |
 | Override API | `packages/api/src/routes/manuscripts.ts` | **Done.** `PATCH /v1/documents/:id/overrides` validates each op against `overrides/1`, refuses (422) ops `resolve` cannot apply, and appends to `override_ops` (migration `004`) in one transaction. The log is append-only (the app role holds SELECT and INSERT only), tenant-isolated by RLS, and ordered by `seq`. A reused op id is a 409. `GET .../structure` returns the log in order instead of `[]`. |
-| Override consumer | `stages/resolve_stage.py:38` | `resolve` takes `overrides_path` as an **optional root input**. Nothing in `packages/api/src/routes/builds.ts` ever supplies one (grep for `override` in that file returns zero hits). |
-
-So: the panel cannot be opened, and nothing carries the now-stored log to a build.
+| Override consumer | `stages/resolve_stage.py:38` | **Done.** `resolve` takes `overrides_path` as an optional root input, and the worker supplies it (see **Worker** below). |
 
 **Parser — done.** `resolve` used to build ops with `OverrideOp(**op)`, and the Python
 dataclass does not match the schema (`from_value`/`to_value`/`created_at` for
@@ -105,10 +103,19 @@ nothing can (a front/back-matter section wrapper — the schema gives it no `sou
 its contents — or any node of a pre-v4 AST). The view and `orphanedOps` share one
 `docxIdOf`, and a test pins that every id the view shows is one an op lands on.
 
-**Work:** one Next.js route that renders the panel. The panel's own types still drift from
-the API: `ChapterReview.id` and `.ambiguities` are declared but never sent. The web client's `OverrideOp` type
-(`packages/web/src/types.ts`) is also not the schema's shape — `sourceRef: string`,
-`createdAt` — so what it sends is now correctly refused with a 400.
+**Review page — done, read-only.** `/manuscripts/[id]/review` (`packages/web/src/app/`)
+renders the panel from a Server Component. The API needs a bearer token, so the page fetches
+with `PUBLISHER_API_TOKEN` (not `NEXT_PUBLIC_`, so Next never inlines it into a client bundle)
+and the browser gets only the result. A stub-API smoke run checked the token appears in
+neither the HTML nor the RSC payload. `packages/web/src/types.ts` is now exactly what the
+API returns: the panel read `ChapterReview.id` and `.ambiguities`, which the API never sent,
+so it would have thrown on first render. `OverrideOp` is now `overrides/1`'s shape. The panel
+shows each node's target id, the logged ops aimed at a chapter, and the orphaned ops, and
+says so when a manuscript has no build yet.
+
+**Work:** let the panel write an op. `src/review/api.ts`'s `submitOverrides` runs in the
+browser with no token and no `Idempotency-Key`, so every call would be a 401. It needs a
+Server Action that PATCHes with the server-side token.
 
 Also: the log has no undo. Ops are immutable and the schema has no revert op, so a
 reviewer's mistake can only be superseded by a later op, never removed.
@@ -284,8 +291,9 @@ pip-audit/npm audit be the whole story. Deleting is smaller.
 `next build`, no `tsc --noEmit`, no tests. Compare `packages/api`, which gets a type-check
 (`:104`) and a Vitest suite (`:106`) over three test files.
 
-`packages/web` has zero test files. Given 1.1 (nothing mounts the panel), a type error in
-`StructureReviewPanel.tsx` would reach `master` unnoticed.
+`packages/web` has zero test files. The panel is now mounted (§1.1), but nothing in CI
+builds it, so a type error in `StructureReviewPanel.tsx` would still reach `master`
+unnoticed. `next build` passes locally.
 
 **Work:** add `tsc --noEmit` to the web CI job. One line, and it is the check that would
 have caught the missing route.
@@ -341,5 +349,5 @@ into impossible states.
    to surface bugs nobody has predicted.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
-3. **§1.1 — mount the review panel.** The override loop works end to end, orphaned ops are
-   reported, and the structure view exposes the ids ops target. Nothing renders it yet.
+3. **§1.1 — let the review page write ops.** The loop works end to end, and the page at
+   `/manuscripts/[id]/review` shows ids, logged ops and orphans. It can't submit an op yet.

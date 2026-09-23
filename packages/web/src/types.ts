@@ -7,27 +7,31 @@
  * - Raster view: CDN-served page rasters with proposal-outcome instrumentation
  */
 
-/** A structure review — the first human gate in the workflow. */
+/**
+ * A structure review — the first human gate. Exactly what the API's
+ * `GET /v1/manuscripts/:id/structure` returns (packages/api routes/manuscripts.ts).
+ */
 export interface StructureReview {
-  buildId: string;
-  title: string;
+  manuscriptId: string;
+  /** `pending`: no build has produced an AST yet, so there is nothing to review. */
+  status: "pending" | "ready";
   chapters: ChapterReview[];
   /** `null` when the AST carries no scores: not measured, which is not "none low". */
   lowConfidenceNodes: LowConfidenceNode[] | null;
+  /** The manuscript's override log, in the order a build applies it. */
   overrides: OverrideOp[];
+  /** Logged ops that target no node of this build; `null` when there is no build yet. */
+  orphanedOps: OrphanedOp[] | null;
 }
 
 /** A single chapter in the review. */
 export interface ChapterReview {
-  number: number;
+  number: number | null;
   title: string;
-  id: string;
-  pageCount?: number;
   /** The `sourceRef.docxId` an override op targets; `null` = untargetable. */
   docxId: string | null;
   /** As the AST carries it; `null` means unscored, never "certain". */
   confidence: number | null;
-  ambiguities: Ambiguity[];
 }
 
 /**
@@ -45,26 +49,29 @@ export interface LowConfidenceNode {
   confidence: number;
 }
 
-/** An ambiguity flagged for human attention. */
-export interface Ambiguity {
-  id: string;
-  type: string;
-  message: string;
-  sourceRef: string;
-  context: string;
-}
-
-/** An override operation — the only way humans (and agents) modify the book. */
+/**
+ * An override operation — the only way humans (and agents) modify the book.
+ * `overrides/1`'s `$defs.overrideOp`; the API refuses anything else with a 400.
+ */
 export interface OverrideOp {
   id: string;
-  sourceRef: string;
-  op: "reclassify" | "retitle" | "split" | "merge" | "delete" | "flag_ambiguity";
+  sourceRef: { docxId: string; contentHash?: string; fallbackText?: string };
+  op:
+    | "reclassify" | "split" | "merge" | "promote" | "demote" | "delete" | "insert"
+    | "retitle" | "rename" | "set_attr" | "flag_ambiguity" | "resolve_ambiguity";
+  path?: string;
   from?: string;
   to?: string;
   value?: unknown;
   rationale?: string;
   actor: string;
-  createdAt: string;
+  at: string;
+}
+
+/** A logged op that matches no node, so a build skips it. */
+export interface OrphanedOp {
+  op: OverrideOp;
+  reason: "no_source_ref";
 }
 
 /** A quality review item. */

@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState } from "react";
 import type {
   StructureReview,
   ChapterReview,
   LowConfidenceNode,
+  OrphanedOp,
   OverrideOp,
 } from "../types";
 
@@ -14,42 +15,44 @@ import type {
  * Displays:
  * - Chapter map with confidence indicators
  * - Low-confidence nodes requiring classification
- * - Ambiguity flags
- * - Override controls (reclassify, retitle, etc.)
+ * - Each node's override target id, and the logged ops aimed at it
+ * - Logged ops that target nothing in this build
+ *
+ * Read-only: it shows what a reviewer would aim an op at, but nothing here
+ * writes one yet.
  *
  * From ARCHITECTURE.md §1.1 (Human gate #1):
  * "chapter map, front/back matter, flagged ambiguities"
  */
-export function StructureReviewPanel({
-  review,
-  onOverride,
-}: {
-  review: StructureReview;
-  onOverride?: (op: OverrideOp) => void;
-}) {
-  const [activeChapter, setActiveChapter] = useState<string | null>(null);
+export function StructureReviewPanel({ review }: { review: StructureReview }) {
+  const [active, setActive] = useState<number | null>(null);
+
+  if (review.status === "pending") {
+    return (
+      <p style={styles.placeholder}>
+        No build has produced this manuscript's structure yet, so there is nothing to review.
+      </p>
+    );
+  }
 
   return (
     <div className="structure-review" style={styles.container}>
       <div style={styles.sidebar}>
         <h2 style={styles.title}>Chapters</h2>
         <div style={styles.chapterList}>
-          {review.chapters.map((ch) => (
+          {review.chapters.map((ch, i) => (
             <ChapterCard
-              key={ch.id}
+              key={ch.docxId ?? `index-${i}`}
               chapter={ch}
-              active={activeChapter === ch.id}
-              onClick={() => setActiveChapter(ch.id)}
+              active={active === i}
+              onClick={() => setActive(i)}
             />
           ))}
         </div>
       </div>
       <div style={styles.main}>
-        {activeChapter ? (
-          <ChapterDetail
-            chapter={review.chapters.find((c) => c.id === activeChapter)!}
-            onOverride={onOverride}
-          />
+        {active !== null && review.chapters[active] ? (
+          <ChapterDetail chapter={review.chapters[active]} overrides={review.overrides} />
         ) : (
           <p style={styles.placeholder}>
             Select a chapter to review its structure and low-confidence nodes.
@@ -60,14 +63,20 @@ export function StructureReviewPanel({
             This build's structure was not scored, so nothing here has been checked.
           </p>
         ) : review.lowConfidenceNodes.length > 0 && (
-          <LowConfidenceSection
-            nodes={review.lowConfidenceNodes}
-            onOverride={onOverride}
-          />
+          <LowConfidenceSection nodes={review.lowConfidenceNodes} />
+        )}
+        {review.orphanedOps !== null && review.orphanedOps.length > 0 && (
+          <OrphanedSection orphans={review.orphanedOps} />
         )}
       </div>
     </div>
   );
+}
+
+function TargetId({ docxId }: { docxId: string | null }) {
+  return docxId === null
+    ? <span style={styles.chapterMeta}>untargetable (no source id)</span>
+    : <code style={styles.targetId}>{docxId}</code>;
 }
 
 function ChapterCard({
@@ -80,8 +89,7 @@ function ChapterCard({
   onClick: () => void;
 }) {
   // Unscored counts as an issue: not measured is not certain.
-  const hasIssues = chapter.ambiguities.length > 0
-    || chapter.confidence === null || chapter.confidence < 0.8;
+  const hasIssues = chapter.confidence === null || chapter.confidence < 0.8;
   return (
     <div
       onClick={onClick}
@@ -92,7 +100,7 @@ function ChapterCard({
       }}
     >
       <div style={styles.chapterTitle}>
-        Ch. {chapter.number}: {chapter.title}
+        Ch. {chapter.number ?? "?"}: {chapter.title}
       </div>
       <div style={styles.chapterMeta}>
         Confidence:{" "}
@@ -105,57 +113,69 @@ function ChapterCard({
 
 function ChapterDetail({
   chapter,
-  onOverride,
+  overrides,
 }: {
   chapter: ChapterReview;
-  onOverride?: (op: OverrideOp) => void;
+  overrides: OverrideOp[];
 }) {
+  const aimed = chapter.docxId === null
+    ? []
+    : overrides.filter((op) => op.sourceRef.docxId === chapter.docxId);
   return (
     <div>
       <h3>
-        Ch. {chapter.number}: {chapter.title}
+        Ch. {chapter.number ?? "?"}: {chapter.title}
       </h3>
-      {chapter.ambiguities.map((amb) => (
-        <AmbiguityCard key={amb.id} ambiguity={amb} onOverride={onOverride} />
+      <p>Target id: <TargetId docxId={chapter.docxId} /></p>
+      {aimed.length > 0 && (
+        <>
+          <h4>Logged overrides ({aimed.length})</h4>
+          {aimed.map((op) => <OpLine key={op.id} op={op} />)}
+        </>
+      )}
+    </div>
+  );
+}
+
+function OpLine({ op }: { op: OverrideOp }) {
+  const detail = op.op === "reclassify" ? `${op.from} → ${op.to}`
+    : op.op === "retitle" ? `"${String(op.value)}"`
+    : op.rationale ?? "";
+  return (
+    <p style={styles.contextText}>
+      <strong>{op.op}</strong> {detail} — {op.actor}, {op.at}
+    </p>
+  );
+}
+
+function LowConfidenceSection({ nodes }: { nodes: LowConfidenceNode[] }) {
+  return (
+    <div style={styles.lowConfSection}>
+      <h3>Low-Confidence Nodes ({nodes.length})</h3>
+      {nodes.map((node) => (
+        <div key={`${node.root}-${node.index}`} style={styles.lowConfCard}>
+          <p style={styles.contextText}>"{node.title ?? node.text}"</p>
+          <p>
+            Read as <strong>{node.type}</strong> in {node.root} (confidence:{" "}
+            {(node.confidence * 100).toFixed(0)}%) · <TargetId docxId={node.docxId} />
+          </p>
+        </div>
       ))}
     </div>
   );
 }
 
-function AmbiguityCard({
-  ambiguity,
-  onOverride,
-}: {
-  ambiguity: any;
-  onOverride?: (op: OverrideOp) => void;
-}) {
-  return (
-    <div style={styles.ambiguityCard}>
-      <p>
-        <strong>Flagged:</strong> {ambiguity.message}
-      </p>
-      <p style={styles.contextText}>{ambiguity.context}</p>
-    </div>
-  );
-}
-
-function LowConfidenceSection({
-  nodes,
-  onOverride,
-}: {
-  nodes: LowConfidenceNode[];
-  onOverride?: (op: OverrideOp) => void;
-}) {
+function OrphanedSection({ orphans }: { orphans: OrphanedOp[] }) {
   return (
     <div style={styles.lowConfSection}>
-      <h3>Low-Confidence Nodes ({nodes.length})</h3>
-      {nodes.map((node, i) => (
-        <div key={i} style={styles.lowConfCard}>
-          <p style={styles.contextText}>"{node.title ?? node.text}"</p>
-          <p>
-            Read as <strong>{node.type}</strong> in {node.root} (confidence:{" "}
-            {(node.confidence * 100).toFixed(0)}%)
-          </p>
+      <h3>Overrides with no effect ({orphans.length})</h3>
+      <p style={styles.chapterMeta}>
+        These logged decisions target no node in this build, so the build skips them.
+      </p>
+      {orphans.map(({ op }) => (
+        <div key={op.id} style={styles.orphanCard}>
+          <OpLine op={op} />
+          <p style={styles.chapterMeta}>Aimed at <TargetId docxId={op.sourceRef.docxId} /></p>
         </div>
       ))}
     </div>
@@ -212,7 +232,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 40,
     textAlign: "center",
   },
-  ambiguityCard: {
+  orphanCard: {
     background: "#fffbe6",
     border: "1px solid #ffe58f",
     borderRadius: 6,
@@ -230,6 +250,12 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     padding: 12,
     marginBottom: 8,
+  },
+  targetId: {
+    fontSize: 12,
+    background: "#f3f3f3",
+    padding: "1px 4px",
+    borderRadius: 3,
   },
   contextText: {
     fontSize: 13,

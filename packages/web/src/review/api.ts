@@ -2,12 +2,14 @@
  * Review API client.
  *
  * Communicates with the Publisher API for:
- * - Fetching structure review data
  * - Submitting overrides
+ *
+ * The structure review is fetched server-side (./server.ts), because the API
+ * needs a bearer token and this module runs in the browser.
  * - Querying build status
  */
 
-import type { StructureReview, ReviewSession } from "../types";
+import type { ReviewSession } from "../types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
@@ -20,13 +22,6 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`API ${res.status}: ${res.statusText}`);
   }
   return res.json();
-}
-
-/** Fetch the structure review for a manuscript. */
-export async function fetchStructureReview(
-  manuscriptId: string
-): Promise<StructureReview> {
-  return apiFetch<StructureReview>(`/manuscripts/${manuscriptId}/structure`);
 }
 
 /** Submit override operations for a document. */
