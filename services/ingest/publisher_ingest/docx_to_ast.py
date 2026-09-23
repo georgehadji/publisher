@@ -26,6 +26,7 @@ These are not stylistic preferences; violating them fails the build:
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -315,6 +316,60 @@ def _find_body_start(sections: list[tuple]) -> int:
     return start
 
 
+# Node types ast.schema.json lets carry a `sourceRef`: chapters and block nodes.
+# Not the front/back-matter section wrappers (the schema has no field for it),
+# table rows/cells, or inline runs.
+SOURCE_REF_TYPES = frozenset({
+    "part", "chapter", "paragraph", "heading", "blockquote", "verse", "list", "table",
+    "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code",
+    "equation", "pageBreak",
+})
+
+
+def _assign_source_refs(ast: dict) -> None:
+    """Give every addressable node a `sourceRef.docxId` an override can target.
+
+    Overrides find their node by this id (publisher_structure.overrides), and
+    ingest used to emit none: every override matched nothing and was skipped.
+
+    The id is derived from CONTENT, not position. A positional id ("p412") shifts
+    for every node after an insertion, so a stored op would silently retarget a
+    DIFFERENT paragraph -- worse than not matching at all. A content id survives
+    any edit that does not touch its own node, and when it does, the op orphans
+    rather than landing somewhere wrong. Chapters are keyed by title, not body,
+    so editing a paragraph does not orphan a retitle of its chapter. Identical
+    content (scene breaks, a repeated line) is told apart by occurrence order.
+
+    `docxId` is the schema's field name; the value is not an id Word assigned.
+    ponytail: `w14:paraId` is Word's own paragraph id, but Word regenerates it on
+    some edits and other writers omit it, so content is the more stable key. Use
+    paraId to break ties if occurrence-order ids prove fragile in practice.
+    """
+    seen: dict[str, int] = {}
+
+    def identity(node: dict) -> str:
+        if node["type"] in ("chapter", "part"):
+            basis = (node.get("attrs") or {}).get("title") or ""
+        else:
+            # A node with no prose (figure, scene break) is identified by what it
+            # IS: a figure's attrs carry its media hash.
+            basis = _node_text(node) or json.dumps(node, sort_keys=True, ensure_ascii=False)
+        return f"{node['type']}:{hashlib.sha256(basis.encode('utf-8')).hexdigest()[:16]}"
+
+    def walk(nodes) -> None:
+        for node in nodes or []:
+            if not isinstance(node, dict):
+                continue
+            if node.get("type") in SOURCE_REF_TYPES:
+                base = identity(node)
+                seen[base] = seen.get(base, 0) + 1
+                node["sourceRef"] = {"docxId": base if seen[base] == 1 else f"{base}~{seen[base]}"}
+            walk(node.get("content"))
+
+    for root in ("frontMatter", "body", "backMatter"):
+        walk(ast.get(root))
+
+
 def _assert_no_text_lost(sources: list[str], ast: dict) -> None:
     """Post-condition: no DOCX text was dropped on the way into the AST.
 
@@ -486,6 +541,7 @@ def docx_to_ast(
         },
     }
 
+    _assign_source_refs(ast)
     _assert_no_text_lost(sources, ast)
 
     all_text = " ".join(b.text for b in blocks)

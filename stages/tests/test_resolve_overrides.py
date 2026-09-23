@@ -82,3 +82,31 @@ def test_no_log_still_means_zero_overrides(tmp_path):
     ctx = _ctx(tmp_path)
     result = resolve(ctx, ast=_write(tmp_path, "ast.json", AST))
     assert _effective(ctx, result)["body"][0]["attrs"]["title"] == "One"
+
+
+def test_an_override_on_an_ingested_book_takes_effect(tmp_path):
+    """The whole loop, from a real DOCX: ingest tags the chapter, an op aimed at
+    that tag goes through resolve, and the title changes.
+
+    Before ingest emitted per-node sourceRefs, this op matched nothing and
+    apply_overrides returned the book untouched -- no error, no warning.
+    """
+    docx = pytest.importorskip("docx")
+    from publisher_ingest.docx_to_ast import docx_to_ast
+
+    document = docx.Document()
+    document.add_paragraph("CHAPTER ONE", style="Heading 1")
+    document.add_paragraph("Prose " * 80)
+    source = tmp_path / "m.docx"
+    document.save(str(source))
+    ast = docx_to_ast(source)
+    target = ast["body"][0]["sourceRef"]["docxId"]
+
+    ctx = _ctx(tmp_path)
+    log = {"schema": "overrides/1", "documentId": "ms-1", "astVersion": 1, "ops": [{
+        "id": "ov-1", "sourceRef": {"docxId": target}, "op": "retitle", "value": "Chapter the First",
+        "actor": "user:reviewer", "at": "2026-01-01T00:00:00Z",
+    }]}
+    result = resolve(ctx, ast=_write(tmp_path, "ast.json", ast),
+                     overrides_path=_write(tmp_path, "ov.json", log))
+    assert _effective(ctx, result)["body"][0]["attrs"]["title"] == "Chapter the First"

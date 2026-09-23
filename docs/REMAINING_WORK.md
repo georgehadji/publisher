@@ -58,9 +58,42 @@ per-op requirements. Each mapping table is pinned to the schema file by a test. 
 malformed log is `BAD_INPUT` with an `override-log-malformed` diagnostic. `resolve` is
 at v3.
 
-**Work:** have the worker write a manuscript's log from `override_ops` to the CAS and pass
-it to the build as `overrides_path` (the worker role also needs `SELECT` on
-`override_ops`); add one Next.js route that renders the panel. The web client's `OverrideOp` type
+**Worker — done.** `worker._override_log_for` reads the manuscript's `override_ops` in `seq`
+order, writes them to the CAS as one `overrides/1` document (sorted-key JSON, so an
+unchanged log has an unchanged hash and cache key), and supplies it as `resolve`'s
+`overrides_path`, only when there are ops. Migration `005` grants `publisher_worker`
+`SELECT` on `override_ops`.
+
+**The loop is plumbed end to end, and no override can take effect yet.** Ops target nodes
+by `sourceRef.docxId`, and `docx_to_ast` emits **no per-node `sourceRef` at all** (verified:
+an ingested AST carries none; the only `sourceRef` is the document-level one). Worse, an op
+whose target matches nothing is **silently skipped**: `apply_overrides` returns the AST
+unchanged, and `_rewrite` has no notion of "found nothing". So every stored op reaches
+`resolve` and does nothing, with no error, no warning and no metric. That's the same failure
+`dc6a6f3` fixed for unimplemented ops, one layer over.
+
+Making an unmatched op fatal, as `dc6a6f3` did, has a trap here: the log is append-only
+with no undo, so one op aimed at a node that doesn't exist would leave that manuscript
+unbuildable for good. And a non-fatal report has nowhere to go: `StageResult.warnings` is
+read by nothing (not the executor, the worker or the API), and the API doesn't return
+per-stage `metrics`.
+
+**Ingest ids — done.** `docx_to_ast` now tags every chapter and block node with a
+`sourceRef.docxId`, which is exactly the set of types the schema allows it on (pinned by a
+test). The id is content-derived, not positional: a positional id shifts for every node
+after an insert, so a stored op would silently land on a *different* paragraph. Chapters
+are keyed by title, so editing prose doesn't orphan a retitle. Repeated content is told
+apart by occurrence order. `ingest` is at v4. An end-to-end test takes a real DOCX,
+ingests it, retitles its chapter through `resolve`, and checks the title changed.
+
+**Decided: an unmatched ("orphaned") op is reported, not fatal.** Fatal plus an
+append-only log would leave a manuscript unbuildable for good. It is still *silent* today:
+`apply_overrides` skips it with no signal. **Work:** have `resolve` (or the structure view)
+report orphaned ops, e.g. as `overrides/1`'s existing `orphanedOps` with a reason on
+`GET /v1/manuscripts/:id/structure`; expose each node's `docxId` there so a reviewer, or
+the UI, can aim an op at it; then one Next.js route that renders the panel. Front- and
+back-matter section wrappers carry no `sourceRef` in the schema, so they can't be targeted
+directly; their contents can. The web client's `OverrideOp` type
 (`packages/web/src/types.ts`) is also not the schema's shape — `sourceRef: string`,
 `createdAt` — so what it sends is now correctly refused with a 400.
 
@@ -295,5 +328,6 @@ into impossible states.
    to surface bugs nobody has predicted.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
-3. **§1.1 — feed the stored log to a build.** Ops are persisted and `resolve` reads their
-   shape; the worker passing `override_ops` as `overrides_path` is the last link.
+3. **§1.1 — report orphaned override ops.** The loop now works end to end (stored, read,
+   handed to `resolve`, matched by ingest's ids), but an op that matches nothing is still
+   skipped silently.

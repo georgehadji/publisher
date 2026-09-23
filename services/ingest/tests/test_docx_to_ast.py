@@ -437,3 +437,126 @@ def test_billion_laughs_in_footnotes_xml_is_refused_as_bad_input(tmp_path):
 
     with pytest.raises(IngestError):
         docx_to_ast(docx_path)
+
+
+# ── sourceRef: the id an override targets ───────────────────────
+#
+# Overrides find their node by `sourceRef.docxId`. Ingest emitted none, so every
+# stored override matched nothing and apply_overrides skipped it silently.
+
+from publisher_ingest.docx_to_ast import SOURCE_REF_TYPES  # noqa: E402
+
+
+def _nodes(ast):
+    """Every node under the three roots, in document order."""
+    out = []
+
+    def walk(nodes):
+        for node in nodes or []:
+            if isinstance(node, dict):
+                out.append(node)
+                walk(node.get("content"))
+
+    for root in ("frontMatter", "body", "backMatter"):
+        walk(ast[root])
+    return out
+
+
+def _ids(ast):
+    return [n["sourceRef"]["docxId"] for n in _nodes(ast) if "sourceRef" in n]
+
+
+BOOK = [
+    ("DEDICATION", None), ("for mum", None),
+    ("CHAPTER ONE", "Heading 1"), (PROSE, None), ("* * *", None), ("A second paragraph.", None),
+    ("CHAPTER TWO", "Heading 1"), (PROSE + "two", None), ("* * *", None),
+    ("COLOPHON", None), ("Set in Garamond", None),
+]
+
+
+def test_every_addressable_node_gets_a_unique_id_and_nothing_else_does(tmp_path):
+    ast = docx_to_ast(_write(tmp_path, BOOK))
+    for node in _nodes(ast):
+        if node.get("type") in SOURCE_REF_TYPES:
+            assert "sourceRef" in node, f"{node['type']} has no sourceRef"
+        else:
+            # Section wrappers, table rows, inline runs: the schema has no field.
+            assert "sourceRef" not in node, f"{node['type']} must not carry one"
+    ids = _ids(ast)
+    assert len(ids) == len(set(ids)), "two nodes share an id -- an override would hit both"
+    assert all(len(i) <= 128 for i in ids), "sourceRefLink.docxId maxLength is 128"
+
+
+def test_ids_survive_an_insertion_elsewhere(tmp_path):
+    """A positional id shifts for every node after an insert, and a stored op
+    would land on a DIFFERENT paragraph. A content id does not move."""
+    before = docx_to_ast(_write(tmp_path, BOOK))
+    (tmp_path / "edited").mkdir()
+    edited = BOOK[:3] + [("An inserted opening line.", None)] + BOOK[3:]
+    after = docx_to_ast(_write(tmp_path / "edited", edited))
+    # Per NODE, not per id set: positional ids n1..nK are still a subset of
+    # n1..nK+1 after an insert, while every node past it has changed id. An
+    # earlier version of this test compared sets and passed on positional ids.
+    assert _id_by_node(before).items() <= _id_by_node(after).items()
+
+
+def _id_by_node(ast):
+    """(type, content, occurrence) -> docxId, for every tagged node."""
+    from publisher_ingest.docx_to_ast import _node_text
+
+    out, seen = {}, {}
+    for node in _nodes(ast):
+        if "sourceRef" in node:
+            key = (node["type"], (node.get("attrs") or {}).get("title") or _node_text(node))
+            seen[key] = seen.get(key, 0) + 1
+            out[(*key, seen[key])] = node["sourceRef"]["docxId"]
+    return out
+
+
+def test_a_chapter_id_follows_its_title_not_its_body(tmp_path):
+    """Editing prose must not orphan a retitle aimed at the chapter."""
+    before = docx_to_ast(_write(tmp_path, BOOK))
+    (tmp_path / "edited").mkdir()
+    edited = [(PROSE + " revised", s) if t == PROSE else (t, s) for t, s in BOOK]
+    after = docx_to_ast(_write(tmp_path / "edited", edited))
+    assert [c["sourceRef"] for c in before["body"]] == [c["sourceRef"] for c in after["body"]]
+
+
+def test_identical_content_is_told_apart(tmp_path):
+    ast = docx_to_ast(_write(tmp_path, BOOK))
+    breaks = [n["sourceRef"]["docxId"] for n in _nodes(ast)
+              if n.get("type") == "paragraph" and _node_text_of(n) == "* * *"]
+    assert len(breaks) == 2 and breaks[0] != breaks[1]
+
+
+def _node_text_of(node):
+    from publisher_ingest.docx_to_ast import _node_text
+    return _node_text(node)
+
+
+def test_tagged_ast_is_still_schema_valid(tmp_path):
+    jsonschema = pytest.importorskip("jsonschema")
+    import json
+    from pathlib import Path
+
+    schema = json.loads(
+        (Path(__file__).resolve().parents[3] / "schemas/ast/ast.schema.json").read_text(encoding="utf-8")
+    )
+    jsonschema.validate(docx_to_ast(_write(tmp_path, BOOK)), schema)
+
+
+def test_source_ref_types_are_the_schemas():
+    """Tagging a type the schema forbids fails validation; missing one leaves
+    it untargetable. Pinned both ways."""
+    import json
+    from pathlib import Path
+
+    defs = json.loads(
+        (Path(__file__).resolve().parents[3] / "schemas/ast/ast.schema.json").read_text(encoding="utf-8")
+    )["$defs"]
+    declared = {
+        d["properties"]["type"]["enum"][0]
+        for d in defs.values()
+        if isinstance(d, dict) and "sourceRef" in (d.get("properties") or {})
+    }
+    assert SOURCE_REF_TYPES == declared

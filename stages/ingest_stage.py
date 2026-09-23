@@ -169,7 +169,10 @@ def _check_zip_limits(source: Path) -> None:
     # v3: chapters and front/back-matter sections carry `confidence`, scored by
     # docx_to_ast from the evidence each decision rested on. A cached v2 AST has
     # none, and would read downstream as "unscored" for every book.
-    version=3,
+    # v4: every chapter and block node carries a content-derived
+    # `sourceRef.docxId`, the id overrides target. A cached v3 AST has none, so
+    # every override on it would match nothing.
+    version=4,
     inputs={"docx_path": "raw-docx/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["docx_path"],
