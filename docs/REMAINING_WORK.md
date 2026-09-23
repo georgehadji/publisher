@@ -42,7 +42,7 @@ The "first human gate" is three disconnected pieces.
 
 | Piece | Where | State |
 |---|---|---|
-| Review UI | `packages/web/src/app/manuscripts/[id]/review/page.tsx` | **Mounted, read-only.** A Server Component fetches the structure with a server-only `PUBLISHER_API_TOKEN` and renders the panel. The panel can't write an op yet. |
+| Review UI | `packages/web/src/app/manuscripts/[id]/review/page.tsx` | **Mounted, writes ops, unauthenticated (local dev only).** A Server Component reads the structure with a server-only `PUBLISHER_API_TOKEN`; a Server Action appends retitle/flag ops. |
 | Override API | `packages/api/src/routes/manuscripts.ts` | **Done.** `PATCH /v1/documents/:id/overrides` validates each op against `overrides/1`, refuses (422) ops `resolve` cannot apply, and appends to `override_ops` (migration `004`) in one transaction. The log is append-only (the app role holds SELECT and INSERT only), tenant-isolated by RLS, and ordered by `seq`. A reused op id is a 409. `GET .../structure` returns the log in order instead of `[]`. |
 | Override consumer | `stages/resolve_stage.py:38` | **Done.** `resolve` takes `overrides_path` as an optional root input, and the worker supplies it (see **Worker** below). |
 
@@ -113,9 +113,23 @@ so it would have thrown on first render. `OverrideOp` is now `overrides/1`'s sha
 shows each node's target id, the logged ops aimed at a chapter, and the orphaned ops, and
 says so when a manuscript has no build yet.
 
-**Work:** let the panel write an op. `src/review/api.ts`'s `submitOverrides` runs in the
-browser with no token and no `Idempotency-Key`, so every call would be a 401. It needs a
-Server Action that PATCHes with the server-side token.
+**Writing ops — done, unauthenticated by decision.** A chapter with a target id gets a form
+that logs a `retitle` or `flag_ambiguity` through a Server Action (`src/review/actions.ts`).
+The action builds the whole op (id, actor, timestamp, shape) from a target id and a text
+field. The browser asserts none of it, so an off-schema op can't be sent. It PATCHes with the
+server-side token and the op id as `Idempotency-Key`, then `refresh()`es the page. An API
+refusal or an unreachable API shows in the form rather than crashing the page. A smoke run
+against a recording stub validated the ops it sent against `overrides/1` and through
+`resolve`'s parser. The old browser `submitOverrides`, which sent no token and could never
+have worked, is gone. `delete` and `reclassify` are left off the form: one is irreversible
+in an undo-less log, the other needs a node-type picker.
+
+**No reviewer authentication (decided: local dev only).** A Server Action is a public POST
+endpoint, and this one writes as the tenant. `npm run dev`/`start` bind `127.0.0.1`,
+verified unreachable on the LAN address. That is the only protection: a standalone
+deployment (`node .next/standalone/server.js`) ignores `-H` and binds per `HOSTNAME`. Every
+op is attributed to one actor, `user:local-reviewer`. Before the UI goes anywhere but
+localhost it needs sign-in, and with sign-in per-reviewer actors.
 
 Also: the log has no undo. Ops are immutable and the schema has no revert op, so a
 reviewer's mistake can only be superseded by a later op, never removed.
@@ -349,5 +363,6 @@ into impossible states.
    to surface bugs nobody has predicted.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
-3. **§1.1 — let the review page write ops.** The loop works end to end, and the page at
-   `/manuscripts/[id]/review` shows ids, logged ops and orphans. It can't submit an op yet.
+3. **§1.1 — authenticate reviewers.** The loop closes: a reviewer can open
+   `/manuscripts/[id]/review`, log a retitle or flag, and see it applied on the next build.
+   But it's localhost-only by convention, with one shared actor.

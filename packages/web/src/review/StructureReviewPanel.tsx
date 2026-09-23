@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useActionState, useState } from "react";
+import { submitOverride } from "./actions";
 import type {
   StructureReview,
   ChapterReview,
@@ -18,8 +19,8 @@ import type {
  * - Each node's override target id, and the logged ops aimed at it
  * - Logged ops that target nothing in this build
  *
- * Read-only: it shows what a reviewer would aim an op at, but nothing here
- * writes one yet.
+ * A chapter with a target id can be retitled or flagged; the op is appended to
+ * the log and takes effect on the next build. Local-dev only -- see ./actions.ts.
  *
  * From ARCHITECTURE.md §1.1 (Human gate #1):
  * "chapter map, front/back matter, flagged ambiguities"
@@ -52,7 +53,12 @@ export function StructureReviewPanel({ review }: { review: StructureReview }) {
       </div>
       <div style={styles.main}>
         {active !== null && review.chapters[active] ? (
-          <ChapterDetail chapter={review.chapters[active]} overrides={review.overrides} />
+          <ChapterDetail
+            key={active}
+            manuscriptId={review.manuscriptId}
+            chapter={review.chapters[active]}
+            overrides={review.overrides}
+          />
         ) : (
           <p style={styles.placeholder}>
             Select a chapter to review its structure and low-confidence nodes.
@@ -112,9 +118,11 @@ function ChapterCard({
 }
 
 function ChapterDetail({
+  manuscriptId,
   chapter,
   overrides,
 }: {
+  manuscriptId: string;
   chapter: ChapterReview;
   overrides: OverrideOp[];
 }) {
@@ -133,7 +141,32 @@ function ChapterDetail({
           {aimed.map((op) => <OpLine key={op.id} op={op} />)}
         </>
       )}
+      {chapter.docxId !== null && (
+        <OverrideForm manuscriptId={manuscriptId} docxId={chapter.docxId} />
+      )}
     </div>
+  );
+}
+
+function OverrideForm({ manuscriptId, docxId }: { manuscriptId: string; docxId: string }) {
+  const [state, action, pending] = useActionState(
+    submitOverride.bind(null, manuscriptId, docxId),
+    null
+  );
+  return (
+    <form action={action} style={styles.form}>
+      <select name="op" defaultValue="retitle" aria-label="Operation">
+        <option value="retitle">Retitle</option>
+        <option value="flag_ambiguity">Flag for review</option>
+      </select>
+      <input name="text" aria-label="New title or reason" required maxLength={4096} style={{ flex: 1 }} />
+      <button type="submit" disabled={pending}>{pending ? "Saving…" : "Log override"}</button>
+      {state && (
+        <p role="status" style={{ ...styles.chapterMeta, color: state.ok ? "#2e7d32" : "#c62828", width: "100%" }}>
+          {state.message}
+        </p>
+      )}
+    </form>
   );
 }
 
@@ -250,6 +283,12 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     padding: 12,
     marginBottom: 8,
+  },
+  form: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 16,
   },
   targetId: {
     fontSize: 12,

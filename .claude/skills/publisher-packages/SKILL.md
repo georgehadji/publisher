@@ -54,10 +54,11 @@ remember** — read `node_modules/next/dist/docs/` first (the package's own `AGE
 | `src/app/layout.tsx` | Root layout. |
 | `src/app/manuscripts/[id]/review/page.tsx` | The structure review page. A Server Component: fetches via `src/review/server.ts`, 404s an unknown manuscript, renders the panel. |
 | `src/types.ts` | The API contract for the UI. `StructureReview`/`ChapterReview`/`LowConfidenceNode`/`OrphanedOp` are **exactly** what `GET /v1/manuscripts/:id/structure` returns, and `OverrideOp` is `overrides/1`'s op. Keep them that way: the panel once read fields the API never sent. `QualityIssue`/`AgentProposal`/`ReviewSession` describe routes that don't exist yet. |
-| `src/review/StructureReviewPanel.tsx` | The first human gate: chapter map, each node's override target id, the ops logged against it, orphaned ops. **Read-only**, it writes no op. |
-| `src/review/server.ts` | `import "server-only"`. Fetches from the API with `PUBLISHER_API_TOKEN` (never `NEXT_PUBLIC_`, since a browser-visible token is a leaked token) at `PUBLISHER_API_URL`, default `http://localhost:4000/v1`. |
-| `src/review/api.ts` | Browser client: submit overrides, query build status. Base URL from `NEXT_PUBLIC_API_URL`. **Sends no token and no `Idempotency-Key`, so every call it makes is refused.** Writes belong in a Server Action. |
-| `package.json`, `tsconfig.json`, `next.config.js` | Workspace config. |
+| `src/review/StructureReviewPanel.tsx` | The first human gate: chapter map, each node's override target id, the ops logged against it, orphaned ops, and a form that logs a `retitle`/`flag_ambiguity` against a chapter. |
+| `src/review/actions.ts` | `"use server"`. `submitOverride` builds the op itself (id, actor, `at`, shape) from a client-supplied target + text, so the browser asserts nothing but those two. It appends via `appendOverrides`, then `refresh()`. **Unauthenticated, by decision: local dev only.** A Server Action is a public endpoint writing as the tenant, and the only guard is the 127.0.0.1 bind. Don't expose the UI before adding sign-in. |
+| `src/review/server.ts` | `import "server-only"`. `fetchStructureReview` and `appendOverrides` call the API with `PUBLISHER_API_TOKEN` (never `NEXT_PUBLIC_`, since a browser-visible token is a leaked token) at `PUBLISHER_API_URL`, default `http://localhost:4000/v1`. The PATCH uses the op id as `Idempotency-Key`. |
+| `src/review/api.ts` | Browser client for review-session status. **Sends no token, and its `/builds/:id/review` routes don't exist.** Don't add writes here; they go in `actions.ts`. |
+| `package.json`, `tsconfig.json`, `next.config.js` | Workspace config. `dev`/`start` pass `-H 127.0.0.1`: the UI is unauthenticated, so it must not listen on the LAN. The standalone server ignores `-H`, so set `HOSTNAME=127.0.0.1` there. |
 
 ## Rules that bite
 
