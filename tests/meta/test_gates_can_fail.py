@@ -312,6 +312,10 @@ STEP_CLASSIFICATION: dict[str, str | None] = {
     "npm ci": None,  # dependency install, not a gate
     "Type-check (tsc --noEmit)": None,  # tsc failing is itself the signal (plan §5.2: "--")
     "Vitest -- auth matrix, route coverage, CAS hardening": None,  # ditto
+    # packages/web: next build's TypeScript pass failing is the signal, as with
+    # tsc above. Shown able to fail by hand (TS2339 on the panel's old read of
+    # ChapterReview.id); not a Gate here -- npm ci + next build take minutes.
+    "Type-check and build (next build)": None,
     "Lint schemas (no free-text in structure routes)": "schema-lint",
     "cargo test": None,
     "cargo clippy -- -D warnings": None,

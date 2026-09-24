@@ -299,18 +299,17 @@ both of which do fail. So the risk is documentation, not security.
 **Work:** either populate it from Trivy/Grype as the docstring says, or delete it and let
 pip-audit/npm audit be the whole story. Deleting is smaller.
 
-### 3.3 `packages/web` is unbuilt and untested in CI
+### 3.3 `packages/web` in CI — built and type-checked; still no tests
 
-`ci.yml:186-190` runs `npm ci` and `npm audit` for `packages/web` — and nothing else. No
-`next build`, no `tsc --noEmit`, no tests. Compare `packages/api`, which gets a type-check
-(`:104`) and a Vitest suite (`:106`) over three test files.
+**Done.** CI has a `web` job: `npm ci` then `npm run build`. `next build` runs TypeScript over
+the whole app and compiles every route, and it needs no environment (the review page is
+dynamic, so the API isn't called at build time). Checked from a fresh clone, so it depends
+only on tracked files (`next-env.d.ts` and `.next/` are gitignored). Reintroducing the
+panel's old read of `ChapterReview.id` fails it with `TS2339`. The step is classified in
+`tests/meta/test_gates_can_fail.py` like the API's `tsc`.
 
-`packages/web` has zero test files. The panel is now mounted (§1.1), but nothing in CI
-builds it, so a type error in `StructureReviewPanel.tsx` would still reach `master`
-unnoticed. `next build` passes locally.
-
-**Work:** add `tsc --noEmit` to the web CI job. One line, and it is the check that would
-have caught the missing route.
+**Still:** `packages/web` has zero test files. `actions.ts`'s input checks and the panel's
+rendering were verified only by a manual stub-API smoke run.
 
 ### 3.4 No scheduled CI
 

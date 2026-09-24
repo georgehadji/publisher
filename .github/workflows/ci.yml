@@ -109,6 +109,27 @@ jobs:
       - name: Vitest -- auth matrix, route coverage, CAS hardening
         run: npm run test
 
+  web:
+    # packages/web got `npm ci` and `npm audit` (supply-chain, below) and
+    # nothing else, so a type error in the review UI reached master unseen --
+    # the structure panel once read `ChapterReview.id`, a field the API never
+    # sends, and would have thrown on first render. `next build` type-checks
+    # (its "Running TypeScript" step fails on TS2339 for exactly that bug) and
+    # compiles every route. It needs no env: the review page is dynamic, so the
+    # API is not called at build time.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - name: Type-check and build (next build)
+        run: npm run build
+
   rust:
     runs-on: ubuntu-latest
     steps:
