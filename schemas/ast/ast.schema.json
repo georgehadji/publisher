@@ -106,9 +106,15 @@
       "maximum": 1
     },
     "bodyNode": {
-      "oneOf": [
-        { "$ref": "#/$defs/part" },
-        { "$ref": "#/$defs/chapter" }
+      "$comment": "A union discriminated by `type`, not a oneOf. The branches are disjoint by their `type` enums and every branch is a closed object requiring `type`, so this accepts exactly what oneOf over the same branches did. But jsonschema evaluates EVERY oneOf branch in full at every depth, which made validation exponential in nesting: a table in a table cell did not finish in minutes. Here each `if` reads only `type`, and one `then` descends. Keep `properties.type.enum` equal to the union of the branches' types; services/ingest/tests/test_word_corpus.py checks it.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["part", "chapter"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "part" } } }, "then": { "$ref": "#/$defs/part" } },
+        { "if": { "properties": { "type": { "const": "chapter" } } }, "then": { "$ref": "#/$defs/chapter" } }
       ]
     },
     "part": {
@@ -162,22 +168,28 @@
       "additionalProperties": false
     },
     "blockNode": {
-      "oneOf": [
-        { "$ref": "#/$defs/paragraph" },
-        { "$ref": "#/$defs/heading" },
-        { "$ref": "#/$defs/blockquote" },
-        { "$ref": "#/$defs/verse" },
-        { "$ref": "#/$defs/list" },
-        { "$ref": "#/$defs/table" },
-        { "$ref": "#/$defs/figure" },
-        { "$ref": "#/$defs/footnote" },
-        { "$ref": "#/$defs/epigraph" },
-        { "$ref": "#/$defs/sceneBreak" },
-        { "$ref": "#/$defs/dialogue" },
-        { "$ref": "#/$defs/sidebar" },
-        { "$ref": "#/$defs/code" },
-        { "$ref": "#/$defs/equation" },
-        { "$ref": "#/$defs/pageBreak"}
+      "$comment": "Discriminated by `type`; see bodyNode.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "paragraph" } } }, "then": { "$ref": "#/$defs/paragraph" } },
+        { "if": { "properties": { "type": { "const": "heading" } } }, "then": { "$ref": "#/$defs/heading" } },
+        { "if": { "properties": { "type": { "const": "blockquote" } } }, "then": { "$ref": "#/$defs/blockquote" } },
+        { "if": { "properties": { "type": { "const": "verse" } } }, "then": { "$ref": "#/$defs/verse" } },
+        { "if": { "properties": { "type": { "const": "list" } } }, "then": { "$ref": "#/$defs/list" } },
+        { "if": { "properties": { "type": { "const": "table" } } }, "then": { "$ref": "#/$defs/table" } },
+        { "if": { "properties": { "type": { "const": "figure" } } }, "then": { "$ref": "#/$defs/figure" } },
+        { "if": { "properties": { "type": { "const": "footnote" } } }, "then": { "$ref": "#/$defs/footnote" } },
+        { "if": { "properties": { "type": { "const": "epigraph" } } }, "then": { "$ref": "#/$defs/epigraph" } },
+        { "if": { "properties": { "type": { "const": "sceneBreak" } } }, "then": { "$ref": "#/$defs/sceneBreak" } },
+        { "if": { "properties": { "type": { "const": "dialogue" } } }, "then": { "$ref": "#/$defs/dialogue" } },
+        { "if": { "properties": { "type": { "const": "sidebar" } } }, "then": { "$ref": "#/$defs/sidebar" } },
+        { "if": { "properties": { "type": { "const": "code" } } }, "then": { "$ref": "#/$defs/code" } },
+        { "if": { "properties": { "type": { "const": "equation" } } }, "then": { "$ref": "#/$defs/equation" } },
+        { "if": { "properties": { "type": { "const": "pageBreak" } } }, "then": { "$ref": "#/$defs/pageBreak" } }
       ]
     },
     "paragraph": {
@@ -578,18 +590,24 @@
       "additionalProperties": false
     },
     "inlineNode": {
-      "oneOf": [
-        { "$ref": "#/$defs/text" },
-        { "$ref": "#/$defs/emphasis" },
-        { "$ref": "#/$defs/strong" },
-        { "$ref": "#/$defs/link" },
-        { "$ref": "#/$defs/superscript" },
-        { "$ref": "#/$defs/subscript" },
-        { "$ref": "#/$defs/smallCaps" },
-        { "$ref": "#/$defs/codeInline" },
-        { "$ref": "#/$defs/hardBreak" },
-        { "$ref": "#/$defs/indexEntry" },
-        { "$ref": "#/$defs/crossReference" }
+      "$comment": "Discriminated by `type`; see bodyNode.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["text", "emphasis", "strong", "link", "superscript", "subscript", "smallCaps", "codeInline", "hardBreak", "indexEntry", "crossReference"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "text" } } }, "then": { "$ref": "#/$defs/text" } },
+        { "if": { "properties": { "type": { "const": "emphasis" } } }, "then": { "$ref": "#/$defs/emphasis" } },
+        { "if": { "properties": { "type": { "const": "strong" } } }, "then": { "$ref": "#/$defs/strong" } },
+        { "if": { "properties": { "type": { "const": "link" } } }, "then": { "$ref": "#/$defs/link" } },
+        { "if": { "properties": { "type": { "const": "superscript" } } }, "then": { "$ref": "#/$defs/superscript" } },
+        { "if": { "properties": { "type": { "const": "subscript" } } }, "then": { "$ref": "#/$defs/subscript" } },
+        { "if": { "properties": { "type": { "const": "smallCaps" } } }, "then": { "$ref": "#/$defs/smallCaps" } },
+        { "if": { "properties": { "type": { "const": "codeInline" } } }, "then": { "$ref": "#/$defs/codeInline" } },
+        { "if": { "properties": { "type": { "const": "hardBreak" } } }, "then": { "$ref": "#/$defs/hardBreak" } },
+        { "if": { "properties": { "type": { "const": "indexEntry" } } }, "then": { "$ref": "#/$defs/indexEntry" } },
+        { "if": { "properties": { "type": { "const": "crossReference" } } }, "then": { "$ref": "#/$defs/crossReference" } }
       ]
     },
     "text": {
@@ -776,9 +794,15 @@
       "additionalProperties": false
     },
     "frontMatterNode": {
-      "oneOf": [
-        { "$ref": "#/$defs/blockNode" },
-        {
+      "$comment": "Discriminated by `type`; see bodyNode.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak", "halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak"] } } }, "then": { "$ref": "#/$defs/blockNode" } },
+        { "if": { "properties": { "type": { "enum": ["halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue"] } } }, "then": {
           "type": "object",
           "properties": {
             "type": { "type": "string", "enum": ["halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue"] },
@@ -791,13 +815,19 @@
           },
           "required": ["type", "content"],
           "additionalProperties": false
-        }
+        } }
       ]
     },
     "backMatterNode": {
-      "oneOf": [
-        { "$ref": "#/$defs/blockNode" },
-        {
+      "$comment": "Discriminated by `type`; see bodyNode.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak", "epilogue", "afterword", "appendix", "notes", "bibliography", "index", "aboutTheAuthor", "alsoBy", "colophon"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak"] } } }, "then": { "$ref": "#/$defs/blockNode" } },
+        { "if": { "properties": { "type": { "enum": ["epilogue", "afterword", "appendix", "notes", "bibliography", "index", "aboutTheAuthor", "alsoBy", "colophon"] } } }, "then": {
           "type": "object",
           "properties": {
             "type": { "type": "string", "enum": ["epilogue", "afterword", "appendix", "notes", "bibliography", "index", "aboutTheAuthor", "alsoBy", "colophon"] },
@@ -810,7 +840,7 @@
           },
           "required": ["type", "content"],
           "additionalProperties": false
-        }
+        } }
       ]
     },
     "sha256": {

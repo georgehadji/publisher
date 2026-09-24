@@ -26,6 +26,9 @@ so it exists *before* it is needed rather than after the gate slips.
 | `manuscripts/memoir-illustrated.ast.json` | Embedded images, sidebars, blockquotes. |
 | `manuscripts/stress-test.ast.json` | The everything-at-once case. |
 | `raster-diff/compare.py` | `compute_ssim()` and the comparison harness. **Gate: page-raster SSIM vs golden ≥ 0.995 per template × profile.** |
+| `word/make_word_corpus.py` | Authors the DOCX files beside it **through Word's COM API** (Windows + Word + pywin32 only; CI never runs it). Word's XML, not python-docx's: tracked changes, TOC field, content control, text box (with its VML duplicate), nested table, endnotes, comment, OMML equation. Strips personal info on save. Pass note text via `.Range.Text`, not `Add(Text=...)` — late-bound COM drops the keyword silently. |
+| `word/word-novel.docx`, `word/word-technical.docx` | Must ingest; pinned by `services/ingest/tests/test_word_corpus.py`. First contact found five silent text losses. |
+| `word/word-equation.docx` | Must be **refused** (`IngestError`): nothing renders an equation, so accepting one loses it later. |
 
 `corpus/golden/` is referenced by the README as the home for typographer-verified golden
 outputs; it is not populated yet.
@@ -47,6 +50,8 @@ python cli.py corpus generate           # same, through the CLI
   drive per-stage contract tests. Do not point a `@stage(fixtures=...)` at `corpus/`.
 - Real licensed manuscripts are Track B and gated on licensing; the synthetic set must stay
   able to carry the coverage alone.
+- **Regenerating `word/*.docx` changes bytes every time** (rsids, timestamps, TOC bookmark
+  ids). Commit a regeneration only alongside the change that needed it.
 
 ## Related
 

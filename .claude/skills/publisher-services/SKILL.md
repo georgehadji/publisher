@@ -35,7 +35,7 @@ PYTHONPATH — so a packaging change breaks production silently instead of CI lo
 | File | What it does |
 |---|---|
 | `publisher_ingest/__init__.py` | Re-exports `docx_to_ast`, `IngestError`. |
-| `publisher_ingest/docx_to_ast.py` | Real `.docx` → `ast/1`. **Carries its own post-condition**: `_assert_no_text_lost` proves every non-empty DOCX block appears in the emitted AST. The pipeline's `ast-assemble` gate cannot cover this — by the time it runs the DOCX is gone, and ingestion is precisely the step that can drop text. Legacy binary `.doc` is not supported; convert with LibreOffice first. |
+| `publisher_ingest/docx_to_ast.py` | Real `.docx` → `ast/1`. **Carries its own post-condition**: `_assert_no_text_lost` proves every non-empty DOCX block appears in the emitted AST. **Its source list comes from `docx_rich.source_texts` (a raw scan of every `w:t`), never from the walk that builds the AST** — fed by the walk, it missed five silent losses (`w:ins`, `w:sdt`, nested tables, text boxes, endnotes) found by `corpus/word/`. A new Word container must be taught to the walk (`TRANSPARENT`/`HIDDEN`), not to the oracle. The pipeline's `ast-assemble` gate cannot cover this — by the time it runs the DOCX is gone, and ingestion is precisely the step that can drop text. Legacy binary `.doc` is not supported; convert with LibreOffice first. |
 | `tests/test_docx_to_ast.py` | Each rule tested here, if broken, silently loses or mangles author text. |
 
 ### `structure/` — rules first, LLM only for the ambiguous

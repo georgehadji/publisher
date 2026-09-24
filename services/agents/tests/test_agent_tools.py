@@ -133,7 +133,11 @@ def test_scored_types_match_the_schema():
     defs = _ast_schema()["$defs"]
     declared: set[str] = set()
     candidates = [d for d in defs.values() if isinstance(d, dict)]
-    candidates += [o for d in candidates for o in d.get("oneOf", []) if "properties" in o]
+    # Inline branches: of a oneOf, or the `then`s of a union discriminated by `type`
+    # (ast.schema.json's front/back-matter sections).
+    candidates += [o for d in candidates
+                   for o in d.get("oneOf", []) + [b.get("then", {}) for b in d.get("allOf", [])]
+                   if "properties" in o]
     for d in candidates:
         props = d.get("properties") or {}
         if "confidence" in props:

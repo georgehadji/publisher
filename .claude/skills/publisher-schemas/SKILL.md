@@ -64,6 +64,14 @@ python tools/lint_schemas.py                 # no free-text in structure-route s
   DAG changes — re-run `python platform/stages/integrity.py`.
 - **Bump the schema ID version** (`ast/1` → `ast/2`) for a breaking change; every stage
   declaring the old ID must be updated, and their `@stage(version=...)` bumped too.
+- **No `oneOf` for AST node unions.** `bodyNode`/`blockNode`/`inlineNode`/`frontMatterNode`/
+  `backMatterNode` are `allOf` of `if: {properties: {type: …}}` / `then: <branch>` plus a
+  `type` enum. `jsonschema` evaluates every `oneOf` branch in full at every depth, so the old
+  unions made validation exponential: a table in a table cell didn't finish in minutes.
+  Adding a node type means adding its `if`/`then` AND its name to the union's enum
+  (`test_word_corpus.py` checks they agree). Codegen reads this shape as a union via
+  `unionBranches()` in `generate.mjs`, but only when each `if` tests `type` alone. The
+  `op`-keyed `allOf` in `overrides.schema.json` is per-op constraints, not a union.
 - **Regenerate** after any schema edit and run `node codegen/test.mjs`. Do **not** try to
   commit the `.gen.*` files — they are gitignored, and no gate will catch stale ones for you.
 

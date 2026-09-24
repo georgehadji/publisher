@@ -6,7 +6,8 @@ For the build plan and corpus strategy, see [BUILD_PLAN.md §8](docs/BUILD_PLAN.
 
 ```
 corpus/
-  manuscripts/       # Source manuscripts (DOCX + expected ASTs)
+  manuscripts/       # Synthetic manuscripts (ast/1 JSON, from generator/)
+  word/              # DOCX files Word itself wrote (make_word_corpus.py, Windows + Word)
   raster-diff/       # Raster-based regression harness
   golden/            # Golden outputs (verified by typographer)
 ```

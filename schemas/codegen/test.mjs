@@ -94,6 +94,14 @@ if (!existsSync(pyOut)) {
     'sys.modules["models_gen"] = mod',
     'spec.loader.exec_module(mod)',
     'n = sum(1 for x in dir(mod) if x[:1].isupper())',
+    // The AST's node unions are written as if/then on `type`, not oneOf, so validation
+    // stays linear (ast.schema.json bodyNode's $comment). Codegen must still see a union
+    // there, not the allOf's intersection: checked on the executed module, not the text.
+    'import typing',
+    'for name, arity in (("BodyNode", 2), ("BlockNode", 15), ("InlineNode", 11)):',
+    '    t = getattr(mod, name)',
+    '    if typing.get_origin(t) is not typing.Union or len(typing.get_args(t)) != arity:',
+    '        raise SystemExit(f"{name} is {t!r}, not a {arity}-way Union")',
     'print(f"PYOK {n}")',
   ].join('\n');
 

@@ -61,6 +61,32 @@ function contentHash(node) {
 }
 
 /**
+ * The branches of a union, or null when `node` is not one.
+ *
+ * Besides oneOf/anyOf, a union can be written discriminated by `type`: an `allOf` whose
+ * every entry is `{ if: {properties: {type: ...}}, then: <branch> }`. ast.schema.json
+ * uses that shape because jsonschema evaluates every oneOf branch in full at every
+ * depth, which made validating a nested AST exponential. For the TYPES it is the same
+ * union -- the `then`s are the branches -- and it must not be read as `allOf`'s
+ * intersection, which is what an unrecognised allOf becomes below.
+ */
+function unionBranches(node) {
+  if (!node || typeof node !== 'object') return null;
+  if (node.oneOf || node.anyOf) return node.oneOf || node.anyOf;
+  // Only an `if` on `type` ALONE, with a whole branch as its `then`. overrides.schema.json
+  // also has an allOf of if/then, but it keys on `op` and its `then`s only add `required`:
+  // per-op constraints on ONE object, not a union.
+  const discriminated = s => s && s.if && s.then
+    && Object.keys(s.if).join() === 'properties'
+    && Object.keys(s.if.properties).join() === 'type'
+    && (s.then.$ref || s.then.properties);
+  if (Array.isArray(node.allOf) && node.allOf.length && node.allOf.every(discriminated)) {
+    return node.allOf.map(s => s.then);
+  }
+  return null;
+}
+
+/**
  * Sanitize a value into a valid Python enum member name.
  * Python identifiers may not start with a digit — "3d-render" must not become
  * `3D_RENDER`. Prefix those with `V_` rather than dropping the character, so
@@ -135,7 +161,7 @@ function buildRegistry(schemas) {
 }
 
 function kindOf(node) {
-  if (node.oneOf || node.anyOf) return 'union';
+  if (unionBranches(node)) return 'union';
   if (node.type === 'string' && node.enum) return 'enum';
   if (node.type === 'object' || node.properties) return 'object';
   return 'alias';
@@ -216,8 +242,8 @@ function tsExpr(node, doc, refMap) {
   if (node.__typeName) return tsRef(node.__typeName);
   if (node.$ref) return tsRef(resolveRef(node.$ref, doc, refMap));
 
-  if (node.oneOf) return `z.union([${node.oneOf.map(s => tsExpr(s, doc, refMap)).join(', ')}])`;
-  if (node.anyOf) return `z.union([${node.anyOf.map(s => tsExpr(s, doc, refMap)).join(', ')}])`;
+  const tsBranches = unionBranches(node);
+  if (tsBranches) return `z.union([${tsBranches.map(s => tsExpr(s, doc, refMap)).join(', ')}])`;
   if (node.allOf) return node.allOf.map(s => tsExpr(s, doc, refMap)).join('.and(') + ')'.repeat(node.allOf.length - 1);
 
   if (node.type === 'array') {
@@ -282,7 +308,7 @@ function emitTsType(entry, refMap) {
   }
 
   if (kind === 'union') {
-    const variants = (node.oneOf || node.anyOf).map(v => tsExpr(v, doc, refMap));
+    const variants = unionBranches(node).map(v => tsExpr(v, doc, refMap));
     lines.push(`export const ${name}Schema${ann} = z.union([${variants.join(', ')}]);`);
     lines.push(`export type ${name} = z.infer<typeof ${name}Schema>;`);
     return lines.join('\n');
@@ -314,8 +340,8 @@ function pyExpr(node, doc, refMap) {
   if (node.__typeName) return node.__typeName;
   if (node.$ref) return resolveRef(node.$ref, doc, refMap);
 
-  if (node.oneOf) return `Union[${node.oneOf.map(s => pyExpr(s, doc, refMap)).join(', ')}]`;
-  if (node.anyOf) return `Union[${node.anyOf.map(s => pyExpr(s, doc, refMap)).join(', ')}]`;
+  const pyBranches = unionBranches(node);
+  if (pyBranches) return `Union[${pyBranches.map(s => pyExpr(s, doc, refMap)).join(', ')}]`;
   if (node.type === 'array') return `list[${pyExpr(node.items, doc, refMap)}]`;
 
   if (node.type === 'object' || node.properties) {
@@ -355,7 +381,7 @@ function emitPyType(entry, refMap) {
   }
 
   if (kind === 'union') {
-    const variants = (node.oneOf || node.anyOf).map(v => pyExpr(v, doc, refMap));
+    const variants = unionBranches(node).map(v => pyExpr(v, doc, refMap));
     lines.push(`${name} = Union[${variants.join(', ')}]`);
     lines.push('');
     return lines.join('\n');
@@ -481,6 +507,11 @@ function collectDeps(node, doc, refMap, acc) {
   if (!node || typeof node !== 'object') return acc;
   if (node.__typeName) acc.add(node.__typeName);
   if (node.$ref) acc.add(resolveRef(node.$ref, doc, refMap));
+  const branches = unionBranches(node);
+  if (branches) {
+    branches.forEach(b => collectDeps(b, doc, refMap, acc));
+    return acc;
+  }
   for (const key of ['properties', 'items', 'oneOf', 'anyOf', 'allOf', 'additionalProperties']) {
     const child = node[key];
     if (!child || typeof child !== 'object') continue;

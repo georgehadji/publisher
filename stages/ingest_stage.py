@@ -172,7 +172,10 @@ def _check_zip_limits(source: Path) -> None:
     # v4: every chapter and block node carries a content-derived
     # `sourceRef.docxId`, the id overrides target. A cached v3 AST has none, so
     # every override on it would match nothing.
-    version=4,
+    # v5: text inside tracked insertions, content controls, nested tables, text
+    # boxes and endnotes reaches the AST (a v4 AST silently lacks it), a Word
+    # TOC no longer merges into chapter one's title, and an equation is refused.
+    version=5,
     inputs={"docx_path": "raw-docx/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["docx_path"],

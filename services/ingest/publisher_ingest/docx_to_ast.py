@@ -39,10 +39,14 @@ from docx.text.paragraph import Paragraph
 from lxml import etree
 
 from .docx_rich import (
+    W,
     MediaNotStorable,
     MediaSink,
+    UnsupportedContent,
+    block_children,
     paragraph_blocks,
     read_footnotes,
+    source_texts,
     table_block,
 )
 
@@ -129,14 +133,27 @@ def _iter_body(document: docx.document.Document) -> Iterator[Paragraph | Table]:
     """Yield paragraphs and tables in true document order.
 
     `document.paragraphs` skips tables entirely and `document.tables` loses
-    position, so neither alone preserves reading order.
+    position, so neither alone preserves reading order. Neither sees inside a
+    block-level content control; `block_children` does.
     """
-    body = document.element.body
-    for child in body.iterchildren():
-        if child.tag.endswith("}p"):
+    for child in block_children(document.element.body):
+        if child.tag == f"{W}p":
             yield Paragraph(child, document)
-        elif child.tag.endswith("}tbl"):
+        else:
             yield Table(child, document)
+
+
+def _is_page_boundary(p) -> bool:
+    """A paragraph that ends a page on purpose: a page or section break.
+
+    Kept as a (textless) block because it separates headings. A title page's
+    upper-case title and the chapter heading on the next page are otherwise
+    adjacent heading candidates, and `_group_headings` joins adjacent headings
+    into one display title -- which, in a Word file, made the book's title part
+    of chapter one's.
+    """
+    return (p.find(f"{W}pPr/{W}sectPr") is not None
+            or any(br.get(f"{W}type") == "page" for br in p.iter(f"{W}br")))
 
 
 def read_blocks(
@@ -145,9 +162,9 @@ def read_blocks(
     """Read a DOCX into ordered blocks, plus every source string it contained.
 
     Returns `(blocks, source_texts)`. The second list is what
-    `_assert_no_text_lost` checks against, and it is collected here rather than
-    derived from `blocks` because a table contributes one block but many
-    strings -- one per cell paragraph.
+    `_assert_no_text_lost` checks against. It comes from `docx_rich.source_texts`,
+    a raw scan of the XML, NOT from the walk that builds `blocks`: fed by the
+    walk, the check could only ever confirm the walk agreed with itself.
     """
     document = docx.Document(str(path))
     part = document.part
@@ -156,7 +173,7 @@ def read_blocks(
     # through every paragraph and cell rather than restarting per block.
     footnote_refs: list = []
     blocks: list[Block] = []
-    sources: list[str] = []
+    sources = source_texts(document)
 
     for item in _iter_body(document):
         if isinstance(item, Table):
@@ -164,7 +181,6 @@ def read_blocks(
                 item._element, part, footnotes=footnotes,
                 footnote_refs=footnote_refs, sink=store_media,
             )
-            sources.extend(texts)
             if node is not None:
                 blocks.append(Block(" ".join(texts), "Table", False, (node,)))
             continue
@@ -173,17 +189,21 @@ def read_blocks(
             item._p, part, footnotes=footnotes,
             footnote_refs=footnote_refs, sink=store_media,
         )
+        style = item.style.name if item.style is not None else "Normal"
         if not nodes:
+            if _is_page_boundary(item._p):
+                blocks.append(Block("", style, False))
             continue
-        sources.extend(texts)
 
         text = texts[0] if texts else ""
-        style = item.style.name if item.style is not None else "Normal"
         # `Heading N` is trusted only when it is also short -- see the
         # 419-character `Heading 1` paragraph noted in the module docstring.
+        # A Word TOC entry (`toc 1`...) is a chapter title, upper-case in an
+        # unstyled book, and is never itself a heading.
         short = len(text) <= MAX_HEADING_CHARS
         upper, styled = _is_upper(text), style.startswith("Heading")
-        is_heading = bool(text) and short and (upper or styled)
+        toc_entry = style.lower().startswith("toc ")
+        is_heading = bool(text) and short and (upper or styled) and not toc_entry
         confidence = None
         if is_heading:
             confidence = (STYLED_UPPER_HEADING if upper and styled
@@ -431,7 +451,7 @@ def docx_to_ast(
 
     try:
         blocks, sources = read_blocks(source, store_media=store_media)
-    except MediaNotStorable as e:
+    except (MediaNotStorable, UnsupportedContent) as e:
         raise IngestError(str(e)) from e
     except etree.XMLSyntaxError as e:
         # E3.4 audit: docx_rich.read_footnotes() parses word/footnotes.xml
