@@ -25,8 +25,9 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
     """Run the full tracer bullet pipeline.
 
     `manuscript` is a path to an `ast/1` JSON document; it defaults to the
-    synthetic corpus. Pass a real one to exercise the pipeline against an
-    actual book (see services/ingest for DOCX -> AST conversion).
+    synthetic corpus. A `.docx` (or legacy `.doc`) path runs the real `ingest`
+    stage on it instead, as the worker does for an upload -- the way to put an
+    actual book through the whole pipeline locally.
 
     `profile` names a vendor profile from profiles/*/*.yaml -- e.g.
     "Greek 17x24". It drives trim size and bleed for the whole build.
@@ -54,9 +55,11 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
             f"Choose one of {[e.value for e in RenderEngine]}."
         )
     # A build renders what the tenant submitted by default (U2); this local
-    # harness runs off the synthetic corpus, so it explicitly selects the
-    # fixture loader `acquire` instead.
-    registry = build_registry(RegistryConfig(render_engine=engine, ingest_impl="acquire"))
+    # harness runs off the synthetic corpus unless handed a Word file, so it
+    # selects the fixture loader `acquire` for anything else.
+    is_word = bool(manuscript) and manuscript.lower().endswith((".docx", ".doc"))
+    registry = build_registry(RegistryConfig(
+        render_engine=engine, ingest_impl="ingest" if is_word else "acquire"))
     executor = DagExecutor(registry, allow_stub_engines=True)
 
     print("=" * 60)
@@ -78,10 +81,10 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
 
     # Only provide root inputs for stages whose declared inputs
     # are not produced by any other stage.
+    source = ({"ingest": {"docx_path": manuscript}} if is_word else
+              {"acquire": {"manifest_path": manuscript or "corpus/manuscripts/minimal-novel.ast.json"}})
     initial_inputs = {
-        "acquire": {
-            "manifest_path": manuscript or "corpus/manuscripts/minimal-novel.ast.json"
-        },
+        **source,
         # One profile name, supplied to every stage that has a say in page
         # geometry. design-compile grows the page box by its bleed, finish insets
         # the TrimBox by the same amount, preflight measures the result. Give two

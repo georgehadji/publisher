@@ -92,6 +92,10 @@ services:
       # publisher_worker_claim for just its cross-tenant claim query.
       DATABASE_URL: postgresql://publisher_worker:publisher_worker@postgres:5432/publisher
       PUBLISHER_CAS_ROOT: /data/cas
+      # Licensed faces (Minion Pro, PN Katsoulidis) a deployment holds a licence
+      # for; searched before the system fonts. Not in the image: they may not be
+      # redistributed, so they come from the host (PUBLISHER_LICENSED_FONTS).
+      PUBLISHER_FONT_DIRS: /fonts/licensed
       # Which render path the derived DAG binds: `css` (weasyprint) or `typst`
       # (pandoc -> Typst). Both toolchains are in the worker image; this only
       # chooses between them. See README "Render paths".
@@ -121,6 +125,7 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - cas-data:/data/cas
+      - ${PUBLISHER_LICENSED_FONTS:-./.publisher/fonts}:/fonts/licensed:ro
     # E3.1: the worker parses tenant-uploaded archives through libreoffice,
     # weasyprint and ghostscript -- a hostile document exploiting any of them
     # should not be able to persist anything, escalate privileges, or reach

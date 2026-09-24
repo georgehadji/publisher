@@ -42,7 +42,7 @@ IDML_SCHEMA = "idml/1"
 
 @stage(
     name="idml",
-    version=1,
+    version=2,   # v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
     inputs={
         "doc_path": "doc-effective/1",
         "pagemap_path": "pagemap/1",

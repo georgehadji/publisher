@@ -222,9 +222,20 @@ def test_typst_renders_image_footnote_and_table_into_the_pdf(tmp_path):
     with fitz.open(pdf) as rendered:
         text = "".join(page.get_text() for page in rendered)
         images = [img for page in rendered for img in page.get_images(full=True)]
+        spans = [span for page in rendered for block in page.get_text("dict")["blocks"]
+                 for line in block.get("lines", []) for span in line["spans"]]
 
     assert images, "no embedded image in the PDF -- the figure was dropped"
     assert FOOTNOTE_TEXT in text, "footnote body is not on the page"
     assert "Aldine" in text and "1200" in text, "table content is missing"
-    # The call is set by Typst, not spliced into the prose by the extractor.
-    assert "emphatic1" not in text
+    # The call is set by Typst, not spliced into the prose by the extractor: no
+    # literal "1" in the text stream, and on the page the call "1" starts where
+    # the cited word ends, on its line. (This used to assert "emphatic1" absent
+    # from the page text -- which held only because the call was misplaced onto
+    # a line of its own.)
+    assert "emphatic1" not in html
+    cited = next(i for i, span in enumerate(spans) if span["text"].rstrip().endswith("emphatic"))
+    word, call = spans[cited], spans[cited + 1]
+    assert call["text"].strip() == "1", call
+    assert abs(call["bbox"][0] - word["bbox"][2]) < 0.5, (word["bbox"], call["bbox"])
+    assert call["bbox"][1] < word["bbox"][3] and word["bbox"][1] < call["bbox"][3], "not on the word's line"

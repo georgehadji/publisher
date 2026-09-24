@@ -13,7 +13,7 @@ description: Map of the Publisher repo root — the two execution tiers (`tracer
 | Scope | One build, prints to stdout | Many builds, many workers |
 | State | `SqliteCacheStore`, no DB | Postgres, state outlives the process |
 | Engines | **Stubs allowed** | `allow_stub_engines` never set |
-| Ingest | Selects `acquire` (synthetic corpus) | Uses `ingest` (the tenant's DOCX) |
+| Ingest | `acquire` (synthetic corpus), or real `ingest` when handed a `.docx`: `python tracer_bullet.py book.docx "Greek 17x24"` | Uses `ingest` (the tenant's DOCX) |
 
 **`allow_stub_engines` is a dev-only escape hatch, default `False`.** It exists so a missing
 renderer fails loudly instead of silently certifying stub output as press-ready. If a chain

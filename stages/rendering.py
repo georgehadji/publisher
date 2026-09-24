@@ -142,16 +142,42 @@ def _render_table(node: dict) -> str:
     return "\n".join(parts)
 
 
+def _footnote_span(node: dict) -> str:
+    # The leading space is the text-stream separator between a paragraph and a
+    # note rendered inside it: without it the integrity gate reads "text.Note"
+    # against the source's "text. Note". It travels with the note into the
+    # footnote area, where it collapses at line start -- the call number stays
+    # tight against the cited word.
+    return f'<span class="footnote"> {_render_inline(node.get("content", []))}</span>'
+
+
 def _render_content(content: list) -> str:
     """Render AST block content to HTML."""
     parts = []
-    for node in content:
+    absorbed = 0
+    for index, node in enumerate(content):
+        if absorbed:
+            absorbed -= 1
+            continue
         ntype = node.get("type", "unknown")
 
         if ntype == "paragraph":
             role = (node.get("attrs") or {}).get("role", "normal")
             cls = f"paragraph {role}" if role != "normal" else "paragraph"
-            parts.append(f'<p class="{cls}">{_render_inline(node.get("content", []))}</p>')
+            # The footnotes that follow a paragraph (ingest places each note
+            # after the paragraph that cites it) are rendered INSIDE it, before
+            # `</p>`, so the call number weasyprint generates sits on the
+            # paragraph's last line. Rendered after the `</p>`, the call got an
+            # anonymous line of its own -- a lone "1" under every cited
+            # paragraph, all 477 of them in the first real book. Text order is
+            # unchanged, so the integrity gate sees the same stream.
+            notes = []
+            for following in content[index + 1:]:
+                if following.get("type") != "footnote":
+                    break
+                notes.append(_footnote_span(following))
+            absorbed = len(notes)
+            parts.append(f'<p class="{cls}">{_render_inline(node.get("content", []))}{"".join(notes)}</p>')
 
         elif ntype == "heading":
             level = (node.get("attrs") or {}).get("level", 2)
@@ -209,13 +235,12 @@ def _render_content(content: list) -> str:
             parts.append('</figure>')
 
         elif ntype == "footnote":
+            # A note with no paragraph before it (after a heading or a figure).
             # An inline element at block position on purpose: `float: footnote`
             # (CSS Generated Content for Paged Media) moves it into the page's
             # footnote area and numbers the call itself. Rendering it as a block
             # would print the note inline in the text where it happens to sit.
-            parts.append(
-                f'<span class="footnote">{_render_inline(node.get("content", []))}</span>'
-            )
+            parts.append(_footnote_span(node))
 
         elif ntype == "sidebar":
             parts.append(f'<aside class="sidebar">{_render_content(node.get("content", []))}</aside>')
@@ -320,6 +345,15 @@ def _furniture_css(block: dict, body_size: float, family: str,
     return decls
 
 
+# DesignSpec `startsOn` -> CSS `break-before`. NOT the legacy `page-break-before`:
+# CSS 2 gave that property only left/right, and weasyprint drops `recto` there
+# without a word. Every chapter and front/back-matter section asked for a recto
+# start that way; none got one. Chapters still opened on a new page only because
+# their named `@page` changed; the first real book's contents page ran on from
+# its epigraph mid-page.
+BREAK_BEFORE = {"recto": "recto", "verso": "verso", "any": "page"}
+
+
 def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     """Emit CSS @page rules and typographic styles from a DesignSpec.
 
@@ -364,7 +398,7 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     leading = typography.get("leading", DEFAULT_LEADING_PT)
     measure = typography.get("measure", 66)
 
-    body_font_family = (typography.get("bodyFont") or {}).get("family", "EB Garamond")
+    body_font_family = (typography.get("bodyFont") or {}).get("family", "GFS Didot")
     heading_font_family = (typography.get("headingFont") or {}).get("family", "")
     if not heading_font_family:
         heading_font_family = body_font_family
@@ -471,7 +505,7 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
             ])
 
     # Chapter opening styles
-    starts_on = chapter_openings.get("startsOn", "recto")
+    starts_on = BREAK_BEFORE[chapter_openings.get("startsOn", "recto")]
     drop_cap = chapter_openings.get("dropCap", True)
     drop_cap_lines = chapter_openings.get("dropCapLines", 3)
 
@@ -501,7 +535,7 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "",
         ".chapter {",
         f"  page: chapter-opening;",
-        f"  page-break-before: {starts_on};",
+        f"  break-before: {starts_on};",
         "  counter-increment: chapter;",
         "}",
         "",
@@ -672,7 +706,7 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     # Front/back matter
     lines.extend([
         ".front-matter, .back-matter {",
-        "  page-break-before: recto;",
+        "  break-before: recto;",
         "}",
         ".titlePage {",
         "  text-align: center;",

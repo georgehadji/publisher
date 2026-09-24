@@ -22,7 +22,7 @@ from stages.rendering import ast_to_html
 
 @stage(
     name="extract",
-    version=1,
+    version=2,   # v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
     inputs={"source": "raw-source/1"},
     outputs={"html": "typescript-html/1"},
     toolchain=[],

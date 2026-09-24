@@ -101,7 +101,7 @@ def _emit_typst(designspec: dict, bleed_mm: float = 0.0) -> str:
     paragraph_indent = float(typography.get("paragraphIndent", 1.5))
     justified = typography.get("bodyAlignment", "justified") == "justified"
 
-    body_font = (typography.get("bodyFont") or {}).get("family", "EB Garamond")
+    body_font = (typography.get("bodyFont") or {}).get("family", "GFS Didot")
     heading_font = (typography.get("headingFont") or typography.get("displayFont")
                     or {}).get("family") or body_font
 
@@ -259,7 +259,8 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
 
 @stage(
     name="design-compile-typst",
-    version=2,   # v2: module-level bump (U6) -- pagemap/1 is no longer terminal
+    version=3,   # v3: default face GFS Didot (was EB Garamond, installed nowhere).
+                 # v2: module-level bump (U6) -- pagemap/1 is no longer terminal
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"typ": TYPST_SCHEMA},
     root_inputs=["designspec_path", "profile_name"],
@@ -510,7 +511,8 @@ class _MeasuredPage:
 
 @stage(
     name="paginate-typst",
-    version=2,   # v2: module-level bump (U6) -- pagemap/1 is no longer terminal
+    version=3,   # v3: default face GFS Didot (was EB Garamond, installed nowhere).
+                 # v2: module-level bump (U6) -- pagemap/1 is no longer terminal
     inputs={"doc_path": "doc-effective/1", "typ_path": TYPST_SCHEMA},
     outputs={"pdf": "raw-pdf/1", "pagemap": "pagemap/1"},
     # Not terminal: `preflight` consumes pagemap/1 (see stages/paginate_stage.py).

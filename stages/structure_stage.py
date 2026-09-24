@@ -33,6 +33,14 @@ _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "s
 from publisher_structure.rules import extract_text_from_html, normalize_text
 
 
+# ast.schema.json's `inlineNode` types: they sit inside a block's text and are
+# rendered inline, so no boundary goes between them.
+INLINE_TYPES = frozenset({
+    "text", "emphasis", "strong", "link", "superscript", "subscript", "smallCaps",
+    "codeInline", "hardBreak", "indexEntry", "crossReference",
+})
+
+
 def _extract_all_text(ast: dict) -> str:
     """Extract and concatenate all text content from a canonical AST (schemas/ast),
     walking frontMatter/body/backMatter.
@@ -51,16 +59,28 @@ def _extract_all_text(ast: dict) -> str:
     body -- silently reorders the concatenated text relative to what the HTML
     actually rendered, and the comparison fails on ANY manuscript with non-empty
     back matter even when no text was lost or altered.
+
+    Text runs inside one block are concatenated with NOTHING between them, and a
+    space goes only at block boundaries. `ast_to_html` renders marked runs back to
+    back (`(<em>word</em>,`), so a separator between every text node -- which this
+    used to insert -- made the source side read "( word ," against the HTML's
+    "(word,". The first real manuscript (polytonic Greek citations in italics
+    between brackets) failed the gate at offset 262 with no text lost at all.
     """
     texts: list[str] = []
 
     def _walk(node):
         if isinstance(node, dict):
-            if node.get("type") == "text":
+            kind = node.get("type")
+            if kind == "text":
                 texts.append(node.get("text", ""))
+                return
+            block = kind not in INLINE_TYPES
+            if block:
+                texts.append(" ")
             title = (node.get("attrs") or {}).get("title")
             if title:
-                texts.append(title)
+                texts.extend((title, " "))
             for key in ("frontMatter", "body", "backMatter", "content"):
                 val = node.get(key)
                 if isinstance(val, list):
@@ -68,17 +88,21 @@ def _extract_all_text(ast: dict) -> str:
                         _walk(item)
                 elif isinstance(val, dict):
                     _walk(val)
+            if block:
+                texts.append(" ")
         elif isinstance(node, list):
             for item in node:
                 _walk(item)
 
     _walk(ast)
-    return " ".join(t for t in texts if t)
+    return "".join(texts)
 
 
 @stage(
     name="ast-assemble",
-    version=3,   # v3: integrity-report/1 declared terminal (U6)
+    # v3: integrity-report/1 declared terminal (U6). v4: inline runs are joined
+    # without a separator, as the HTML renders them (see _extract_all_text).
+    version=4,
     inputs={"html": "typescript-html/1", "source": "raw-source/1"},
     outputs={"ast": "ast/1", "integrity-report": "integrity-report/1"},
     terminal_outputs=["integrity-report"],   # delivered via the API, never consumed

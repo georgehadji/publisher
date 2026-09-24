@@ -323,9 +323,31 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
     return {"schema": "pagemap/1", "pages": pages, "chapters": entries}
 
 
+
+def requested_font_families(css: str) -> list[str]:
+    """The single-family `font-family` values a stylesheet asks for, in order.
+
+    Stacks ("'Consolas', 'Monaco', monospace") are skipped: they name their own
+    fallbacks, and the vault resolves design faces, not system code fonts.
+    """
+    values = re.findall(r"font-family\s*:\s*([^;{}]+);", css)
+    singles = [v.strip().strip("'\"") for v in values if "," not in v]
+    return list(dict.fromkeys(v for v in singles if v and v != "inherit"))
+
+
+def _family_name(font) -> str:
+    family = getattr(font, "family", "") or ""
+    return family.decode("utf-8", "replace") if isinstance(family, bytes) else str(family)
+
 @stage(
     name="paginate",
-    version=6,   # v6: pagemap/1 is consumed by `preflight`, so it is no longer a
+    version=9,   # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+                 # v8: fonts are resolved through the vault, pinned with @font-face,
+                 # embedded in full, and a family that is not installed fails the
+                 # render (INFRA) instead of being silently substituted.
+                 # v7: deadline raised to 1200 s (output unchanged; the version
+                 # lint requires a bump for any change to a stage module).
+                 # v6: pagemap/1 is consumed by `preflight`, so it is no longer a
                  # terminal output. v5: pagemap/1 carries measured composition data (paraRanges,
                  # wordCount, widow/orphan/runt flags) walked out of the
                  # renderer's box tree -- see _measure_pages. v4: pagemap/1
@@ -349,6 +371,12 @@ def _build_pagemap(chapters: list[dict], page_count: int, rendered_pages) -> dic
     toolchain=["render-engine"],
     fixtures="fixtures/paginate/v1",
     memory_budget_mb=256,
+    # The first real book (880 pages, 477 footnotes) took 235 s to render on a
+    # quiet dev machine -- against the 300 s default, so any load tipped it over.
+    # ~5x headroom for slower workers. Note a timed-out stage is not killed: its
+    # thread runs on (the executor cannot stop it), so this is also the budget
+    # for wasted work.
+    timeout_s=1200,
     queue="q.composition",
     description="Render the resolved document + CSS into a paginated PDF",
 )
@@ -374,6 +402,7 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
         css = emit_css(_default_designspec())
 
     full_html = PAGE_TEMPLATE.format(css=css, html=html_body)
+    families = requested_font_families(css)
 
     # Figures are referenced as `media/<sha256>.<ext>`; the bytes live in CAS and
     # have to be on disk beside the HTML before the renderer resolves them.
@@ -388,8 +417,21 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
     renderer = _check_available()
     pdf_bytes = None
     rendered_pages = None
+    fallback_fonts: list[str] = []
 
     if renderer == "weasyprint":
+        # Outside the try below on purpose: a render exception there falls back
+        # to stub mode, and a missing font must never quietly become that.
+        from publisher_prepress.fontvault import font_faces
+        faces, missing = font_faces(families)
+        if missing:
+            raise StageError(
+                kind=ErrorKind.INFRA,
+                message=f"Font(s) {missing} are not installed on this worker, so the book "
+                        "would be set in a substitute face. Install them, or point "
+                        "PUBLISHER_FONT_DIRS at a folder that holds them.",
+            )
+        full_html = PAGE_TEMPLATE.format(css=faces + "\n" + css, html=html_body)
         try:
             import weasyprint
             # `.render()` before `.write_pdf()` so the laid-out document itself is
@@ -400,8 +442,19 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
             # string-only HTML() has no base and every figure silently renders
             # as an empty box.
             document = weasyprint.HTML(string=full_html, base_url=str(work)).render()
-            pdf_bytes = document.write_pdf()
+            # full_fonts: PN Katsoulidis forbids subsetting (fsType 0x0100), and a
+            # whole face costs a few hundred KB in an 800-page book.
+            pdf_bytes = document.write_pdf(full_fonts=True)
             rendered_pages = document.pages
+            fallback_fonts = sorted(
+                _family_name(f) for f in document.fonts.values()
+                if _family_name(f) not in families
+            )
+            if fallback_fonts:
+                # Glyphs the chosen face lacks (the first real book: ʼ ― ∙ and a
+                # few combining accents) come from another font. Reported, not
+                # fatal: the face itself is set; a handful of symbols are not.
+                print(f"  [paginate] fallback font(s) for missing glyphs: {fallback_fonts}")
             print(f"  [paginate] Rendered PDF via weasyprint "
                   f"({len(pdf_bytes)} bytes, {len(rendered_pages)} pages)")
         except Exception as e:
@@ -468,5 +521,7 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
             "output_size_bytes": len(pdf_bytes),
             "renderer_type": 1.0 if renderer else 0.0,
             "stub_engine": 0.0 if renderer else 1.0,
+            # Faces that filled glyphs the design face lacks (see the render).
+            "fallback_font_count": float(len(fallback_fonts)),
         },
     )

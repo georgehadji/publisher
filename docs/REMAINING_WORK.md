@@ -272,7 +272,7 @@ subsumes `rename`/`retitle`.
 
 ## Tier 3 — never built
 
-### 3.1 Word-produced DOCX files — authored by Word; no real manuscript yet
+### 3.1 Real DOCX — Word-authored fixtures, and a first real manuscript
 
 **Done: Word's own XML.** `corpus/word/` holds three DOCX files that Word wrote, authored
 through its COM API by `corpus/word/make_word_corpus.py` (Windows + Word only; the files are
@@ -295,12 +295,116 @@ two structure bugs:
 - Equations (`m:oMath`) are refused with an `IngestError` instead of vanishing, since no
   renderer has an equation case.
 
-`ingest` is at v5.
+**First real manuscript (2026-09-24).** A Greek academic book: about 3,900 paragraphs, 477
+footnotes, 2 SmartArt diagrams, 5 images. It is **not committed**: this repo is public and
+the book isn't ours to publish, so `.gitignore` excludes `corpus/*.docx`. What it taught is
+reproduced with synthetic prose in `corpus/word/word-thesis.docx` and pinned in
+`test_word_corpus.py`. Against v5 it failed in six ways:
+- **Refused outright.** A footnote holds a photograph, and notes had no media sink. A note's
+  pictures now become `figure` blocks right after the footnote, because `footnote` content is
+  inline-only.
+- **The whole book was one chapter.** Its headings are bold Normal-style lines numbered by
+  hand ("4.3.1 …", up to 147 characters). They're neither upper-case nor `Heading`-styled,
+  so neither signal fired. The only `Heading` styles were on **bibliography entries**, which
+  became chapters 2 and 3, titled with citations. Now:
+  - A fully bold line with a typed section number is a heading. Depth 1 opens a chapter;
+    deeper becomes a `heading` node in place.
+  - Bold plus a known section name (Πρόλογος, Βιβλιογραφία, Contents, …) is a chapter-level
+    heading.
+  - Once back matter starts, later headings stay inside it, one paragraph per entry.
+  - Title patterns are matched accent-folded. "Περιεχόμενα" never matched `ΠΕΡΙΕΧΟΜΕΝΑ`,
+    because ό doesn't fold to Ο.
+  - Back matter gets its type (`bibliography`, `index`, `appendix`), not always `colophon`.
+
+  The book now comes out as 15 chapters, a contents page and the bibliography, matching the
+  author's own contents page, including all 19 section headings.
+- **SmartArt text was lost unseen.** A diagram's words live in a separate data part, so
+  neither the walk nor the no-loss oracle read them. Both now do (`diagram_texts`), and the
+  diagram becomes a sidebar of its labels. The layout is lost.
+- **EMF.** An 8.7 MB EMF figure became a figure no renderer draws and an AST the schema
+  rejects. Ingest now refuses any image outside `mediaRef`'s types, by file name.
+- **Slow:** 45 s. python-docx re-derived the default style for every unstyled paragraph. Style
+  names are now resolved once, and it takes 8.6 s.
+
+With its one EMF re-encoded as PNG (a local copy), the book ingests and the AST is
+schema-valid. `ingest` is at v6.
+
+**Through the pipeline (same day).** `python tracer_bullet.py <book>.docx "Greek 17x24"` now
+runs a Word file through the real `ingest` stage. The book (a local copy with its EMF as PNG)
+rendered **858 pages**. Two real bugs surfaced, both fixed:
+- **The text-integrity gate failed a faithful book.** `ast-assemble`'s source side put a
+  space between every text node, while the HTML renders marked runs back to back
+  (`(<em>᾿Επίκτητος</em>,`). So wherever formatting met punctuation, it read "( word ,"
+  against "(word,", and failed at offset 262 with no text lost. Text nodes inside a block
+  are now joined with no separator, and spaces go only at block boundaries (v4). A dropped
+  italic word still fails the gate, pinned by a test.
+- **No chapter or front/back-matter section ever started on a recto.** The CSS said
+  `page-break-before: recto`. That property takes only left/right in CSS 2, and weasyprint
+  drops `recto` silently (measured: 1 page where `break-before: recto` gives 5). Chapters
+  still opened on a fresh page only because their named `@page` changed. The book's contents
+  page ran on from its epigraph mid-page. `emit_css` now writes `break-before`
+  (`design-compile` v4), and `stages/tests/test_page_breaks.py` renders and checks every
+  section lands on an odd page.
 
 **Still:**
-- The corpus has no manuscript a person wrote. These files hold Word's XML with synthetic
-  prose, so styles that lie, pasted-in web formatting, EMF images and years of revision
-  history are still untested. The user's own manuscripts remain the best next input.
+- **This book needs its EMF figure ("Εικόνα 6") re-saved as PNG** before it can build.
+- **`finish-gs` and preflight have not run on it.** Locally, Ghostscript 10.07.1 fails as
+  documented (`a31c9bb`), and Docker wasn't running, so the book has no preflight verdict yet.
+- **Fonts — done (the house faces chosen 2026-09-24: GFS Didot, PN Katsoulidis, Minion
+  Pro).** Before this, no book was set in its designed face. Every template asked for EB
+  Garamond, it was installed nowhere, and the renderer silently substituted.
+  - **What's in the vault.** All three faces are registered in `fontvault`. All three cover
+    the book's 120 polytonic characters.
+    - GFS Didot is OFL. It's the default for the built-in spec and every Greek preset, and
+      it's in the worker image (`fonts-gfs-didot`).
+    - Minion Pro (Adobe) and PN Katsoulidis (fonts.gr) are commercial. They're licensed for
+      print PDF only, not EPUB embedding. They're supplied through `PUBLISHER_FONT_DIRS`
+      (compose mounts `PUBLISHER_LICENSED_FONTS` at `/fonts/licensed`) and never committed.
+  - **How rendering uses them.** `paginate` resolves each family to files
+    (`fontvault.font_faces`, keyed by name ID 1, since GFS Artemisia's bold italic claims
+    typographic family "GFS Didot"). It pins them with `@font-face` and embeds them in full:
+    PN Katsoulidis's fsType forbids subsetting.
+  - **What happens when one is missing.** A family that isn't installed fails the render
+    (`INFRA`) instead of being substituted. Glyphs the face lacks are filled by other fonts,
+    and those are reported (`fallback_font_count`). For this book that's Arial and Verdana,
+    for ʼ ― ∙ and a few combining accents.
+  - **Result.** The book renders in GFS Didot: 813 pages, 165 s.
+  - **Still:**
+    - The other templates (Literary, Thriller, Memoir, …) still name faces nobody installs
+      (EB Garamond, Source Serif, Libertinus, Noto, Merriweather). They now fail loudly
+      instead of substituting.
+    - The Typst path doesn't use the vault's files yet.
+    - The font manifest's hashes are still identity hashes, not file hashes.
+- **Footnote calls — fixed.** A note's `<span class="footnote">` used to render after its
+  paragraph's `</p>`, so weasyprint set the call number alone on a line of its own. That hit
+  every note, all 477 in this book. Notes now render inside the paragraph that cites them
+  (`extract` v2, `paginate` v9, `idml` v2), so the call sits against the last word. A
+  leading space inside the span keeps the integrity gate's text stream separated ("text.
+  Note"), then collapses in the footnote area. The first attempt without it failed the gate
+  on the real book. The Typst test's `"emphatic1" not in text` had passed only because of the
+  misplacement. It now asserts the call starts where the cited word ends, on the same line.
+  The book is now 805 pages.
+- **The EPUB carries only 76% of the book's text, and nothing notices.**
+  `services/epub/publisher_epub` has its own renderer, not `ast_to_html`.
+  - It writes paragraphs, blockquotes and headings. Footnotes (all 477), tables, figures,
+    sidebars and front/back matter are dropped.
+  - It reads `emphasis`/`strong` inline NODES, while ingest emits marks on text nodes, so no
+    italic or bold survives.
+  - Text after an inline element is appended to the parent's `.text`, which moves it in
+    front of that element, so word order changes.
+  - No integrity check runs on the EPUB.
+
+  Measured on the real book: 1,571,272 of 2,057,459 characters.
+
+  **Work:** build the XHTML from `ast_to_html`, the renderer the gate verified, and apply
+  the same text-integrity comparison to the EPUB before it's stored.
+- Its diagrams drawn from VML lines and arrows (58 `w:pict` shapes) keep their text, but the
+  lines and arrows are dropped.
+- Captions typed as prose ("Εικόνα 6: …") aren't attached to their figures.
+- Bold inherited only through a style isn't seen by the bold-heading rule; this book sets it
+  directly.
+- Validating the book's AST takes about 22 s. It's linear now, but Python `jsonschema` is slow
+  per node.
 - Equations need an OMML → MathML path and a renderer case before a STEM book can build.
 - Endnotes become footnotes (the AST has no endnote node), so their text survives but they
   print at the page foot.
@@ -394,8 +498,9 @@ into impossible states.
 
 ## If you do three things
 
-1. **§3.1 — a real manuscript into `corpus/`.** Word-authored files found five silent
-   text losses on first contact; one real book will find what synthetic prose can't.
+1. **§3.1 — the EPUB, then a preflight verdict for the real book.** The EPUB silently
+   drops 24% of the book (every footnote, table, figure; all italics); Docker is needed for
+   `finish-gs` and preflight.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
 3. **§1.1 — authenticate reviewers.** The loop closes: a reviewer can open

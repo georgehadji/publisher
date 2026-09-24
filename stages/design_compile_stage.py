@@ -43,7 +43,11 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # v3: bleed is declared with the CSS `bleed` property instead of being added
     # to `size`. A v2 stylesheet renders a trim+2*bleed page whose TrimBox sits
     # on its MediaBox -- geometrically plausible, and rejected by Ghostscript.
-    version=3,
+    # v4: recto starts use `break-before`; v3's `page-break-before: recto` was
+    # silently ignored, so no chapter or front-matter section started on a recto.
+    # v5: the built-in spec is set in GFS Didot. EB Garamond was never installed
+    # anywhere, so every v4 render was in a substitute face.
+    version=5,
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
     # `profile_name` is optional so that a build which omits it still renders --
@@ -154,7 +158,7 @@ def _default_designspec() -> dict:
         "preferredEngine": "chrome-pagedjs",
         "trimSize": {"width": 152, "height": 229, "unit": "mm"},
         "typography": {
-            "bodyFont": {"family": "EB Garamond"},
+            "bodyFont": {"family": "GFS Didot"},
             "bodySize": 10.5,
             "leading": DEFAULT_LEADING_PT,
             "scaleRatio": 1.25,
@@ -183,7 +187,7 @@ def _default_designspec() -> dict:
             "titleTreatment": "centered",
         },
         "fonts": [
-            {"family": "EB Garamond", "source": "bundled_ofl"},
+            {"family": "GFS Didot", "source": "bundled_ofl"},
         ],
         "colors": {"text": "#000000", "paper": "#FFFFFF"},
     }

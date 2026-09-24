@@ -96,6 +96,45 @@ def test_ast_assemble_rejects_dropped_paragraph():
         assert exc_info.value.kind == ErrorKind.ENGINE_BUG
 
 
+def _marked_ast() -> dict:
+    """Formatting that meets punctuation and splits a word, as a real book has it."""
+    ast = json.loads(json.dumps(GOOD_AST))
+    ast["body"][0]["content"].append({"type": "paragraph", "content": [
+        {"type": "text", "text": "As he wrote ("},
+        {"type": "text", "text": "\u1fbfΕπίκτητος", "marks": [{"type": "emphasis"}]},
+        {"type": "text", "text": ", 51), the "},
+        {"type": "text", "text": "Publi", "marks": [{"type": "strong"}]},
+        {"type": "text", "text": "sher agreed."},
+    ]})
+    return ast
+
+
+def _gate(tmp_dir: Path, ast: dict, html: str):
+    html_path = tmp_dir / "extract.html"
+    html_path.write_text(html, encoding="utf-8")
+    return ast_assemble(_ctx(tmp_dir), html=str(html_path), source=_write(tmp_dir, "source.json", ast))
+
+
+def test_marked_runs_against_punctuation_pass():
+    """The first real manuscript failed here with no text lost: the source side
+    put a space between every text node, the HTML none between `<em>` runs."""
+    with tempfile.TemporaryDirectory() as td:
+        ast = _marked_ast()
+        assert _gate(Path(td), ast, ast_to_html(ast)).metrics["integrity_ok"] == 1.0
+
+
+def test_a_dropped_marked_word_still_fails():
+    """Joining runs without a separator must not make the gate blind to a lost run."""
+    with tempfile.TemporaryDirectory() as td:
+        ast = _marked_ast()
+        html = ast_to_html(ast)
+        mutated = html.replace("\u1fbfΕπίκτητος", "")
+        assert mutated != html, "mutation didn't take -- renderer markup changed?"
+        with pytest.raises(StageError) as exc_info:
+            _gate(Path(td), ast, mutated)
+        assert exc_info.value.kind == ErrorKind.ENGINE_BUG
+
+
 def test_ast_assemble_requires_both_inputs():
     """No path through this stage can run with only one side of the comparison."""
     with tempfile.TemporaryDirectory() as td:

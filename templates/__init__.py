@@ -428,6 +428,10 @@ REFERENCE = {
 
 GREEK_LEADING_PT = DEFAULT_LEADING_PT   # kept as a name; same 5.00 mm value
 
+# Greek presets are set in GFS Didot: full polytonic coverage, OFL, and in the
+# worker image. Minion Pro and PN Katsoulidis are the licensed alternatives
+# (see fontvault); a DesignSpec may name either where the fonts are installed.
+
 
 def _greek_preset(name: str, width: float, height: float, margins: dict) -> dict:
     return {
@@ -436,8 +440,8 @@ def _greek_preset(name: str, width: float, height: float, margins: dict) -> dict
         "preferredEngine": "chrome-pagedjs",
         "trimSize": {"width": width, "height": height, "unit": "mm"},
         "typography": {
-            "bodyFont": {"family": "EB Garamond"},
-            "headingFont": {"family": "EB Garamond"},
+            "bodyFont": {"family": "GFS Didot"},
+            "headingFont": {"family": "GFS Didot"},
             "bodySize": 10.5,
             "leading": GREEK_LEADING_PT,
             "scaleRatio": 1.25,
@@ -467,9 +471,9 @@ def _greek_preset(name: str, width: float, height: float, margins: dict) -> dict
             "firstParagraphStyle": "no-indent",
         },
         "fonts": [
-            {"family": "EB Garamond", "style": "regular", "source": "bundled_ofl"},
-            {"family": "EB Garamond", "style": "italic", "source": "bundled_ofl"},
-            {"family": "EB Garamond", "style": "bold", "source": "bundled_ofl"},
+            {"family": "GFS Didot", "style": "regular", "source": "bundled_ofl"},
+            {"family": "GFS Didot", "style": "italic", "source": "bundled_ofl"},
+            {"family": "GFS Didot", "style": "bold", "source": "bundled_ofl"},
         ],
         "colors": {"text": "#000000", "paper": "#FFFFFF"},
     }
