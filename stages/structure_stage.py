@@ -32,77 +32,17 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "structure"))
 from publisher_structure.rules import extract_text_from_html, normalize_text
 
-
-# ast.schema.json's `inlineNode` types: they sit inside a block's text and are
-# rendered inline, so no boundary goes between them.
-INLINE_TYPES = frozenset({
-    "text", "emphasis", "strong", "link", "superscript", "subscript", "smallCaps",
-    "codeInline", "hardBreak", "indexEntry", "crossReference",
-})
-
-
-def _extract_all_text(ast: dict) -> str:
-    """Extract and concatenate all text content from a canonical AST (schemas/ast),
-    walking frontMatter/body/backMatter.
-
-    Chapter and section titles live in `attrs.title`, not as a `type: "text"` node
-    inside `content` -- the original version of this function only walked `content`
-    arrays, so it silently dropped every chapter title from the integrity check.
-    `stages.rendering.ast_to_html` DOES render titles into the HTML (as an
-    `<h1>`), so omitting them here made the two sides of the comparison
-    structurally unequal even for a perfectly faithful conversion.
-
-    Key order below is NOT arbitrary: it must match `ast_to_html`'s render order
-    (frontMatter, then body, then backMatter). The root AST dict has all three keys
-    simultaneously, so walking them in a different order -- the original code used
-    ("content", "frontMatter", "backMatter", "body"), putting backMatter before
-    body -- silently reorders the concatenated text relative to what the HTML
-    actually rendered, and the comparison fails on ANY manuscript with non-empty
-    back matter even when no text was lost or altered.
-
-    Text runs inside one block are concatenated with NOTHING between them, and a
-    space goes only at block boundaries. `ast_to_html` renders marked runs back to
-    back (`(<em>word</em>,`), so a separator between every text node -- which this
-    used to insert -- made the source side read "( word ," against the HTML's
-    "(word,". The first real manuscript (polytonic Greek citations in italics
-    between brackets) failed the gate at offset 262 with no text lost at all.
-    """
-    texts: list[str] = []
-
-    def _walk(node):
-        if isinstance(node, dict):
-            kind = node.get("type")
-            if kind == "text":
-                texts.append(node.get("text", ""))
-                return
-            block = kind not in INLINE_TYPES
-            if block:
-                texts.append(" ")
-            title = (node.get("attrs") or {}).get("title")
-            if title:
-                texts.extend((title, " "))
-            for key in ("frontMatter", "body", "backMatter", "content"):
-                val = node.get(key)
-                if isinstance(val, list):
-                    for item in val:
-                        _walk(item)
-                elif isinstance(val, dict):
-                    _walk(val)
-            if block:
-                texts.append(" ")
-        elif isinstance(node, list):
-            for item in node:
-                _walk(item)
-
-    _walk(ast)
-    return "".join(texts)
+from stages.text_stream import ast_text, divergence, excerpt
 
 
 @stage(
     name="ast-assemble",
     # v3: integrity-report/1 declared terminal (U6). v4: inline runs are joined
-    # without a separator, as the HTML renders them (see _extract_all_text).
-    version=4,
+    # without a separator, as the HTML renders them (see text_stream.ast_text).
+    # v5: the AST's text stream moved to stages/text_stream.py (`ast_text`),
+    # shared with the epub stage's own check, and now counts figure/table
+    # captions and epigraph sources, which the HTML has always rendered.
+    version=5,
     inputs={"html": "typescript-html/1", "source": "raw-source/1"},
     outputs={"ast": "ast/1", "integrity-report": "integrity-report/1"},
     terminal_outputs=["integrity-report"],   # delivered via the API, never consumed
@@ -141,13 +81,10 @@ def ast_assemble(ctx: StageCtx, html: str | None = None, source: str | None = No
     source_ast = json.loads(source_path.read_bytes())
 
     html_side = normalize_text(extract_text_from_html(html_text))
-    source_side = normalize_text(_extract_all_text(source_ast))
+    source_side = normalize_text(ast_text(source_ast))
 
     if html_side != source_side:
-        i = 0
-        limit = min(len(html_side), len(source_side))
-        while i < limit and html_side[i] == source_side[i]:
-            i += 1
+        i = divergence(html_side, source_side)
         raise StageError(
             kind=ErrorKind.ENGINE_BUG,
             message="Text integrity violation -- extract's HTML text does not match "
@@ -157,8 +94,8 @@ def ast_assemble(ctx: StageCtx, html: str | None = None, source: str | None = No
                 severity="error",
                 human_message=(
                     f"Text streams diverge at normalized offset {i}. "
-                    f"HTML side: ...{html_side[max(0, i - 40):i + 40]!r}... "
-                    f"Source side: ...{source_side[max(0, i - 40):i + 40]!r}..."
+                    f"HTML side: ...{excerpt(html_side, i)}... "
+                    f"Source side: ...{excerpt(source_side, i)}..."
                 ),
                 suggested_fix="Check extract's HTML rendering for a node type it "
                               "does not know how to render (it drops unknown node "

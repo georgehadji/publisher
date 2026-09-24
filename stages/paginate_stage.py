@@ -341,7 +341,8 @@ def _family_name(font) -> str:
 
 @stage(
     name="paginate",
-    version=9,   # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+    version=10,  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+                 # v10: link hrefs are percent-encoded (rendering._safe_href).
                  # v8: fonts are resolved through the vault, pinned with @font-face,
                  # embedded in full, and a family that is not installed fails the
                  # render (INFRA) instead of being silently substituted.

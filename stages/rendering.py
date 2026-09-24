@@ -57,6 +57,24 @@ def _escape_html(text: str) -> str:
     return _html.escape(text, quote=True)
 
 
+# ASCII no URL may hold as-is. Anything else passes through: `%` so an escaped
+# href stays as it is, and non-ASCII because HTML takes IRIs -- encoding it
+# would break a Greek hostname.
+_URL_UNSAFE = str.maketrans({c: f"%{ord(c):02X}"
+                             for c in ' "<>\\^`{|}' + "".join(map(chr, range(32))) + chr(127)})
+
+
+def _safe_href(href: str) -> str:
+    """A link target with the characters no URL may hold percent-encoded.
+
+    Word stores a hyperlink as typed. The first real book's links into Perseus
+    carry raw `\\` and `|` in their queries (Beta Code accents); EPUBCheck
+    rejects each one (RSC-020), and a PDF link annotation holds the same bad
+    URI. Encoding them does not change where the link goes.
+    """
+    return href.strip().translate(_URL_UNSAFE)
+
+
 def _media_src(ref: dict) -> str:
     """`media/<sha256>.<ext>` for a figure's mediaRef.
 
@@ -97,7 +115,7 @@ def _render_inline(content: list) -> str:
                     text = f"<code>{text}</code>"
                 elif mtype == "link":
                     href = (mark.get("attrs") or {}).get("href", "")
-                    text = f'<a href="{_escape_html(href)}">{text}</a>'
+                    text = f'<a href="{_escape_html(_safe_href(href))}">{text}</a>'
             parts.append(text)
 
         elif ntype == "emphasis":
@@ -123,7 +141,7 @@ def _render_inline(content: list) -> str:
     return "".join(parts)
 
 
-def _render_table(node: dict) -> str:
+def _render_table(node: dict, notes: "EpubNotes | None" = None) -> str:
     """Render an AST table to HTML."""
     parts = ['<table>']
     caption = (node.get("attrs") or {}).get("caption", "")
@@ -136,7 +154,7 @@ def _render_table(node: dict) -> str:
         parts.append("<tr>")
         for cell in row.get("content", []):
             colspan = (cell.get("attrs") or {}).get("colspan", 1)
-            parts.append(f'<{tag} colspan="{colspan}">{_render_content(cell.get("content", []))}</{tag}>')
+            parts.append(f'<{tag} colspan="{colspan}">{_render_content(cell.get("content", []), notes)}</{tag}>')
         parts.append("</tr>")
     parts.append("</table>")
     return "\n".join(parts)
@@ -151,8 +169,43 @@ def _footnote_span(node: dict) -> str:
     return f'<span class="footnote"> {_render_inline(node.get("content", []))}</span>'
 
 
-def _render_content(content: list) -> str:
-    """Render AST block content to HTML."""
+class EpubNotes:
+    """Footnote numbering for the EPUB flavour of `_render_content`.
+
+    Print leaves numbering to the renderer (`float: footnote`); a reading system
+    has no footnote area, so the EPUB carries the call itself: a `noteref` link
+    in the citing paragraph and the note as an `aside epub:type="footnote"`
+    right after that paragraph. Readers that support it show the aside as a
+    pop-up; the rest show it where it sits. Placing it after the paragraph --
+    not in a list at the end of the chapter -- keeps the text in the AST's order,
+    so the EPUB's integrity check reads the same stream as the print gate's,
+    minus the call numbers this class generates. Numbered through the whole
+    book, like print (`counter-reset: footnote` on `body`).
+    """
+
+    NOTEREF = "noteref"
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def call(self) -> tuple[str, str]:
+        """The next note's call link and its aside's opening tag."""
+        self.count += 1
+        n = self.count
+        return (f'<a epub:type="{self.NOTEREF}" id="fnref-{n}" href="#fn-{n}">{n}</a>',
+                f'<aside epub:type="footnote" id="fn-{n}">')
+
+    def aside(self, opening: str, node: dict) -> str:
+        return f'{opening}<p>{_render_inline(node.get("content", []))}</p></aside>'
+
+
+def _render_content(content: list, notes: EpubNotes | None = None) -> str:
+    """Render AST block content to HTML.
+
+    `notes` selects the EPUB flavour (linked footnotes, see `EpubNotes`); every
+    other node renders identically in both, which is what lets the EPUB claim
+    the text the print gate verified.
+    """
     parts = []
     absorbed = 0
     for index, node in enumerate(content):
@@ -171,24 +224,32 @@ def _render_content(content: list) -> str:
             # anonymous line of its own -- a lone "1" under every cited
             # paragraph, all 477 of them in the first real book. Text order is
             # unchanged, so the integrity gate sees the same stream.
-            notes = []
+            cited = []
             for following in content[index + 1:]:
                 if following.get("type") != "footnote":
                     break
-                notes.append(_footnote_span(following))
-            absorbed = len(notes)
-            parts.append(f'<p class="{cls}">{_render_inline(node.get("content", []))}{"".join(notes)}</p>')
+                cited.append(following)
+            absorbed = len(cited)
+            text = _render_inline(node.get("content", []))
+            if notes is None:
+                spans = "".join(_footnote_span(note) for note in cited)
+                parts.append(f'<p class="{cls}">{text}{spans}</p>')
+            else:
+                calls = [notes.call() for _ in cited]
+                refs = "".join(ref for ref, _ in calls)
+                asides = "".join(notes.aside(opening, note) for (_, opening), note in zip(calls, cited))
+                parts.append(f'<p class="{cls}">{text}{refs}</p>{asides}')
 
         elif ntype == "heading":
             level = (node.get("attrs") or {}).get("level", 2)
             parts.append(f'<h{level}>{_render_inline(node.get("content", []))}</h{level}>')
 
         elif ntype == "blockquote":
-            parts.append(f'<blockquote>{_render_content(node.get("content", []))}</blockquote>')
+            parts.append(f'<blockquote>{_render_content(node.get("content", []), notes)}</blockquote>')
 
         elif ntype == "epigraph":
             source = (node.get("attrs") or {}).get("source", "")
-            inner = _render_content(node.get("content", []))
+            inner = _render_content(node.get("content", []), notes)
             parts.append(f'<blockquote class="epigraph">{inner}')
             if source:
                 parts.append(f'<footer>{_escape_html(source)}</footer>')
@@ -210,7 +271,7 @@ def _render_content(content: list) -> str:
 
         elif ntype == "dialogue":
             speaker = (node.get("attrs") or {}).get("speaker", "")
-            inner = _render_content(node.get("content", []))
+            inner = _render_content(node.get("content", []), notes)
             parts.append(f'<div class="dialogue" data-speaker="{_escape_html(speaker)}">{inner}</div>')
 
         elif ntype == "list":
@@ -218,7 +279,7 @@ def _render_content(content: list) -> str:
             tag = "ol" if list_type == "ordered" else "ul"
             parts.append(f'<{tag}>')
             for item in node.get("content", []):
-                parts.append(f'<li>{_render_content(item.get("content", []))}</li>')
+                parts.append(f'<li>{_render_content(item.get("content", []), notes)}</li>')
             parts.append(f'</{tag}>')
 
         elif ntype == "figure":
@@ -240,10 +301,14 @@ def _render_content(content: list) -> str:
             # (CSS Generated Content for Paged Media) moves it into the page's
             # footnote area and numbers the call itself. Rendering it as a block
             # would print the note inline in the text where it happens to sit.
-            parts.append(_footnote_span(node))
+            if notes is None:
+                parts.append(_footnote_span(node))
+            else:
+                ref, opening = notes.call()
+                parts.append(f'<p class="noteref-only">{ref}</p>{notes.aside(opening, node)}')
 
         elif ntype == "sidebar":
-            parts.append(f'<aside class="sidebar">{_render_content(node.get("content", []))}</aside>')
+            parts.append(f'<aside class="sidebar">{_render_content(node.get("content", []), notes)}</aside>')
 
         elif ntype == "pageBreak":
             parts.append('<div class="page-break"></div>')
@@ -252,10 +317,10 @@ def _render_content(content: list) -> str:
                        "preface", "acknowledgments", "prologue", "epilogue", "afterword",
                        "appendix", "notes", "bibliography", "index", "aboutTheAuthor", "alsoBy", "colophon"):
             role = ntype
-            parts.append(f'<div class="{role}">{_render_content(node.get("content", []))}</div>')
+            parts.append(f'<div class="{role}">{_render_content(node.get("content", []), notes)}</div>')
 
         elif ntype == "table":
-            parts.append(_render_table(node))
+            parts.append(_render_table(node, notes))
 
         else:
             parts.append(f'<!-- unknown node type: {ntype} -->')
@@ -306,6 +371,62 @@ def ast_to_html(ast: dict) -> str:
         parts.append("</div>")
 
     return HTML_TEMPLATE.format(title=_escape_html(title), body="\n".join(parts))
+
+
+# ── the EPUB's sections ─────────────────────────────────────────────────────
+
+MATTER_LABELS = {
+    "halfTitle": "Half Title", "titlePage": "Title Page", "copyrightPage": "Copyright",
+    "dedication": "Dedication", "epigraph": "Epigraph", "toc": "Contents",
+    "foreword": "Foreword", "preface": "Preface", "acknowledgments": "Acknowledgments",
+    "introduction": "Introduction", "prologue": "Prologue", "epilogue": "Epilogue",
+    "afterword": "Afterword", "appendix": "Appendix", "notes": "Notes",
+    "glossary": "Glossary", "bibliography": "Bibliography", "index": "Index",
+    "aboutTheAuthor": "About the Author", "alsoBy": "Also By", "colophon": "Colophon",
+}
+
+
+def ast_to_epub_sections(ast: dict) -> list[dict]:
+    """The book as EPUB content documents: one per front-matter item, chapter and
+    back-matter item, in the order `ast_to_html` renders them.
+
+    Each is `{"id", "title", "matter", "body"}`, `body` being the markup inside
+    `<body>`. The blocks come from the same `_render_content` the print gate
+    verified, in its EPUB flavour (`EpubNotes`); only the footnotes differ.
+    The EPUB writer used to carry a renderer of its own, and it dropped every
+    footnote, table, figure, sidebar and front/back-matter section and every
+    mark, and moved words around inline elements: it held 76% of the first real
+    book's text.
+    """
+    notes = EpubNotes()
+    sections: list[dict] = []
+
+    def add(matter: str, title: str, body: str) -> None:
+        sections.append({"id": f"s{len(sections) + 1:03d}", "title": title,
+                         "matter": matter, "body": body})
+
+    for item in ast.get("frontMatter") or []:
+        kind = item.get("type", "unknown")
+        title = (item.get("attrs") or {}).get("title") or MATTER_LABELS.get(kind, kind)
+        add("frontmatter", title, f'<section class="front-matter {kind}">'
+            f'{_render_content(item.get("content", []), notes)}</section>')
+
+    for chapter in ast.get("body", []):
+        ctype = chapter.get("type", "unknown")
+        attrs = chapter.get("attrs", {})
+        title = attrs.get("title", f"Chapter {attrs.get('number', '?')}")
+        add("bodymatter", title,
+            f'<section class="{ctype}" id="{_escape_html(str(attrs.get("id", "")))}">'
+            f'<h1 class="chapter-title">{_escape_html(title)}</h1>'
+            f'{_render_content(chapter.get("content", []), notes)}</section>')
+
+    for item in ast.get("backMatter") or []:
+        kind = item.get("type", "unknown")
+        title = (item.get("attrs") or {}).get("title") or MATTER_LABELS.get(kind, kind)
+        add("backmatter", title, f'<section class="back-matter {kind}">'
+            f'{_render_content(item.get("content", []), notes)}</section>')
+
+    return sections
 
 
 # ── emit_css (moved from design_compile_stage.py) ───────────────────────────
@@ -730,4 +851,4 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["ast_to_html", "emit_css"]
+__all__ = ["ast_to_html", "ast_to_epub_sections", "emit_css", "EpubNotes"]

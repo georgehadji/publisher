@@ -7,8 +7,9 @@ description: "Map of the `services/` folder — the domain logic each stage call
 
 Stages (`stages/`) are thin declarations. **The real work is here.** Each subfolder is an
 installable Python distribution (`publisher-<name>`) with its own `pyproject.toml`. Six of
-the nine have co-located `tests/`; **`alttext`, `epub` and `onix` have none** — their writers
-are exercised from `services/idml/tests/test_outputs.py`, which sys.path-inserts them.
+the nine have co-located `tests/`, plus `epub/tests/test_epub_writer.py`; **`alttext` and
+`onix` have none** — their writers are exercised from `services/idml/tests/test_outputs.py`,
+which sys.path-inserts them.
 
 **U3 rule:** every `services/*` package must declare in its own `pyproject.toml` any
 `publisher_*` package it imports. `tools/lint_service_deps.py` enforces it in CI. Without
@@ -71,7 +72,7 @@ PYTHONPATH — so a packaging change breaks production silently instead of CI lo
 ### Secondary outputs
 | File | What it does |
 |---|---|
-| `epub/publisher_epub/__init__.py` | EPUB 3 writer with accessibility. Gate: EPUBCheck **and** ACE by DAISY. |
+| `epub/publisher_epub/__init__.py` | EPUB 3 **packager**: `EPUB3Writer(sections, metadata=, media=)` takes content documents already rendered by `stages/rendering.py`'s `ast_to_epub_sections` — it renders nothing itself (its old private renderer lost 24% of a real book). Refuses ill-formed XHTML, unsupplied or non-core images (`EPUBError`); stored-first mimetype, fixed zip timestamps (same book → same bytes). `spine_text(path)` reads a package back in reading order minus generated note calls — the `epub` stage's integrity check. Gate: EPUBCheck (clean on the real book, 5.4.0) **and** ACE by DAISY (not yet run). |
 | `idml/publisher_idml/__init__.py` | IDML writer — a ZIP of XML (stories, spreads, master spreads, styles, resources), generatable without InDesign. Gate: opens clean in InDesign, Affinity, Scribus. |
 | `onix/publisher_onix/__init__.py` | ONIX 3.0 metadata XML for vendors, retailers, libraries. |
 | `idml/tests/test_outputs.py` | Covers the secondary-output writers. |

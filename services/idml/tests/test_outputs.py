@@ -95,52 +95,8 @@ class TestIDMLWriter:
         }
 
 
-# ── EPUB tests ──────────────────────────────────────────────────
-
-class TestEPUBWriter:
-    def test_write_epub(self):
-        from publisher_epub import EPUB3Writer
-        ast = self._make_test_ast()
-        
-        with tempfile.TemporaryDirectory() as tmp:
-            output = Path(tmp) / "test.epub"
-            writer = EPUB3Writer(ast)
-            result = writer.write(output)
-            assert result.exists()
-            assert result.suffix == ".epub"
-            
-            with zipfile.ZipFile(result) as zf:
-                assert "mimetype" in zf.namelist()
-                mimetype = zf.read("mimetype").decode()
-                assert mimetype == "application/epub+zip"
-                assert "META-INF/container.xml" in zf.namelist()
-    
-    def test_epub_contains_sections(self):
-        from publisher_epub import EPUB3Writer
-        ast = self._make_test_ast(chapters=2)
-        
-        with tempfile.TemporaryDirectory() as tmp:
-            writer = EPUB3Writer(ast)
-            result = writer.write(Path(tmp) / "test.epub")
-            
-            with zipfile.ZipFile(result) as zf:
-                sections = [n for n in zf.namelist() if "sections/" in n]
-                assert len(sections) == 2
-    
-    def _make_test_ast(self, chapters: int = 1) -> dict:
-        return {
-            "schema": "ast/1",
-            "body": [
-                {
-                    "type": "chapter",
-                    "attrs": {"number": i+1, "title": f"Chapter {i+1}", "id": f"ch{i+1}"},
-                    "content": [
-                        {"type": "paragraph", "content": [{"type": "text", "text": f"Content {i+1}"}]},
-                    ],
-                }
-                for i in range(chapters)
-            ],
-        }
+# The EPUB writer's tests are in services/epub/tests/test_epub_writer.py: it
+# packages rendered sections now, and no longer takes an AST.
 
 
 # ── Alt-text tests ──────────────────────────────────────────────

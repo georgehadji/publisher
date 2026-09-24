@@ -146,3 +146,23 @@ def test_ast_assemble_requires_both_inputs():
         with pytest.raises(StageError) as exc_info:
             ast_assemble(_ctx(tmp_dir), html=None, source="some/path.json")
         assert exc_info.value.kind == ErrorKind.BAD_INPUT
+
+
+def test_captions_and_epigraph_sources_are_part_of_the_text():
+    """Both renderers print a figure's and a table's caption and an epigraph's
+    source; the source side skipped them, so the first captioned plate a book
+    had would have failed the gate with nothing lost."""
+    ast = json.loads(json.dumps(GOOD_AST))
+    ast["body"][0]["content"] += [
+        {"type": "figure", "attrs": {"caption": "Plate one.", "mediaRef": {}}},
+        {"type": "table", "attrs": {"caption": "Table one."}, "content": [
+            {"type": "tableRow", "content": [{"type": "tableCell", "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Cell."}]}]}]}]},
+        {"type": "epigraph", "attrs": {"source": "Heraclitus"}, "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "All flows."}]}]},
+    ]
+    with tempfile.TemporaryDirectory() as td:
+        html = ast_to_html(ast)
+        assert _gate(Path(td), ast, html).metrics["integrity_ok"] == 1.0
+        with pytest.raises(StageError):
+            _gate(Path(td), ast, html.replace("Plate one.", ""))

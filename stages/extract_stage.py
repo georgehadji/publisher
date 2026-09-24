@@ -22,7 +22,8 @@ from stages.rendering import ast_to_html
 
 @stage(
     name="extract",
-    version=2,   # v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+    version=3,   # v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+                 # v3: link hrefs are percent-encoded (rendering._safe_href).
     inputs={"source": "raw-source/1"},
     outputs={"html": "typescript-html/1"},
     toolchain=[],

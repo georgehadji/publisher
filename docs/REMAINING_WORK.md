@@ -384,20 +384,37 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
   on the real book. The Typst test's `"emphatic1" not in text` had passed only because of the
   misplacement. It now asserts the call starts where the cited word ends, on the same line.
   The book is now 805 pages.
-- **The EPUB carries only 76% of the book's text, and nothing notices.**
-  `services/epub/publisher_epub` has its own renderer, not `ast_to_html`.
-  - It writes paragraphs, blockquotes and headings. Footnotes (all 477), tables, figures,
-    sidebars and front/back matter are dropped.
-  - It reads `emphasis`/`strong` inline NODES, while ingest emits marks on text nodes, so no
-    italic or bold survives.
-  - Text after an inline element is appended to the parent's `.text`, which moves it in
-    front of that element, so word order changes.
-  - No integrity check runs on the EPUB.
-
-  Measured on the real book: 1,571,272 of 2,057,459 characters.
-
-  **Work:** build the XHTML from `ast_to_html`, the renderer the gate verified, and apply
-  the same text-integrity comparison to the EPUB before it's stored.
+- **EPUB — fixed (2026-09-24): the whole book, checked, and EPUBCheck-clean.** It used to
+  hold 76% of the text: its writer had its own renderer that dropped every footnote, table,
+  figure, sidebar and front/back-matter section and every mark, and reordered words around
+  inline elements. Nothing checked it.
+  - **Rendering.** The content documents come from `stages/rendering.py`
+    (`ast_to_epub_sections`), the renderer the print gate verifies. Footnotes are the one
+    difference: a `noteref` link in the citing paragraph and an `aside epub:type="footnote"`
+    right after it, numbered through the book. `publisher_epub` only packages.
+  - **The check.** The `epub` stage reads the written package back (`spine_text`, which skips
+    the generated note calls) and compares it with the document's text stream. That stream is
+    now shared with `ast-assemble` (`stages/text_stream.py`). A mismatch fails the stage
+    (`ENGINE_BUG`, `integrity_mismatch`) and nothing is stored.
+  - **Package fixes.** The mimetype entry is now first and stored. The OPF now has
+    `dc:identifier`, `dc:title`, `dc:language` and accessibility metadata. Zip timestamps are
+    fixed, so the same book gives the same bytes. Images come out of CAS; TIFF and BMP are
+    converted to PNG.
+  - **Found on the way:**
+    - The print gate skipped figure and table captions and epigraph sources, though the HTML
+      prints them. The first captioned figure would have failed the build. Fixed in the
+      shared stream (`ast-assemble` v5).
+    - Word hyperlinks with raw `\` and `|` (the book's 12 Perseus links) were invalid URLs in
+      both the EPUB and the PDF's link annotations. They're now percent-encoded in the shared
+      renderer.
+  - **The real book:** 19 content documents, 477 linked notes, 4 images, 2,056,296
+    characters verified, in 14–20 s. **EPUBCheck 5.4.0: 0 errors, 0 warnings.**
+    `test_epubcheck_accepts_the_epub` runs EPUBCheck when `PUBLISHER_EPUBCHECK_JAR` names a
+    jar, and skips otherwise.
+  - **Still:**
+    - ACE by DAISY (the other §3.12 gate) hasn't been run.
+    - Fonts aren't embedded: GFS Didot could be (OFL), but the commercial faces can't.
+    - EPUBCheck isn't in CI.
 - Its diagrams drawn from VML lines and arrows (58 `w:pict` shapes) keep their text, but the
   lines and arrows are dropped.
 - Captions typed as prose ("Εικόνα 6: …") aren't attached to their figures.
@@ -498,8 +515,8 @@ into impossible states.
 
 ## If you do three things
 
-1. **§3.1 — the EPUB, then a preflight verdict for the real book.** The EPUB silently
-   drops 24% of the book (every footnote, table, figure; all italics); Docker is needed for
+1. **§3.1 — a preflight verdict for the real book.** It ingests, renders (805 pages) and
+   produces an EPUBCheck-clean EPUB with every character verified. Docker is needed for
    `finish-gs` and preflight.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
