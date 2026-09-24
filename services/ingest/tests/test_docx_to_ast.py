@@ -188,7 +188,8 @@ def test_grouping_keeps_leading_matter_untitled():
         Block("TITLE", "Normal", True, heading_confidence=0.7),
         Block("body line", "Normal", False, (body,)),
     ]
-    assert _group_headings(blocks) == [("", [front], None), ("TITLE", [body], 0.7)]
+    # The 4th element is the title's own line nodes (none here: TITLE carries none).
+    assert _group_headings(blocks) == [("", [front], None, []), ("TITLE", [body], 0.7, [])]
 
 
 # ── Confidence: scored where the structural decision is made ────

@@ -195,6 +195,84 @@ def test_a_text_box_becomes_a_sidebar_once(technical):
     assert _text(technical).count("a text box the author floated") == 1
 
 
+# ── word-thesis.docx: the first real manuscript's conventions ─────────────
+# A Greek academic book, ingested whole and read as ONE chapter titled with a
+# citation: its headings are bold Normal-style lines numbered by hand, and its
+# only `Heading` styles were on bibliography entries. The book itself is not in
+# this public repo; this file reproduces each convention with synthetic prose.
+
+
+@pytest.fixture(scope="module")
+def thesis() -> dict:
+    return _ingest("word-thesis.docx")
+
+
+def _plain(node: dict) -> str:
+    return "".join(t.get("text", "") for t in node.get("content", []) if isinstance(t, dict))
+
+
+def test_bold_numbered_lines_are_the_chapters(thesis):
+    """Chapters are the depth-1 numbers plus the named, unnumbered sections
+    (the prologue carries Word list numbering, not a typed one)."""
+    assert [c["attrs"]["title"] for c in thesis["body"]] == [
+        "Πρόλογος", "2. Εισαγωγή", "3. Η επιστολή", "Επιλογικά εξαγόμενα"]
+
+
+def test_a_deeper_number_is_a_heading_inside_its_chapter(thesis):
+    intro = thesis["body"][1]
+    headings = [n for n in intro["content"] if n["type"] == "heading"]
+    assert [(h["attrs"]["level"], _plain(h)) for h in headings] == [(2, "2.1 Η βροχή και η θάλασσα")]
+
+
+def test_numbered_or_bold_alone_is_not_a_heading(thesis):
+    """A numbered point in prose (not bold) and a bold diagram label (not
+    numbered, not a known section name) stay paragraphs."""
+    texts = [_plain(n) for n in thesis["body"][1]["content"] if n["type"] == "paragraph"]
+    assert any(t.startswith("1. Ένα αριθμημένο σημείο") for t in texts)
+    assert "Πρόκληση" in texts
+
+
+def test_a_contents_page_in_ordinary_case_is_found(thesis):
+    """"Περιεχόμενα" carries a tonos; the pattern is "ΠΕΡΙΕΧΟΜΕΝΑ". A plain
+    case-insensitive match does not fold ό to Ο, so it was never found."""
+    (toc,) = [s for s in thesis["frontMatter"] if s["type"] == "toc"]
+    assert [_plain(p) for p in toc["content"]][:3] == ["Περιεχόμενα", "1. Πρόλογος", "2. Εισαγωγή"]
+
+
+def test_heading_styled_citations_stay_in_the_bibliography_one_per_entry(thesis):
+    """The author styled two adjacent entries `Heading 1` and `Heading 3`. They
+    opened chapters titled with citations; then, kept in back matter but joined
+    as one title, they became one run-on citation."""
+    (bibliography,) = thesis["backMatter"]
+    assert bibliography["type"] == "bibliography"
+    entries = [_plain(p) for p in bibliography["content"]]
+    assert entries[0] == "Βιβλιογραφία"
+    assert [e.split(",")[0] for e in entries[1:]] == ["Αλεξίου", "Βασιλείου", "Γεωργίου", "Δημητρίου"]
+
+
+def test_a_picture_in_a_footnote_is_kept(thesis):
+    """Notes had no media sink, so ingest refused the whole book."""
+    intro = thesis["body"][1]["content"]
+    types = [n["type"] for n in intro]
+    assert "footnote" in types and "figure" in types
+    assert types.index("figure") == types.index("footnote") + 1
+
+
+def test_smartart_text_is_kept(thesis):
+    """A SmartArt's words live in a separate data part; neither the walk nor
+    the no-loss check read it, so both diagrams' labels vanished unseen."""
+    (diagram,) = _nodes(thesis, "sidebar")
+    assert [_plain(p) for p in diagram["content"]] == ["Ερώτηση", "Έλεγχος", "Ορισμός"]
+
+
+def test_the_no_loss_check_counts_smartart_text():
+    """So a walk that stops emitting diagrams fails ingest instead of passing."""
+    import docx
+
+    sources = docx_rich.source_texts(docx.Document(str(CORPUS / "word-thesis.docx")))
+    assert {"Ερώτηση", "Έλεγχος", "Ορισμός"} <= set(sources)
+
+
 def test_an_equation_is_refused_not_dropped():
     with pytest.raises(IngestError, match="equation"):
         _ingest("word-equation.docx")

@@ -213,6 +213,92 @@ def equation(a: Author) -> None:
     a.end_para()
 
 
+def _png(path: Path) -> Path:
+    """A small solid PNG, written with the stdlib so the script needs no image library."""
+    import struct
+    import zlib
+
+    width = height = 16
+    rows = b"".join(b"\x00" + b"\x80\x60\x40" * width for _ in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    path.write_bytes(b"\x89PNG\r\n\x1a\n"
+                     + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+    return path
+
+
+def bold(a: Author, text: str) -> None:
+    """A heading as academic manuscripts set one: bold, Normal style, no heading style."""
+    a.style(NORMAL)
+    a.sel.Font.Bold = True
+    a.typed(text)
+    a.end_para()
+    a.sel.Font.Bold = False
+
+
+def thesis(a: Author) -> None:
+    """The conventions of the first real manuscript ingested (a Greek academic book),
+    reproduced with synthetic prose -- the book itself is not ours to publish.
+
+    Its headings are bold Normal-style lines with typed numbers ("4.3.1 ..."), its
+    contents page is typed by hand, its prologue carries Word list numbering, a
+    footnote holds a photograph, two SmartArt diagrams carry text, and its
+    bibliography entries are styled `Heading 1`/`Heading 3`. Every one of those
+    broke ingest: the whole book was one chapter titled by a citation."""
+    a.para("ΤΟ ΣΠΙΤΙ ΣΤΗΝ ΑΚΡΗ ΤΟΥ ΔΡΟΜΟΥ")
+    a.para("Μελέτη")
+    a.page_break()
+    bold(a, "Περιεχόμενα")
+    for line in ("1. Πρόλογος", "2. Εισαγωγή", "2.1 Η βροχή και η θάλασσα",
+                 "3. Η επιστολή", "Επιλογικά εξαγόμενα", "Βιβλιογραφία"):
+        a.para(line)
+    a.page_break()
+
+    a.style(NORMAL)
+    a.sel.Font.Bold = True
+    a.typed("Πρόλογος")
+    a.sel.Range.ListFormat.ApplyNumberDefault()
+    a.end_para()
+    a.sel.Range.ListFormat.RemoveNumbers()
+    a.sel.Font.Bold = False
+    a.para(GREEK * 2)
+
+    bold(a, "2. Εισαγωγή")
+    a.typed(GREEK * 2)
+    note(a, a.doc.Footnotes, "Το φυτό που περιγράφεται, όπως φωτογραφήθηκε.")
+    photo = _png(HERE / "_note-photo.png")
+    try:
+        a.doc.Footnotes(1).Range.InlineShapes.AddPicture(str(photo))
+    finally:
+        photo.unlink()
+    a.to_end()
+    a.end_para()
+    bold(a, "2.1 Η βροχή και η θάλασσα")
+    a.para(GREEK)
+    a.para("1. Ένα αριθμημένο σημείο μέσα στο κείμενο, όχι επικεφαλίδα: " + GREEK)
+    bold(a, "Πρόκληση")
+    anchor = a.here()
+    a.para(GREEK)
+    art = a.doc.Shapes.AddSmartArt(a.doc.Application.SmartArtLayouts(1), 50, 50, 300, 150, anchor)
+    for i, label in enumerate(("Ερώτηση", "Έλεγχος", "Ορισμός"), start=1):
+        art.SmartArt.AllNodes(i).TextFrame2.TextRange.Text = label
+    a.to_end()
+
+    bold(a, "3. Η επιστολή")
+    a.para(GREEK * 2)
+    bold(a, "Επιλογικά εξαγόμενα")
+    a.para(GREEK * 2)
+    bold(a, "Βιβλιογραφία")
+    a.para("Αλεξίου, Α. (2001). Ένα βιβλίο. Αθήνα: Εκδόσεις Δοκιμή.")
+    a.para("Βασιλείου, Β. (1996). «Ένα άρθρο». Περιοδικό 27: 11-31.", HEADING_1)
+    a.para("Γεωργίου, Γ. (2010). Ένα ακόμη βιβλίο. Θεσσαλονίκη: Εκδόσεις Δοκιμή.", -4)  # Heading 3
+    a.para("Δημητρίου, Δ. (1980). Το τελευταίο βιβλίο. Αθήνα: Εκδόσεις Δοκιμή.")
+
+
 def build(name: str, write) -> None:
     word = win32com.client.DispatchEx("Word.Application")
     word.Visible = False
@@ -232,3 +318,4 @@ if __name__ == "__main__":
     build("word-novel.docx", novel)
     build("word-technical.docx", technical)
     build("word-equation.docx", equation)
+    build("word-thesis.docx", thesis)

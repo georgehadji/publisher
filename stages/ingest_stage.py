@@ -175,7 +175,10 @@ def _check_zip_limits(source: Path) -> None:
     # v5: text inside tracked insertions, content controls, nested tables, text
     # boxes and endnotes reaches the AST (a v4 AST silently lacks it), a Word
     # TOC no longer merges into chapter one's title, and an equation is refused.
-    version=5,
+    # v6: from the first real manuscript -- bold numbered lines are headings (a
+    # whole book was one chapter), back matter keeps its Heading-styled entries,
+    # notes keep their pictures, SmartArt text is kept, an EMF image is refused.
+    version=6,
     inputs={"docx_path": "raw-docx/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["docx_path"],

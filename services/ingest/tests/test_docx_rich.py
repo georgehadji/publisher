@@ -9,6 +9,7 @@ character in the body paragraph it belongs to.
 
 from __future__ import annotations
 
+import json
 import re
 import zipfile
 from pathlib import Path
@@ -17,7 +18,7 @@ import docx
 import pytest
 
 from publisher_ingest.docx_to_ast import IngestError, docx_to_ast, read_blocks
-from publisher_ingest.docx_rich import sha256_hex
+from publisher_ingest.docx_rich import MEDIA_TYPES, sha256_hex
 
 # 1x1 transparent PNG. Small enough to inline, real enough for python-docx to
 # read an image header off.
@@ -180,6 +181,33 @@ def test_an_image_with_nowhere_to_go_is_an_error_not_a_shrug(tmp_path):
     the failure this extractor exists to end."""
     with pytest.raises(IngestError, match="media sink"):
         docx_to_ast(_manuscript(tmp_path, with_image=True))
+
+
+def test_an_image_nothing_can_render_is_refused_by_name(tmp_path):
+    """The first real book carried an EMF diagram. Kept, it was a figure no
+    renderer draws and an AST the schema rejects; refused, the author learns
+    which image to re-save."""
+    src = _manuscript(tmp_path, with_image=True)
+    with zipfile.ZipFile(src) as zin:
+        parts = {n: zin.read(n) for n in zin.namelist()}
+    types = parts["[Content_Types].xml"].decode("utf-8")
+    assert 'Extension="png" ContentType="image/png"' in types
+    parts["[Content_Types].xml"] = types.replace(
+        'Extension="png" ContentType="image/png"', 'Extension="png" ContentType="image/x-emf"'
+    ).encode("utf-8")
+    emf = tmp_path / "emf.docx"
+    with zipfile.ZipFile(emf, "w") as zout:
+        for name, data in parts.items():
+            zout.writestr(name, data)
+
+    with pytest.raises(IngestError, match=r"image/x-emf.*re-save"):
+        docx_to_ast(emf, store_media=lambda b, t, n: sha256_hex(b))
+
+
+def test_the_image_types_ingest_accepts_are_the_schemas():
+    schema = json.loads((Path(__file__).resolve().parents[3] / "schemas/ast/ast.schema.json")
+                        .read_text(encoding="utf-8"))
+    assert MEDIA_TYPES == set(schema["$defs"]["mediaRef"]["properties"]["mediaType"]["enum"])
 
 
 def test_footnotes_are_lifted_out_of_their_own_part(tmp_path):

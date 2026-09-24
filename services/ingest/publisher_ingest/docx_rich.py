@@ -36,6 +36,7 @@ R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
 M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+DGM = "{http://schemas.openxmlformats.org/drawingml/2006/diagram}"
 
 # Wrappers whose content is ordinary document text: an accepted-or-pending
 # insertion, the landing side of a move, a content control, smart tags, custom
@@ -55,6 +56,10 @@ HIDDEN = frozenset({f"{W}del", f"{W}moveFrom", f"{MC}Fallback"})
 # as one word at a line end). U+2011 keeps that; a renderer missing the glyph
 # falls back to another font's hyphen rather than printing nothing.
 NO_BREAK_HYPHEN = "\u2011"
+
+# `mediaRef.mediaType` in ast.schema.json -- the images a renderer can draw.
+# EMF/WMF (Word's own vector formats) are not among them.
+MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/svg+xml", "image/tiff"})
 
 # Signature of the media sink: (bytes, media_type, original_name) -> sha256 hex.
 # The caller owns storage; this module never decides where image bytes live.
@@ -157,8 +162,15 @@ def _figure_from_run(run: etree._Element, part, sink: Optional[MediaSink]) -> Op
             "pass store_media= so the bytes get a home instead of being dropped"
         )
 
-    blob = image_part.blob
     name = str(image_part.partname).rsplit("/", 1)[-1]
+    if image_part.content_type not in MEDIA_TYPES:
+        # Kept, it would be a figure no renderer can draw and an AST the schema
+        # rejects -- the first real book carried an 8.7 MB EMF diagram.
+        raise UnsupportedContent(
+            f"image {name!r} is {image_part.content_type}, which nothing here can "
+            f"render; re-save it in Word as PNG or JPEG ({', '.join(sorted(MEDIA_TYPES))})"
+        )
+    blob = image_part.blob
     attrs: dict = {
         "mediaRef": {
             "hash": sink(blob, image_part.content_type, name),
@@ -170,6 +182,27 @@ def _figure_from_run(run: etree._Element, part, sink: Optional[MediaSink]) -> Op
     if doc_pr is not None and (doc_pr.get("descr") or "").strip():
         attrs["altText"] = doc_pr.get("descr").strip()
     return {"type": "figure", "attrs": attrs}
+
+
+def diagram_texts(el: etree._Element, part) -> list[str]:
+    """The text of every SmartArt diagram under `el`, one string per paragraph.
+
+    A SmartArt's words are not in document.xml at all: the drawing holds only
+    `dgm:relIds`, pointing at a data part whose `a:t` runs are the text. So a
+    walk of the document, and an oracle that scans it, both miss them -- the
+    first real book lost two diagrams' labels with every check green.
+    """
+    texts: list[str] = []
+    for ids in el.iter(f"{DGM}relIds"):
+        try:
+            data = part.rels[ids.get(f"{R}dm")].target_part.blob
+        except KeyError:
+            raise UnsupportedContent("a SmartArt diagram's data part is missing from the package")
+        for para in etree.fromstring(data).iter(f"{A}p"):
+            text = "".join(t.text or "" for t in para.iter(f"{A}t")).strip()
+            if text:
+                texts.append(text)
+    return texts
 
 
 def _inline_runs(
@@ -219,6 +252,14 @@ def _inline_runs(
                 figure = _figure_from_run(run, part, sink)
                 if figure is not None:
                     nodes.append({"__block__": figure})
+                # ponytail: a SmartArt becomes its words, one paragraph per
+                # label, in the diagram's data order -- the layout (arrows,
+                # cycles) is lost. Render the drawing if a book needs the shape.
+                labels = diagram_texts(child, part)
+                if labels:
+                    nodes.append({"__block__": {"type": "sidebar", "content": [
+                        {"type": "paragraph", "content": [{"type": "text", "text": t}]}
+                        for t in labels]}})
                 for box in child.iter(f"{W}txbxContent"):
                     content, _ = blocks_of(box, part, footnotes=footnotes or {},
                                            footnote_refs=[], sink=sink)
@@ -264,8 +305,13 @@ def _notes_part(document, name: str):
     return None
 
 
-def read_footnotes(document) -> dict[str, list[dict]]:
+def read_footnotes(document, sink: Optional[MediaSink] = None) -> dict[str, list[dict]]:
     """Map note key -> inline content, for footnotes AND endnotes.
+
+    A picture in a note comes back as a `{"__block__": figure}` entry in that
+    list, for `paragraph_blocks` to lift out: `footnote.content` is inline-only
+    in the schema, and a figure is a block. A real manuscript (a plant pictured
+    in the note that names it) refused to ingest at all when notes had no sink.
 
     Keys are `fn:<id>` and `en:<id>`: the two parts number their notes
     independently, so bare ids collide. Endnotes become `footnote` nodes -- the
@@ -289,11 +335,10 @@ def read_footnotes(document) -> dict[str, list[dict]]:
             for para in note.findall(f"{W}p"):
                 if inline:
                     inline.append({"type": "text", "text": " "})
-                # sink=None: a picture inside a note raises rather than being
-                # dropped. footnote_refs=None: Word does not nest notes.
-                inline.extend(_inline_runs(para, part, None, None)[0])
+                # footnote_refs=None: Word does not nest notes.
+                inline.extend(_inline_runs(para, part, sink, None)[0])
             inline = _merge_text(inline)
-            if any(n.get("text", "").strip() for n in inline):
+            if any(n.get("text", "").strip() or "__block__" in n for n in inline):
                 notes[f"{kind}:{note.get(f'{W}id')}"] = inline
     return notes
 
@@ -372,10 +417,15 @@ def paragraph_blocks(
         blocks.append({"type": "paragraph", "content": inline})
     blocks.extend(lifted)
     for key, number in refs:
-        content = footnotes.get(key)
-        if content:
+        note = footnotes.get(key) or []
+        content = [n for n in note if "__block__" not in n]
+        if any(n.get("text", "").strip() for n in content):
             blocks.append({"type": "footnote", "attrs": {"number": number},
                            "content": content})
+        # ponytail: a note's pictures print in the text, just after the note,
+        # not in the note area -- the schema's footnote holds inline content
+        # only. Give `footnote` block content if a book needs them in place.
+        blocks.extend(n["__block__"] for n in note if "__block__" in n)
     return blocks, [source_text.strip()] if source_text.strip() else []
 
 
@@ -440,14 +490,17 @@ def source_texts(document) -> list[str]:
     Equations are refused, not skipped: OMML text is `m:t`, and no renderer here
     has an equation case, so accepting one would only lose it further down.
     """
-    roots = [document.element.body]
+    roots = [(document.element.body, document.part)]
     for name in ("footnotes", "endnotes"):
         part = _notes_part(document, name)
         if part is not None:
-            roots.append(etree.fromstring(part.blob))
+            roots.append((etree.fromstring(part.blob), part))
 
     texts: list[str] = []
-    for root in roots:
+    for root, part in roots:
+        for ids in root.iter(f"{DGM}relIds"):
+            if not _hidden(ids):
+                texts.extend(diagram_texts(ids, part))
         for math in root.iter(f"{M}oMath"):
             if not _hidden(math):
                 words = "".join(t.text or "" for t in math.iter(f"{M}t"))

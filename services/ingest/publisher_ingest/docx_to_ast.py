@@ -28,18 +28,21 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
 import docx
+from docx.enum.style import WD_STYLE_TYPE
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 from lxml import etree
 
 from .docx_rich import (
     W,
+    _toggle_on,
     MediaNotStorable,
     MediaSink,
     UnsupportedContent,
@@ -79,17 +82,43 @@ SUBSTANTIVE_PARAGRAPH_CHARS = 300
 # dedication, epigraphs) can legitimately contain long paragraphs -- a block
 # epigraph easily clears the prose threshold -- so length alone cannot find the
 # body; the search for the first substantive section starts here instead.
+#
+# Every title pattern here is matched against `_fold(title)`: upper-case with
+# accents stripped. Case-insensitive matching alone is not enough for Greek --
+# "Περιεχόμενα" carries a tonos, and ό does not fold to Ο -- so a real
+# manuscript's contents page, typed in ordinary case, was never found.
 TOC_PATTERNS = (
-    re.compile(r"ΠΕΡΙΕΧΟΜΕΝΑ", re.IGNORECASE),
-    re.compile(r"^\s*(TABLE\s+OF\s+)?CONTENTS\s*$", re.IGNORECASE),
+    re.compile(r"ΠΕΡΙΕΧΟΜΕΝΑ"),
+    re.compile(r"^(TABLE\s+OF\s+)?CONTENTS$"),
 )
 
-# Trailing material that is not part of the book's argument. Matched against a
-# heading title, case-insensitively.
+# Trailing material that is not part of the book's argument, by the back-matter
+# type it becomes.
 BACK_MATTER_PATTERNS = (
-    re.compile(r"ΟΠΙΣΘΟΦΥΛΛΟ|ΕΞΩ\s+ΜΕΡΟΣ", re.IGNORECASE),
-    re.compile(r"^\s*(BACK\s+COVER|COLOPHON)\s*$", re.IGNORECASE),
+    (re.compile(r"ΟΠΙΣΘΟΦΥΛΛΟ|ΕΞΩ\s+ΜΕΡΟΣ|^(BACK\s+COVER|COLOPHON)$"), "colophon"),
+    (re.compile(r"^(ΒΙΒΛΙΟΓΡΑΦΙΑ|BIBLIOGRAPHY|REFERENCES)$"), "bibliography"),
+    (re.compile(r"^(ΕΥΡΕΤΗΡΙΟ|INDEX)$"), "index"),
+    (re.compile(r"^(ΠΑΡΑΡΤΗΜΑ|APPENDIX)\b"), "appendix"),
 )
+
+# Section names a manuscript sets as a heading with no number and no heading
+# style -- in the first real book ingested, bold Normal-style lines. Bold alone
+# is far too common to mean "heading" (diagram labels, lead-ins); bold plus one
+# of these names is not.
+NAMED_SECTION = re.compile(
+    r"^(ΠΕΡΙΕΧΟΜΕΝΑ|(TABLE OF )?CONTENTS|ΠΡΟΛΟΓΟΣ|PROLOGUE|PREFACE|FOREWORD|ΕΙΣΑΓΩΓΗ"
+    r"|INTRODUCTION|ΕΠΙΛΟΓΟΣ|ΕΠΙΛΟΓΙΚΑ \w+|EPILOGUE|CONCLUSIONS?|ΣΥΜΠΕΡΑΣΜΑΤΑ|ΕΥΧΑΡΙΣΤΙΕΣ"
+    r"|ACKNOWLEDG?EMENTS|ΒΙΒΛΙΟΓΡΑΦΙΑ|BIBLIOGRAPHY|REFERENCES|ΕΥΡΕΤΗΡΙΟ|INDEX"
+    r"|(ΠΑΡΑΡΤΗΜΑ|APPENDIX)( \S+)?)$"
+)
+
+# A section number the author typed: "4." or "4.3.1". Academic manuscripts
+# number their headings by hand and set them in bold Normal style -- no heading
+# style, not upper-case, so neither older signal fires. Depth 1 is a chapter;
+# deeper is a heading inside it. Such titles run long ("4.1 Συσχετίζοντας ...",
+# 142 characters), hence a cap of their own.
+SECTION_NUMBER = re.compile(r"^(\d{1,2}(?:\.\d{1,2}){0,4})\.?\s+\S")
+MAX_NUMBERED_HEADING_CHARS = 160
 
 # Confidence that a section is the structural type ingest gave it, on the rules
 # engine's scale: below 0.8 escalates for review (publisher_structure.rules,
@@ -106,6 +135,8 @@ UNTITLED_SECTION = 0.5        # prose that no heading introduced, made a chapter
 BODY_SPLIT_BY_PROSE = 0.85    # front/body boundary found by the prose threshold
 BODY_SPLIT_FALLBACK = 0.5     # nothing cleared that bar; the first heading was taken
 BACK_MATTER_BY_PATTERN = 0.9  # the title matched an explicit back-matter string
+NUMBERED_BOLD_HEADING = 0.85  # a typed section number AND the whole line bold
+NAMED_BOLD_HEADING = 0.85     # a known section name ("Πρόλογος") AND the whole line bold
 
 
 @dataclass(frozen=True)
@@ -122,6 +153,42 @@ class Block:
     is_heading_candidate: bool
     nodes: tuple[dict, ...] = ()
     heading_confidence: float | None = None
+
+
+def _fold(text: str) -> str:
+    """Upper-case, accents stripped, trailing colon and space dropped."""
+    decomposed = unicodedata.normalize("NFD", text)
+    bare = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return " ".join(bare.upper().split()).rstrip(":").strip()
+
+
+def _all_bold(p) -> bool:
+    """Every run that carries text is bold (direct formatting, as manuscripts set it).
+
+    ponytail: bold inherited from a paragraph or character style is not seen;
+    read the style chain if a book sets its headings bold only through a style.
+    """
+    runs = [r for r in p.iter(f"{W}r") if any((t.text or "").strip() for t in r.iter(f"{W}t"))]
+    return bool(runs) and all(_toggle_on(r.find(f"{W}rPr/{W}b")) for r in runs)
+
+
+def _heading_depth(p, text: str) -> tuple[int | None, float | None]:
+    """(depth, confidence) of a bold heading, or (None, None).
+
+    Depth 1 opens a chapter; deeper is a heading inside one.
+    """
+    if not text or not _all_bold(p):
+        return None, None
+    number = SECTION_NUMBER.match(text)
+    if number and len(text) <= MAX_NUMBERED_HEADING_CHARS:
+        return number.group(1).count(".") + 1, NUMBERED_BOLD_HEADING
+    if len(text) > MAX_HEADING_CHARS:
+        return None, None
+    if NAMED_SECTION.match(_fold(text)):
+        return 1, NAMED_BOLD_HEADING
+    # Not Word list numbering: a bold list item is a list item. The real book's
+    # list-numbered "Πρόλογος" is found by name above.
+    return None, None
 
 
 def _is_upper(text: str) -> bool:
@@ -168,7 +235,13 @@ def read_blocks(
     """
     document = docx.Document(str(path))
     part = document.part
-    footnotes = read_footnotes(document)
+    # Style names resolved once. `Paragraph.style` re-derives the default style
+    # by scanning every style for each unstyled paragraph: 43 s of a 45 s ingest
+    # on a 3,900-paragraph book.
+    style_names = {s.style_id: s.name for s in document.styles}
+    default_style = document.styles.default(WD_STYLE_TYPE.PARAGRAPH)
+    default_name = default_style.name if default_style is not None else "Normal"
+    footnotes = read_footnotes(document, store_media)
     # Numbering runs across the whole document, so the counter is threaded
     # through every paragraph and cell rather than restarting per block.
     footnote_refs: list = []
@@ -189,7 +262,9 @@ def read_blocks(
             item._p, part, footnotes=footnotes,
             footnote_refs=footnote_refs, sink=store_media,
         )
-        style = item.style.name if item.style is not None else "Normal"
+        style_ref = item._p.find(f"{W}pPr/{W}pStyle")
+        style = style_names.get(style_ref.get(f"{W}val") if style_ref is not None else None,
+                                default_name)
         if not nodes:
             if _is_page_boundary(item._p):
                 blocks.append(Block("", style, False))
@@ -201,13 +276,22 @@ def read_blocks(
         # A Word TOC entry (`toc 1`...) is a chapter title, upper-case in an
         # unstyled book, and is never itself a heading.
         short = len(text) <= MAX_HEADING_CHARS
-        upper, styled = _is_upper(text), style.startswith("Heading")
+        upper = short and _is_upper(text)
+        styled = style.startswith("Heading")
         toc_entry = style.lower().startswith("toc ")
         is_heading = bool(text) and short and (upper or styled) and not toc_entry
         confidence = None
         if is_heading:
             confidence = (STYLED_UPPER_HEADING if upper and styled
                           else STYLED_HEADING if styled else UPPER_ONLY_HEADING)
+        elif not toc_entry:
+            depth, bold_confidence = _heading_depth(item._p, text)
+            if depth == 1:
+                is_heading, confidence = True, bold_confidence
+            elif depth and nodes[0].get("type") == "paragraph":
+                # A section inside a chapter: kept in place, as a heading node.
+                nodes = [{"type": "heading", "attrs": {"level": min(depth, 6)},
+                          "content": nodes[0]["content"]}, *nodes[1:]]
         blocks.append(Block(text, style, is_heading, tuple(nodes), confidence))
 
     return blocks, sources
@@ -228,8 +312,17 @@ def _node_text(node) -> str:
     return _node_text(node.get("content") or [])
 
 
-def _group_headings(blocks: list[Block]) -> list[tuple[str, list[dict], float | None]]:
-    """Split blocks into (title, body_paragraphs, title_confidence) sections.
+def _group_headings(
+    blocks: list[Block],
+) -> list[tuple[str, list[dict], float | None, list[dict]]]:
+    """Split blocks into (title, body_paragraphs, title_confidence, title_lines) sections.
+
+    `title_lines` are the title's own paragraph nodes, one per source line, with
+    their marks. A section that is NOT a chapter -- front matter, or anything in
+    back matter -- has no title field, so its title goes back into its content;
+    it goes back as these lines, not as the joined title string. Joined, a title
+    page's three display lines became one paragraph, and two adjacent
+    bibliography entries an author had styled `Heading 1` became one citation.
 
     Consecutive heading candidates collapse into a single title: a display
     title set over three lines ("Β΄ ΕΝΟΤΗΤΑ" / "ΜΗΧΑΝΙΚΗ ΨΥΧΗ" / "ΚΑΙ" /
@@ -239,26 +332,32 @@ def _group_headings(blocks: list[Block]) -> list[tuple[str, list[dict], float | 
     The leading run before the first heading is returned with an empty title
     and no confidence: no heading decision was made for it.
     """
-    sections: list[tuple[str, list[dict], float | None]] = []
+    sections: list[tuple[str, list[dict], float | None, list[dict]]] = []
     title_parts: list[Block] = []
     body: list[dict] = []
     current_title = ""
     current_confidence: float | None = None
+    current_lines: list[dict] = []
     seen_heading = False
 
+    def lines_of(parts: list[Block]) -> list[dict]:
+        return [n for b in parts for n in b.nodes if n.get("type") == "paragraph"]
+
     def take_title() -> None:
-        nonlocal current_title, current_confidence
+        nonlocal current_title, current_confidence, current_lines
         current_title = " ".join(b.text for b in title_parts)
         scores = [b.heading_confidence for b in title_parts if b.heading_confidence is not None]
         current_confidence = min(scores) if scores else None
+        current_lines = lines_of(title_parts)
         title_parts.clear()
 
     def close() -> None:
-        nonlocal current_title, current_confidence, body
+        nonlocal current_title, current_confidence, current_lines, body
         if current_title or body:
-            sections.append((current_title, body, current_confidence))
+            sections.append((current_title, body, current_confidence, current_lines))
         current_title = ""
         current_confidence = None
+        current_lines = []
         body = []
 
     for block in blocks:
@@ -274,6 +373,7 @@ def _group_headings(blocks: list[Block]) -> list[tuple[str, list[dict], float | 
                 close()
                 current_title = block.text
                 current_confidence = block.heading_confidence
+                current_lines = lines_of([block])
                 seen_heading = True
                 continue
             if not title_parts:
@@ -301,12 +401,14 @@ def _group_headings(blocks: list[Block]) -> list[tuple[str, list[dict], float | 
     return sections
 
 
-def _is_back_matter(title: str) -> bool:
-    return any(p.search(title) for p in BACK_MATTER_PATTERNS)
+def _back_matter_type(title: str) -> str | None:
+    folded = _fold(title)
+    return next((kind for pattern, kind in BACK_MATTER_PATTERNS if pattern.search(folded)), None)
 
 
 def _is_toc_marker(title: str) -> bool:
-    return any(p.search(title) for p in TOC_PATTERNS)
+    folded = _fold(title)
+    return any(p.search(folded) for p in TOC_PATTERNS)
 
 
 def _is_substantive(nodes: list[dict]) -> bool:
@@ -419,8 +521,11 @@ def _assert_no_text_lost(sources: list[str], ast: dict) -> None:
 
     walk(ast)
     haystack = "\n".join(emitted)
+    # Most sources are exactly one emitted block: a set lookup first, and the
+    # substring scan (quadratic over a whole book) only for the rest.
+    whole = {e.strip() for e in emitted}
 
-    missing = [s for s in sources if s not in haystack]
+    missing = [s for s in sources if s not in whole and s not in haystack]
     if missing:
         raise IngestError(
             f"{len(missing)} of {len(sources)} DOCX text blocks did not reach the "
@@ -482,16 +587,18 @@ def docx_to_ast(
     chapter_number = 0
     seen_toc = False
 
-    for index, (section_title, section_nodes, title_confidence) in enumerate(sections):
+    for index, (section_title, section_nodes, title_confidence, title_lines) in enumerate(sections):
         content = list(section_nodes)
+        # A non-chapter's title returns to its content line by line (see
+        # `_group_headings`); the joined string only if no line node survived.
+        title_paragraphs = title_lines or ([_paragraph(section_title)] if section_title else [])
 
         if index < body_start:
             # Front matter carries no `attrs.title` -- see module docstring --
             # so its heading survives as a leading paragraph instead.
             if _is_toc_marker(section_title):
                 seen_toc = True
-            if section_title:
-                content.insert(0, _paragraph(section_title))
+            content[0:0] = title_paragraphs
             front_matter.append(
                 {
                     "type": "toc" if seen_toc else FRONT_MATTER_TYPE,
@@ -501,14 +608,23 @@ def docx_to_ast(
             )
             continue
 
-        if _is_back_matter(section_title):
+        kind = _back_matter_type(section_title)
+        if kind:
             back_matter.append(
                 {
-                    "type": "colophon",
-                    "content": [_paragraph(section_title), *content],
+                    "type": kind,
+                    "content": [*title_paragraphs, *content],
                     "confidence": BACK_MATTER_BY_PATTERN,
                 }
             )
+            continue
+        if back_matter:
+            # Nothing after back matter is a chapter. A heading here is one the
+            # back matter itself contains -- in the first real book, bibliography
+            # entries its author had styled `Heading 1`/`Heading 3` -- so it stays
+            # inside that section as the paragraph it is, rather than opening a
+            # chapter titled with a citation.
+            back_matter[-1]["content"].extend([*title_paragraphs, *content])
             continue
 
         chapter_number += 1
