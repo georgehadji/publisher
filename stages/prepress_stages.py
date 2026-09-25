@@ -33,7 +33,7 @@ def _deterministic_timestamp(ctx: StageCtx) -> str:
 
 @stage(
     name="preflight",
-    version=8,   # v8: module-level bump (finish-gs v10). v7: consumes pagemap/1 and gates on composition (widows/orphans/
+    version=9,   # v9: a failing verdict carries its report (StageError.artifacts) and warnings print. v8: module-level bump (finish-gs v10). v7: consumes pagemap/1 and gates on composition (widows/orphans/
                  # runts) -- see preflight.check_composition. v6: module-level bump --
                  # same file as cover/finish-gs (U6); v5 fixed the page count
                  # for every Ghostscript-produced file (see preflight._PAGE_RE).
@@ -102,9 +102,16 @@ def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "",
         for c in report.checks if c.status == "warn"
     ]
     for c in report.checks:
-        if c.status == "fail":
-            print(f"    FAIL {c.code}: {c.humanMessage}")
-    
+        if c.status in ("fail", "warn"):
+            print(f"    {c.status.upper()} {c.code}: {c.humanMessage}")
+
+    report_ref = StageArtifactRef(
+        kind="report",   # must exactly equal the declared output key "report"
+        hash=str(ref.hash),
+        media_type="application/json",
+        size=len(report_bytes),
+    )
+
     if report.status == "fail":
         diagnostics = [
             Diagnostic(
@@ -119,15 +126,13 @@ def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "",
             kind=ErrorKind.POLICY_VIOLATION,
             message=f"Preflight failed: {report.summary['failed']} check(s) failed",
             diagnostics=diagnostics,
+            # The verdict is the point of this stage, pass or fail: the worker
+            # records it, so the API can show WHY a book was refused.
+            artifacts=[report_ref],
         )
-    
+
     return StageResult(
-        artifacts=[StageArtifactRef(
-            kind="report",   # must exactly equal the declared output key "report"
-            hash=str(ref.hash),
-            media_type="application/json",
-            size=len(report_bytes),
-        )],
+        artifacts=[report_ref],
         metrics={
             "preflight_passed": 1.0 if report.status == "pass" else 0.0,
             "checks_passed": report.summary["passed"],
@@ -140,7 +145,7 @@ def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "",
 
 @stage(
     name="cover",
-    version=5,   # v5: module-level bump (finish-gs v10). v4: module-level bump -- same file as preflight (U6). v3: page_count input schema "integer" -> "page-count/1"; v2 dropped the
+    version=6,   # v6: module-level bump (preflight v9). v5: module-level bump (finish-gs v10). v4: module-level bump -- same file as preflight (U6). v3: page_count input schema "integer" -> "page-count/1"; v2 dropped the
                  # cover_art root input (art generation is the separate cover-brief/cover-art/
                  # cover-judge fan-out in stages/cover_stages.py -- see COVER_DESIGN.md §0/§1).
     # "profile" -> "profile_name" to match this function's actual parameter name;
@@ -211,7 +216,7 @@ def cover_stage(ctx: StageCtx, page_count: int = 0, profile_name: str = "") -> S
 
 @stage(
     name="cover-preflight",
-    version=4,   # v4: module-level bump (finish-gs v10). v3: module-level bump -- same file as preflight (U6); v2 likewise
+    version=5,   # v5: module-level bump (preflight v9). v4: module-level bump (finish-gs v10). v3: module-level bump -- same file as preflight (U6); v2 likewise
     inputs={"pdf_path": "cover-raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
     # Distinct output kind from `preflight`'s -- both stages emit content that
@@ -277,7 +282,7 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
 
 @stage(
     name="finish-gs",
-    version=10,  # v10: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline; v9: module-level bump -- same file as preflight (U6); v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
+    version=11,  # v11: module-level bump (preflight v9); v10: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline; v9: module-level bump -- same file as preflight (U6); v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     # "pdf" -> "pdf_path", "profile" -> "profile_name": see the note on preflight
     # above for why the input dict's KEYS must exactly match this function's
@@ -289,10 +294,11 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
     toolchain=["ghostscript", "icc"],
     fixtures="fixtures/finish-gs/v1",
     memory_budget_mb=512,
-    # Ghostscript's press conversion of the first real book (805 pages) takes
-    # 430 s, then the text check reads both files and the proof is written: the
-    # default 300 s failed every book past ~600 pages. See ghostscript.GS_TIMEOUT_S.
-    timeout_s=2400,
+    # Ghostscript's press conversion of the first real book (819 pages) takes
+    # 430 s and its proof longer; the whole stage took 1884 s with another job
+    # sharing the CPU. The default 300 s failed every book past ~600 pages.
+    # See ghostscript.GS_TIMEOUT_S.
+    timeout_s=3600,
     queue="q.prepress",
     description="Apply CMYK conversion, bleed, marks, OutputIntent via Ghostscript",
 )

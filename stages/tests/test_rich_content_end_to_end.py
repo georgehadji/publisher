@@ -159,7 +159,7 @@ def test_extract_emits_a_real_img_and_a_real_table(tmp_path):
 
     assert '<img src="media/' in html
     assert "<table>" in html and "<tr>" in html
-    assert '<span class="footnote">' in html
+    assert '<span class="footnote" data-n="1">' in html
     assert "<em>emphatic</em>" in html
 
 

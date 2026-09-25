@@ -41,6 +41,26 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+_stop_requested = False
+
+
+def _handle_sigterm(signum, frame):
+    """U1: graceful shutdown. Finish the current build, do not claim another,
+    exit 0. Without this every `docker compose up -d --build` orphans an
+    in-flight build for a full lease period."""
+    global _stop_requested
+    _stop_requested = True
+
+
+# Installed before the imports below, not only in main(): `import stages` pulls
+# in weasyprint and the rest and takes seconds, and a SIGTERM in that window got
+# the default action -- the worker died with -15 instead of exiting 0. Found by
+# the Linux run of test_sigterm_stops_worker_cleanly, which Windows skips. Only
+# when run as a program: importing worker (tests, worker_temporal) must not take
+# over the importer's signal handling.
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
 import psycopg2
 import psycopg2.extras
 
@@ -510,6 +530,14 @@ def run_build(conn, build: dict) -> None:
             {"error_kind": getattr(error, "kind", ErrorKind.ENGINE_BUG).value,
              "error": getattr(error, "message", str(error))},
         )
+        # A gate that refuses still leaves its verdict: record it like any
+        # artifact, or GET /v1/builds/:id/preflight reports a rejected book's
+        # preflight as "pending" forever.
+        for art in getattr(error, "artifacts", None) or []:
+            _record_artifact(
+                conn, build_id, tenant_id, art.kind, decl.outputs.get(art.kind, ""),
+                art.hash, art.media_type, art.size,
+            )
 
     try:
         results = executor.execute(
@@ -570,17 +598,6 @@ def run_build(conn, build: dict) -> None:
         _log_info("build crashed -- recorded as failed, process exiting",
                   error_type=type(e).__name__, error=str(e))
         raise
-
-
-_stop_requested = False
-
-
-def _handle_sigterm(signum, frame):
-    """U1: graceful shutdown. Finish the current build, do not claim another,
-    exit 0. Without this every `docker compose up -d --build` orphans an
-    in-flight build for a full lease period."""
-    global _stop_requested
-    _stop_requested = True
 
 
 def main() -> int:

@@ -160,13 +160,135 @@ def _render_table(node: dict, notes: "EpubNotes | None" = None) -> str:
     return "\n".join(parts)
 
 
-def _footnote_span(node: dict) -> str:
-    # The leading space is the text-stream separator between a paragraph and a
-    # note rendered inside it: without it the integrity gate reads "text.Note"
-    # against the source's "text. Note". It travels with the note into the
-    # footnote area, where it collapses at line start -- the call number stays
-    # tight against the cited word.
-    return f'<span class="footnote"> {_render_inline(node.get("content", []))}</span>'
+# A footnote longer than this (characters of text) is set in pieces of at most
+# NOTE_PIECE_CHARS, split at a sentence end. weasyprint 62 cannot break a note
+# across pages, so a note nearly a page long filled the whole footnote area and
+# left the body one line: the first real book had four such pages, each an
+# orphan weasyprint cannot avoid (it will not leave a page with no body text).
+# Pieces it can carry over one at a time, and NOTE_AREA_MAX keeps a share of
+# every page for the body. A piece is far shorter than that share, so no piece
+# can run past the type area -- which a cap on unsplit notes did, measured.
+NOTE_SPLIT_CHARS = 1200
+NOTE_PIECE_CHARS = 900
+NOTE_AREA_MAX = "60%"
+
+# Where a long note may break, best first: after a sentence, after a clause.
+_NOTE_BREAKS = (". ", "; ", "\u00b7 ", "! ", "? ", ": ")
+
+
+def _inline_chars(content: list) -> int:
+    return sum(len(node.get("text", "")) for node in content)
+
+
+def _note_cut(text: str, room: int) -> int:
+    """Index to cut `text` at, within its first `room` characters: after the
+    last sentence or clause end, else the last space. 0 when nothing fits."""
+    if room <= 0:
+        # The piece is already full (a run with no break in it was kept whole).
+        # A negative room also made `room // 3` negative, so "not found" (-1)
+        # passed the test below and cut after the run's first character.
+        return 0
+    window = text[:room + 1]
+    for mark in _NOTE_BREAKS:
+        at = window.rfind(mark)
+        if at >= 0 and at > room // 3:
+            return at + len(mark)
+    at = window.rfind(" ")
+    return at + 1 if at > 0 else 0
+
+
+def _first_break(text: str) -> int:
+    """Index just past the earliest sentence end, clause end or space in `text`;
+    0 when it has none. For a piece already over its limit: end it as soon as
+    the text allows rather than never (a URL with no break in it overfills a
+    piece, and the next run then had no room at all)."""
+    cuts = [at + len(mark) for mark in _NOTE_BREAKS if (at := text.find(mark)) >= 0]
+    space = text.find(" ")
+    if space >= 0:
+        cuts.append(space + 1)
+    return min(cuts, default=0)
+
+
+def _split_note(content: list, limit: int) -> list[list]:
+    """A note's inline content cut into pieces of at most `limit` characters.
+
+    Cuts fall only inside text runs, which keep their marks, so an italic
+    quotation split across two pieces stays italic in both. The whitespace at
+    a cut is dropped: each piece renders with a leading space (see
+    `PrintNotes.render`), which is what separates it from the one before --
+    the text stream is unchanged.
+    """
+    pieces: list[list] = []
+    current: list = []
+    size = 0
+    for node in content:
+        if node.get("type") != "text":
+            current.append(node)
+            size += len(node.get("text", ""))
+            continue
+        text = node.get("text", "")
+        while size + len(text) > limit:
+            cut = _note_cut(text, limit - size)
+            if cut <= 0:
+                # No break inside this run in the room left. The boundary before
+                # it is a break only where the text already has whitespace there:
+                # a piece opens with a space, so cutting "(" | "http://..." (a
+                # link is a run of its own) put a space in the book that was not
+                # there, and the integrity gate refused the first real book.
+                ends_in_space = bool(current) and current[-1].get("text", "")[-1:].isspace()
+                if current and (ends_in_space or text[:1].isspace()):
+                    pieces.append(current)
+                    current, size = [], 0
+                    continue
+                # No clean boundary either: end the piece at the first break the
+                # run offers, even if that leaves it over the limit.
+                cut = _first_break(text)
+                if cut <= 0:
+                    break   # no break anywhere in the run: keep it whole
+            head, text = text[:cut].rstrip(), text[cut:].lstrip()
+            if head:
+                current.append({**node, "text": head})
+            if current:
+                pieces.append(current)
+            current, size = [], 0
+        if text:
+            current.append({**node, "text": text})
+            size += len(text)
+    if current:
+        pieces.append(current)
+    return pieces or [[]]
+
+
+class PrintNotes:
+    """Footnote numbering and markup for the print flavour of `_render_content`.
+
+    The call is our own element, `<span class="note-call" data-n>`, drawn by CSS
+    (`::after { content: attr(data-n) }`), and the note carries the same number
+    for its marker. weasyprint's generated call cannot be restyled per note --
+    it belongs to the paragraph -- so its counter could not skip the pieces of a
+    split note: each piece printed a call of its own ("5555"). CSS-generated
+    content is not in the HTML's text, so the integrity gate reads the same
+    stream as before. Numbered through the whole book, like the EPUB.
+    """
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def render(self, node: dict) -> str:
+        self.count += 1
+        n = self.count
+        content = node.get("content", [])
+        pieces = (_split_note(content, NOTE_PIECE_CHARS)
+                  if _inline_chars(content) > NOTE_SPLIT_CHARS else [content])
+        # The leading space in each span is the text-stream separator between a
+        # paragraph and its note, and between pieces: without it the integrity
+        # gate reads "text.Note" against the source's "text. Note". In the
+        # footnote area it collapses at line start.
+        first, *rest = pieces
+        return (f'<span class="note-call" data-n="{n}"></span>'
+                f'<span class="footnote" data-n="{n}"> {_render_inline(first)}</span>'
+                + "".join(f'<span class="footnote footnote-cont"> {_render_inline(piece)}</span>'
+                          for piece in rest))
 
 
 class EpubNotes:
@@ -199,13 +321,16 @@ class EpubNotes:
         return f'{opening}<p>{_render_inline(node.get("content", []))}</p></aside>'
 
 
-def _render_content(content: list, notes: EpubNotes | None = None) -> str:
+def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None) -> str:
     """Render AST block content to HTML.
 
     `notes` selects the EPUB flavour (linked footnotes, see `EpubNotes`); every
     other node renders identically in both, which is what lets the EPUB claim
-    the text the print gate verified.
+    the text the print gate verified. Print numbering (`PrintNotes`) runs across
+    whatever one call renders; `ast_to_html` passes one through the whole book.
     """
+    if notes is None:
+        notes = PrintNotes()
     parts = []
     absorbed = 0
     for index, node in enumerate(content):
@@ -231,8 +356,8 @@ def _render_content(content: list, notes: EpubNotes | None = None) -> str:
                 cited.append(following)
             absorbed = len(cited)
             text = _render_inline(node.get("content", []))
-            if notes is None:
-                spans = "".join(_footnote_span(note) for note in cited)
+            if isinstance(notes, PrintNotes):
+                spans = "".join(notes.render(note) for note in cited)
                 parts.append(f'<p class="{cls}">{text}{spans}</p>')
             else:
                 calls = [notes.call() for _ in cited]
@@ -301,8 +426,8 @@ def _render_content(content: list, notes: EpubNotes | None = None) -> str:
             # (CSS Generated Content for Paged Media) moves it into the page's
             # footnote area and numbers the call itself. Rendering it as a block
             # would print the note inline in the text where it happens to sit.
-            if notes is None:
-                parts.append(_footnote_span(node))
+            if isinstance(notes, PrintNotes):
+                parts.append(notes.render(node))
             else:
                 ref, opening = notes.call()
                 parts.append(f'<p class="noteref-only">{ref}</p>{notes.aside(opening, node)}')
@@ -339,6 +464,7 @@ def ast_to_html(ast: dict) -> str:
     object -- see the module docstring.
     """
     parts = []
+    notes = PrintNotes()
 
     # Title from metadata
     title = (ast.get("metadata") or {}).get("title", "Untitled")
@@ -347,7 +473,7 @@ def ast_to_html(ast: dict) -> str:
     front_matter = ast.get("frontMatter") or []
     for item in front_matter:
         parts.append(f'<div class="front-matter {item.get("type", "unknown")}">')
-        parts.append(_render_content(item.get("content", [])))
+        parts.append(_render_content(item.get("content", []), notes))
         parts.append("</div>")
 
     # Process body (chapters)
@@ -360,14 +486,14 @@ def ast_to_html(ast: dict) -> str:
 
         parts.append(f'<div class="{ctype}" id="{cid}" data-number="{attrs.get("number", "")}">')
         parts.append(f'<h1 class="chapter-title">{_escape_html(title_text)}</h1>')
-        parts.append(_render_content(chapter.get("content", [])))
+        parts.append(_render_content(chapter.get("content", []), notes))
         parts.append("</div>")
 
     # Process back matter
     back_matter = ast.get("backMatter") or []
     for item in back_matter:
         parts.append(f'<div class="back-matter {item.get("type", "unknown")}">')
-        parts.append(_render_content(item.get("content", [])))
+        parts.append(_render_content(item.get("content", []), notes))
         parts.append("</div>")
 
     return HTML_TEMPLATE.format(title=_escape_html(title), body="\n".join(parts))
@@ -791,11 +917,15 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     ])
 
     # Footnotes. `float: footnote` is CSS Generated Content for Paged Media: the
-    # renderer lifts the span out of the text flow into the page's footnote area
-    # and numbers both the call and the note, which is why the AST carries no
-    # marker text of its own.
+    # renderer lifts the span out of the text flow into the page's footnote area.
+    # The numbers are the renderer's own (`PrintNotes`: `data-n` on the call and
+    # on the note), not weasyprint's counter, so the pieces of a long note carry
+    # none. The area is `@footnote` -- this read `@footnotes`, which matches no
+    # area, so the rule above the notes and its spacing were never drawn -- and
+    # capped (NOTE_AREA_MAX) so notes cannot squeeze a page's text to one line.
     lines.extend([
-        "@page { @footnotes { border-top: 0.5pt solid currentColor; padding-top: 0.4em; } }",
+        "@page { @footnote { border-top: 0.5pt solid currentColor; padding-top: 0.4em; "
+        f"max-height: {NOTE_AREA_MAX}; }} }}",
         "span.footnote {",
         "  float: footnote;",
         "  footnote-style-position: outside;",
@@ -803,16 +933,18 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "  text-align: left;",
         "  text-indent: 0;",
         "}",
-        "::footnote-call {",
-        "  content: counter(footnote, decimal);",
+        "::footnote-call { content: ''; }",
+        "span.note-call::after {",
+        "  content: attr(data-n);",
         "  vertical-align: super;",
         "  font-size: 0.7em;",
         "  line-height: 0;",
         "}",
         "::footnote-marker {",
-        "  content: counter(footnote, decimal) '. ';",
+        "  content: attr(data-n) '. ';",
         "  font-weight: normal;",
         "}",
+        "span.footnote-cont::footnote-marker { content: ''; }",
         "",
     ])
 
@@ -851,4 +983,4 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["ast_to_html", "ast_to_epub_sections", "emit_css", "EpubNotes"]
+__all__ = ["ast_to_html", "ast_to_epub_sections", "emit_css", "EpubNotes", "PrintNotes"]

@@ -181,9 +181,13 @@ def write_to_cas(cas_root: Path, data: bytes) -> str:
     return sha
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def make_docx():
     """Build a minimal-but-valid DOCX in memory (a heading + one paragraph).
+
+    Session-scoped: it returns a stateless builder, and test_override_log.py's
+    module-scoped `manuscript` fixture asks for it -- a function-scoped
+    make_docx made every test there a ScopeMismatch error at setup.
 
     `docx_to_ast` needs at least one recognised heading and some prose; a
     Heading 1 style plus a plain paragraph clears both bars regardless of
@@ -401,9 +405,16 @@ def worker_module():
     os.environ["PUBLISHER_WORKER_MAX_ATTEMPTS"] = "3"
     os.environ.setdefault("DATABASE_URL", DATABASE_URL)
     sys.path.insert(0, str(REPO_ROOT))
+    import importlib
+
     import worker
 
-    return worker
+    # worker.py reads CAS_ROOT, the lease and the attempt limit at import. If
+    # another test module imported it first (tests/test_worker_override_log.py
+    # does, at collection), the cached module still points at ./.publisher/cas
+    # and every in-process build here failed "manuscript bytes ... are not in
+    # CAS". Reload so it reads the environment pinned above.
+    return importlib.reload(worker)
 
 
 def _headers(idem: str) -> dict:

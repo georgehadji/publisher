@@ -259,7 +259,8 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
 
 @stage(
     name="design-compile-typst",
-    version=5,   # v5: figures reach the renderer without alpha (stages/media.py opaque).
+    version=6,   # v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
+                 # v5: figures reach the renderer without alpha (stages/media.py opaque).
                  # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: none to its output; paginate-typst's rendering changed in this module.
                  # v2: module-level bump (U6) -- pagemap/1 is no longer terminal
@@ -439,11 +440,45 @@ def _mark(fields: str) -> str:
 # A filter rather than a regex over pandoc's output: a note body is arbitrary
 # markup, and matching balanced brackets in generated Typst is the kind of
 # parsing that works until a manuscript contains a bracket.
+#
+# The HTML also carries what only weasyprint needs (stages/rendering.py
+# `PrintNotes`): an empty `note-call` span holding the note's number, and a long
+# note set in pieces, the later ones classed `footnote-cont`. Typst numbers its
+# own notes and breaks a long one across pages by itself, so the call is dropped
+# and every piece is folded back into the note it continues -- one `#footnote`.
 FOOTNOTE_FILTER_LUA = """
-function Span(el)
-  if el.classes:includes("footnote") then
-    return pandoc.Note({pandoc.Plain(el.content)})
+local function span_of(el, class)
+  return el.t == "Span" and el.classes:includes(class)
+end
+
+function Inlines(inlines)
+  local out = pandoc.Inlines({})
+  for _, el in ipairs(inlines) do
+    if span_of(el, "note-call") then
+      -- Typst numbers #footnote itself
+    elseif span_of(el, "footnote-cont") then
+      local i = #out
+      while i > 0 and (out[i].t == "Space" or out[i].t == "SoftBreak") do i = i - 1 end
+      if i > 0 and out[i].t == "Note" then
+        while #out > i do out:remove(#out) end
+        local note = out[i]
+        local blocks = note.content
+        local last = blocks[#blocks]
+        last.content:insert(pandoc.Space())
+        last.content:extend(el.content)
+        blocks[#blocks] = last
+        note.content = blocks
+        out[i] = note
+      else
+        out:insert(pandoc.Note({pandoc.Plain(el.content)}))
+      end
+    elseif span_of(el, "footnote") then
+      out:insert(pandoc.Note({pandoc.Plain(el.content)}))
+    else
+      out:insert(el)
+    end
   end
+  return out
 end
 """
 
@@ -513,7 +548,8 @@ class _MeasuredPage:
 
 @stage(
     name="paginate-typst",
-    version=5,   # v5: figures reach the renderer without alpha (stages/media.py opaque).
+    version=6,   # v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
+                 # v5: figures reach the renderer without alpha (stages/media.py opaque).
                  # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: link hrefs are percent-encoded (rendering._safe_href).
                  # v2: module-level bump (U6) -- pagemap/1 is no longer terminal

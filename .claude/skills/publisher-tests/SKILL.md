@@ -58,7 +58,17 @@ explicitly so collection can never wander outside the repo.
   make it pass early.**
 - **The integration tests need Postgres.** `docker compose up -d` first; the host-side port
   is 55432, not 5432, precisely so a locally installed Postgres cannot silently steal the
-  connection.
+  connection. When something else already owns 55432 (the author's machine has a
+  foreign Postgres there -- leave it alone), start a throwaway one elsewhere and point
+  `DATABASE_URL` at it:
+  `docker run -d --name publisher-itest-pg -e POSTGRES_DB=publisher -e POSTGRES_USER=publisher -e POSTGRES_PASSWORD=publisher -e POSTGRES_HOST_AUTH_METHOD=trust -p 55433:5432 postgres:16-alpine`,
+  then `DATABASE_URL=postgresql://publisher:publisher@localhost:55433/publisher node packages/api/dist/migrate.js`
+  (after `npm run build` in `packages/api`), then run the suite with the same `DATABASE_URL`.
+  Stop the compose `worker` first if it is running: it would claim the tests' builds.
+- **`test_sigterm_stops_worker_cleanly` is POSIX-only** and skips on Windows. Run it on
+  Linux: the worker image plus `pip install --target /tmp/pt pytest requests`, the repo
+  mounted at `/src`, and `DATABASE_URL` pointed at `host.docker.internal`. Its first Linux
+  run found the worker dying with -15 on a SIGTERM during start-up.
 - **A gate that cannot fail is worse than no gate.** Several tests here exist because an
   earlier version of the same test passed while verifying nothing.
 

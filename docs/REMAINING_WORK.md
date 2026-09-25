@@ -348,11 +348,36 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
 
 **Still:**
 - **This book needs its EMF figure ("Εικόνα 6") re-saved as PNG** before it can build.
-- **Preflight verdict (2026-09-25, in the worker image): FAIL, 1 check.** 9 passed, 1
-  warning. Composition: 4 orphans, a paragraph's first line alone at the foot of pages
-  208, 253, 284 and 660 (`composition.maxOrphanPages` is 0). This is the gate working. The
-  CSS already asks for `orphans: 2`, so these need a look at why weasyprint places them.
-  Everything before preflight now passes on the real book:
+- **Preflight verdict (2026-09-25, in the worker image): PASS, with 2 warnings.** 9
+  checks pass and none fail; the book is packaged at 819 pages.
+  - Warning 1: 255 pages end a paragraph with a runt, a short last line. Runts warn, they
+    don't gate.
+  - Warning 2: image resolution is unmeasured (no PDF image decoder).
+
+  The first verdict, earlier the same day, was FAIL on 4 orphans (pages 208, 253, 284,
+  660). They were real, and not a CSS problem:
+  - **The cause.** The notes are long Greek quotations, up to 71 lines. weasyprint 62 can't
+    break a note across pages, so a note that nearly filled a page left the body one line.
+    weasyprint won't leave a page with no body text, so it broke `orphans: 2` there.
+  - **Splitting long notes.** A note over `NOTE_SPLIT_CHARS` is now set in sentence-end
+    pieces (`stages/rendering.py` `PrintNotes`). weasyprint can carry the pieces over, and
+    the footnote area is capped at 60% (`NOTE_AREA_MAX`).
+  - **Numbering.** The renderer numbers notes itself: CSS draws `attr(data-n)` on an empty
+    `note-call` span. weasyprint's own call belongs to the paragraph and printed a number
+    for every piece ("5555").
+  - **What was measured before choosing this.**
+    - A cap without splitting makes page-long notes run past the type area, which is real
+      loss; measured at 117–462 lines on a synthetic book.
+    - Splitting without the cap still leaves pages with one body line.
+  - **The integrity gate caught two bugs in the splitter on the real book.**
+    - A cut between a "(" and a link inserted a space.
+    - Negative room let a "not found" pass the break test.
+  - **A dead CSS rule.** The rule above the notes was never drawn: the CSS said
+    `@footnotes`, which matches nothing. It now says `@footnote`.
+  - **Typst.** Its Lua filter folds the pieces back into one `#footnote`, since Typst
+    breaks notes itself.
+
+  Everything before preflight also had to be fixed to get this far:
   - **Memory budgets were too small (only Linux enforces them).** `ingest` needs 135 MB
     against a 128 MB budget; `paginate` needs 328 MB against 256. Both failed the book in the
     worker image, and nothing noticed on Windows. Now 512 and 1024 MB, measured (`VmPeak`
@@ -362,20 +387,33 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
     cannot carry transparency, so Ghostscript rendered all 805 pages as 300 dpi images. There
     was no text left, 1.6 MB and 6 s a page, and it still passed every check as "PDF/X-1a".
     - Print figures are now composited onto white (`stages/media.py` `opaque`).
-    - `to_pdfx` now refuses a press file with under 98% of its input's text, so anything
-      else that rasterizes pages fails loudly.
+    - `to_pdfx` now refuses a press file with under half its input's text-drawing
+      operators (`TEXT_KEPT_MIN`), so anything else that rasterizes pages fails loudly. On
+      the real book that's 33,724 of 38,271 kept (0.88); a rasterized page keeps about 3%.
+      Counted in Python in about 5 s. The first version extracted the text with Ghostscript's
+      `txtwrite`, which took 558 s per file.
   - **Hyperlinks voided PDF/X.** Link annotations aren't allowed on a PDF/X page, and the
     book's 200-odd links made Ghostscript fall back to plain PDF. The existing downgrade
     check caught it. The press conversion now drops annotations (`-dPreserveAnnots=false`);
     the proof keeps them.
   - **Deadlines were too short.** The press conversion alone takes 430 s; the old 300 s
-    killed it. Ghostscript now gets 1500 s (`GS_TIMEOUT_S`) and the finish stages 2400 s.
-    The whole of `finish-gs` took 1293 s. The two text extractions of the new check are a
-    real share of that and could be sampled instead.
+    killed it. Ghostscript now gets 2400 s (`GS_TIMEOUT_S`) and the finish stages 3600 s.
+    The passing runs' `finish-gs` took 1884 s and 2313 s, each while other work shared the
+    CPU (the second alongside the full test suite).
+    The whole of `finish-gs` took 1293 s, most of it the two text extractions, since replaced.
+    The proof (`/ebook`) is the slowest remaining step at about 2.5 s a page. Linearization
+    isn't the cause: it makes no measurable difference. It isn't run beside the press
+    conversion either: the POSIX sandbox sets its limits in `preexec_fn`, which Python
+    documents as unsafe from threads.
   - **The worker image would have held the manuscript.** `COPY corpus/` copied whatever sat
     in `corpus/`; `.dockerignore` now excludes `corpus/*.docx` and `*.doc`, like `.gitignore`.
-  - Still: the preflight report isn't stored when the gate fails, and the stage prints the
-    failure but not the warning's text.
+  - **A refused book's verdict was invisible.** The report was written to CAS, but only a
+    stage that succeeds had its artifacts recorded, so `GET /v1/builds/:id/preflight`
+    answered "pending" forever for a book preflight had refused. `StageError` now carries
+    `artifacts`, `preflight` puts its report there, and `worker.py`'s `_on_stage_error`
+    records it. Warnings print as well as failures. The Temporal path still loses
+    `StageError` details at the activity boundary, a gap already documented for its error
+    kinds.
 - **Fonts — done (the house faces chosen 2026-09-24: GFS Didot, PN Katsoulidis, Minion
   Pro).** Before this, no book was set in its designed face. Every template asked for EB
   Garamond, it was installed nowhere, and the renderer silently substituted.
@@ -539,11 +577,70 @@ into impossible states.
 
 ---
 
+## Build and test status (2026-09-25): every CI job, run locally
+
+Every job in `.github/workflows/ci.yml` was run on the author's machine; each passes.
+
+- **python.**
+  - The default suite: 661 passed, 0 failed, 12 skipped, now against a real Postgres. The
+    30 database tests had errored for as long as a foreign Postgres held port 55432. They
+    run on a throwaway one on 55433 (the **publisher-tests** skill has the recipe).
+  - Every skip was run where it can run:
+    - The 10 POSIX-only tests (rlimits, the sandbox, process groups, SIGTERM): 51 tests
+      across their files pass in the worker image on Linux.
+    - The EPUBCheck test passes with `PUBLISHER_EPUBCHECK_JAR` set.
+    - The `pip-audit` meta-gate passes on Linux. That test now reads CI's `--ignore-vuln`
+      list from `ci.yml`, so it runs the command CI runs.
+  - The `external` marker passes, 1 test. `requires_temporal` passes, 2 tests.
+  - The first real book, end to end in the worker image on this code: preflight passes
+    with 2 warnings, a 7.9 MB PDF/X-1a, and the book is packaged.
+- **node.** `packages/api` passes the type-check and vitest, 126 tests.
+- **web.** `next build` type-checks and compiles both routes.
+- **rust.** `cargo test` passes and `cargo clippy -D warnings` reports nothing.
+- **contracts.**
+  - Codegen passes: 257 types import cleanly.
+  - DAG integrity passes.
+  - The contract tests pass, 38.
+  - All six lints pass: stage versions, service deps, import boundaries, tenant scoping,
+    docs claims, schemas.
+- **supply-chain.**
+  - `npm audit --audit-level=high` passes for both packages.
+  - `pip-audit` passes, with three documented acceptances.
+
+Bugs these runs found, all fixed:
+
+- **Integration fixtures never worked together.**
+  - `test_worker_override_log.py` imports `worker` at collection. That froze its
+    `CAS_ROOT` before the integration fixture pinned it, so every in-process build failed
+    "not in CAS". The fixture now reloads the module.
+  - A module-scoped fixture asked for the function-scoped `make_docx`, which made all six
+    override-log tests setup errors. `make_docx` is now session-scoped.
+- **The worker died on a SIGTERM during start-up.** It exited -15 instead of 0, because
+  the handler was installed only after `import stages` (seconds of weasyprint loading).
+  It's now installed first, when run as a program.
+- **`packages/api` had two high-severity advisories:** `fast-uri` and `nanoid`. Fixed with
+  `npm audit fix`, within the declared ranges. One moderate `@vitest/mocker` advisory
+  needs a breaking upgrade and stays.
+- **weasyprint 62.3 has three advisories** (SSRF through redirects, CSS injection through
+  presentational hints, and a fetcher bypass through `write_pdf` arguments).
+  - None is reachable from `paginate`, the one production call. `paginate` now passes
+    `local_only_fetcher`, so weasyprint loads only the render's own figures and pinned
+    fonts, never a network URL. It enables no presentational hints and passes no
+    `xmp_metadata` or `stylesheets`.
+  - `stages/tests/test_render_fetches.py` pins all of that, and `ci.yml`'s pip-audit
+    accepts exactly those three IDs, with the reasons beside them.
+  - **Still: upgrade to weasyprint ≥ 70.** It needs pydyf ≥ 0.11, and a check of the
+    private box tree (`_page_box`) the pagemap and the tests read. One advisory has no
+    fixed release at all.
+
 ## If you do three things
 
-1. **§3.1 — the real book's 4 orphans.** It now runs end to end in the worker image. It
-   ingests, renders (805 pages), makes a text-carrying PDF/X-1a and an EPUBCheck-clean
-   EPUB, and preflight fails it on 4 orphan lines alone, despite `orphans: 2` in the CSS.
+1. **§3.1 — done for the first real book: it passes preflight.** It runs end to end in the
+   worker image and is packaged. Its 819 pages become a text-carrying PDF/X-1a, and the
+   EPUB is EPUBCheck-clean. What's left:
+   - 255 runt warnings.
+   - The proof takes about 2.5 s a page.
+   - The author must re-save one EMF figure as PNG.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
 3. **§1.1 — authenticate reviewers.** The loop closes: a reviewer can open

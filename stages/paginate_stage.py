@@ -335,13 +335,52 @@ def requested_font_families(css: str) -> list[str]:
     return list(dict.fromkeys(v for v in singles if v and v != "inherit"))
 
 
+_FONT_FACE_URL = re.compile(r"url\((['\"]?)(file:[^'\")]+)\1\)")
+
+
+def local_only_fetcher(work: Path, font_face_css: str):
+    """A weasyprint `url_fetcher` that loads the render's own files and nothing else:
+    anything under `work` (the figures `materialize_media` wrote) and exactly the
+    font files `@font-face` pinned. `data:` URIs pass; every other URL -- http(s),
+    a file elsewhere on the worker -- is refused.
+
+    The HTML is ours (every tenant string is escaped), so no tenant URL reaches
+    the renderer today. This makes that a property of the render rather than of
+    every future edit to the renderer: weasyprint 62.3's default fetcher follows
+    HTTP redirects unchecked (CVE-2025-68616), and the worker's network is not
+    the place to find out. It is also what lets CI's pip-audit accept that
+    advisory for this pin -- see .github/workflows/ci.yml.
+    """
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
+
+    import weasyprint
+
+    root = work.resolve()
+    fonts = {Path(url2pathname(urlparse(url).path)).resolve()
+             for _, url in _FONT_FACE_URL.findall(font_face_css)}
+
+    def fetch(url: str, *args, **kwargs):
+        if url.startswith("data:"):
+            return weasyprint.default_url_fetcher(url, *args, **kwargs)
+        if url.startswith("file:"):
+            path = Path(url2pathname(urlparse(url).path)).resolve()
+            if path in fonts or path.is_relative_to(root):
+                return weasyprint.default_url_fetcher(url, *args, **kwargs)
+        raise ValueError(f"paginate loads only its own media and fonts; refused {url[:120]!r}")
+
+    return fetch
+
+
 def _family_name(font) -> str:
     family = getattr(font, "family", "") or ""
     return family.decode("utf-8", "replace") if isinstance(family, bytes) else str(family)
 
 @stage(
     name="paginate",
-    version=11,  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+    version=13,  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+                 # v13: weasyprint loads only the render's own media and fonts (local_only_fetcher).
+                 # v12: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped.
                  # v10: link hrefs are percent-encoded (rendering._safe_href).
                  # v11: memory budget 256 -> 1024 MB (see memory_budget_mb below); figures
                  # reach the renderer without alpha (stages/media.py opaque).
@@ -448,7 +487,8 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
             # base_url is what makes the relative `media/...` srcs resolve; a
             # string-only HTML() has no base and every figure silently renders
             # as an empty box.
-            document = weasyprint.HTML(string=full_html, base_url=str(work)).render()
+            document = weasyprint.HTML(string=full_html, base_url=str(work),
+                                       url_fetcher=local_only_fetcher(work, faces)).render()
             # full_fonts: PN Katsoulidis forbids subsetting (fsType 0x0100), and a
             # whole face costs a few hundred KB in an 800-page book.
             pdf_bytes = document.write_pdf(full_fonts=True)

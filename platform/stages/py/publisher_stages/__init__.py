@@ -52,6 +52,11 @@ class StageError(Exception):
     diagnostics: list[Diagnostic] = field(default_factory=list)
     retry_count: int = 0
     retryable: bool = False
+    # Evidence a gate wrote to CAS before refusing -- preflight's report above
+    # all. The build fails, but the verdict must still be readable: without
+    # this, a book preflight rejected showed its preflight as "pending" in the
+    # API forever, because only a stage that SUCCEEDS had its artifacts recorded.
+    artifacts: list["ArtifactRef"] = field(default_factory=list)
 
     def __post_init__(self):
         # E2.2: TIMEOUT joins the retryable set deliberately (often transient

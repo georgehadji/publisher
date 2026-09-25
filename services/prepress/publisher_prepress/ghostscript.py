@@ -21,8 +21,10 @@ Never one compromise file serving both.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
+import zlib
 from pathlib import Path
 from typing import Optional
 
@@ -159,7 +161,9 @@ def find_cmyk_icc() -> Optional[Path]:
 # first real book (805 pages, CID fonts, 477 notes) takes 430 s to convert to
 # PDF/X-1a in the worker image -- at ~0.45 s a page plus ~30 s of font setup,
 # single-threaded. The old 300 s made every book past ~600 pages unconvertible.
-GS_TIMEOUT_S = 1500
+# The proof (`/ebook`) is slower still: 1258 s for the same book while another
+# job shared the CPU, which a worker running builds side by side will see.
+GS_TIMEOUT_S = 2400
 
 
 def _run(cmd: list[str], timeout: int = GS_TIMEOUT_S, *,
@@ -256,24 +260,37 @@ def _assert_pdfx(path: Path) -> None:
         )
 
 
-# Share of the input's text the press file must still carry. Not 1.0: glyphs
-# Ghostscript re-encodes (ligatures, combining accents) can extract a character
-# shorter or longer. A rasterized page carries none.
-TEXT_KEPT_MIN = 0.98
+# Share of the input's text-drawing operators the press file must keep.
+# Measured on the first real book: weasyprint's 805 pages hold 38,271 Tj/TJ
+# operators and Ghostscript's PDF/X-1a of them 33,724 (0.88 -- it merges some
+# runs). A page rendered as a picture keeps about 3% (4 of 124 on a sample).
+TEXT_KEPT_MIN = 0.5
+
+_TEXT_SHOW = re.compile(rb"(?<![A-Za-z])T[jJ](?![A-Za-z])")
+_STREAM = re.compile(rb"stream\r?\n")
 
 
-def _text_chars(pdf: Path, gs: str, work_dir: Path, sandbox: Optional[SandboxPort]) -> int:
-    """Non-whitespace characters Ghostscript extracts from a PDF."""
-    out = work_dir / f"{pdf.stem}.text.txt"
-    _run([gs, "-dBATCH", "-dNOPAUSE", "-dQUIET", "-sDEVICE=txtwrite",
-          f"-sOutputFile={out}", str(pdf)], sandbox=sandbox, work_dir=work_dir)
-    text = out.read_text(encoding="utf-8", errors="replace") if out.exists() else ""
-    out.unlink(missing_ok=True)
-    return sum(1 for ch in text if not ch.isspace())
+def _text_ops(pdf: Path) -> int:
+    """Text-drawing operators (Tj, TJ) in every Flate stream of a PDF.
+
+    Counted in Python rather than by extracting the text with Ghostscript's
+    txtwrite, which is what this first did: 558 s for the first real book's
+    805 pages, run twice, more than the press conversion itself. This takes
+    seconds and answers the one question asked -- are the pages still text.
+    """
+    data = pdf.read_bytes()
+    count = 0
+    for match in _STREAM.finditer(data):
+        end = data.find(b"endstream", match.end())
+        try:
+            body = zlib.decompressobj().decompress(data[match.end():end])
+        except zlib.error:
+            continue   # not Flate (an image's DCT data, say): holds no text operators
+        count += len(_TEXT_SHOW.findall(body))
+    return count
 
 
-def _assert_text_kept(input_pdf: Path, output_pdf: Path, gs: str, work_dir: Path,
-                      sandbox: Optional[SandboxPort]) -> None:
+def _assert_text_kept(input_pdf: Path, output_pdf: Path) -> None:
     """
     Post-condition: the press file still carries the book's text.
 
@@ -286,13 +303,13 @@ def _assert_text_kept(input_pdf: Path, output_pdf: Path, gs: str, work_dir: Path
     side now removes figure alpha (stages/media.py `opaque`); this refuses the
     result whenever anything else causes the same thing.
     """
-    before = _text_chars(input_pdf, gs, work_dir, sandbox)
+    before = _text_ops(input_pdf)
     if before == 0:
         return
-    after = _text_chars(output_pdf, gs, work_dir, sandbox)
+    after = _text_ops(output_pdf)
     if after < before * TEXT_KEPT_MIN:
         raise GhostscriptError(
-            f"the press PDF lost its text: {after} of {before} characters survived "
+            f"the press PDF lost its text: {after} of {before} text-drawing operators survived "
             "conversion. Pages were rendered as pictures, most likely because they "
             "use transparency, which PDF/X-1a cannot carry; refusing to certify an "
             "image-only book as press-ready."
@@ -406,7 +423,7 @@ def to_pdfx(
     _assert_no_pdfx_downgrade(gs_output)
     _assert_pdf(output_pdf, "press")
     _assert_pdfx(output_pdf)
-    _assert_text_kept(input_pdf, output_pdf, gs, work_dir, sandbox)
+    _assert_text_kept(input_pdf, output_pdf)
 
 
 def to_proof(

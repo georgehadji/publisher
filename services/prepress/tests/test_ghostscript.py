@@ -217,6 +217,7 @@ def test_title_parens_cannot_break_the_postscript_prologue(tmp_path: Path, monke
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    (tmp_path / "in.pdf").write_bytes(PLAIN_PDF_BYTES)   # no text: the text check has nothing to keep
 
     to_pdfx(tmp_path / "in.pdf", out, tmp_path, title="Ends) with (parens")
 
@@ -248,25 +249,31 @@ def test_bleed_offset_matches_the_trim_offset():
     assert set(bleed.group(1).split()) != {"0"}
 
 
-def _fake_gs(tmp_path: Path, monkeypatch, *, input_text: str, press_text: str,
+def _pdf_with_text_ops(count: int, head: bytes = b"%PDF-1.7\n") -> bytes:
+    """A PDF-shaped file whose one Flate stream draws `count` runs of text."""
+    import zlib
+
+    body = zlib.compress(b"BT /F1 9 Tf (w) Tj ET\n" * count)
+    return (head + b"1 0 obj <</Length %d /Filter /FlateDecode>>\nstream\n" % len(body)
+            + body + b"\nendstream\nendobj\n%%EOF")
+
+
+def _fake_gs(tmp_path: Path, monkeypatch, *, input_ops: int, press_ops: int,
              calls: list | None = None) -> Path:
-    """A gs that writes a valid PDF/X file, and whose text extraction reads
-    `input_text` from the input and `press_text` from the press file."""
+    """A gs whose press file is valid PDF/X and draws `press_ops` text runs,
+    converting an input that draws `input_ops`."""
     icc = tmp_path / "cmyk.icc"
     icc.write_bytes(b"icc")
     monkeypatch.setattr("publisher_prepress.ghostscript.find_binary", lambda: "/usr/bin/gs")
     monkeypatch.setattr("publisher_prepress.ghostscript.find_cmyk_icc", lambda: icc)
+    (tmp_path / "in.pdf").write_bytes(_pdf_with_text_ops(input_ops))
     out = tmp_path / "out.pdf"
 
     def fake_run(cmd, **kwargs):
         if calls is not None:
             calls.append(cmd)
         target = next(a.split("=", 1)[1] for a in cmd if a.startswith("-sOutputFile="))
-        if "-sDEVICE=txtwrite" in cmd:
-            Path(target).write_text(press_text if cmd[-1] == str(out) else input_text,
-                                    encoding="utf-8")
-        else:
-            Path(target).write_bytes(PDFX_BYTES)
+        Path(target).write_bytes(_pdf_with_text_ops(press_ops, head=PDFX_BYTES[:-5]))
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -277,14 +284,13 @@ def test_a_press_file_that_lost_its_text_is_refused(tmp_path: Path, monkeypatch)
     """What PDF/X-1a did to the first real book: one figure's soft mask made
     Ghostscript render every page as a picture. Exit 0, a valid OutputIntent,
     and no text -- the check has to look at the text itself."""
-    out = _fake_gs(tmp_path, monkeypatch, input_text="Σωκράτης ὁ φιλόσοφος " * 50, press_text="")
+    out = _fake_gs(tmp_path, monkeypatch, input_ops=124, press_ops=4)   # the real sample's figures
     with pytest.raises(GhostscriptError, match="lost its text"):
         to_pdfx(tmp_path / "in.pdf", out, tmp_path)
 
 
 def test_a_press_file_that_kept_its_text_passes(tmp_path: Path, monkeypatch):
-    text = "Σωκράτης ὁ φιλόσοφος " * 50
-    out = _fake_gs(tmp_path, monkeypatch, input_text=text, press_text=text)
+    out = _fake_gs(tmp_path, monkeypatch, input_ops=38271, press_ops=33724)   # the real book
     to_pdfx(tmp_path / "in.pdf", out, tmp_path)
 
 
@@ -293,7 +299,7 @@ def test_the_press_file_drops_link_annotations(tmp_path: Path, monkeypatch):
     """PDF/X forbids annotations on a page; the first real book's hyperlinks made
     Ghostscript abandon PDF/X for the whole file. The press conversion drops them."""
     calls: list[list[str]] = []
-    out = _fake_gs(tmp_path, monkeypatch, input_text="", press_text="", calls=calls)
+    out = _fake_gs(tmp_path, monkeypatch, input_ops=0, press_ops=0, calls=calls)
     to_pdfx(tmp_path / "in.pdf", out, tmp_path)
     press = next(cmd for cmd in calls if "-dPDFX" in cmd)
     assert "-dPreserveAnnots=false" in press

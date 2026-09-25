@@ -42,8 +42,9 @@ IDML_SCHEMA = "idml/1"
 
 @stage(
     name="idml",
-    version=3,   # v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+    version=4,   # v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
                  # v3: link hrefs are percent-encoded (rendering._safe_href).
+                 # v4: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped.
     inputs={
         "doc_path": "doc-effective/1",
         "pagemap_path": "pagemap/1",

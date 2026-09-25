@@ -21,6 +21,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -172,6 +173,17 @@ def _worktree_pythonpath(root: Path) -> dict[str, str]:
     return {"PYTHONPATH": os.pathsep.join(paths)}
 
 
+def _ci_pip_audit_ignores() -> list[str]:
+    """The `--ignore-vuln` flags CI's pip-audit step passes, read from ci.yml.
+
+    The gate below must run the command CI runs. Without these, its clean
+    baseline fails on the accepted weasyprint advisories (see ci.yml and
+    stages/tests/test_render_fetches.py) and the meta-test proves nothing --
+    and a second copy of the list here would drift from the one CI uses."""
+    ids = re.findall(r"--ignore-vuln\s+(\S+)", CI_YML.read_text(encoding="utf-8"))
+    return [flag for vuln in ids for flag in ("--ignore-vuln", vuln)]
+
+
 def add_known_vulnerable_pinned_dependency(root: Path) -> None:
     """A real PyPI release with public CVEs (urllib3 1.24.1 -- e.g.
     CVE-2019-11324), added with ITS OWN correct hashes so the gate's failure
@@ -275,7 +287,7 @@ GATES: list[Gate] = [
     ),
     Gate(
         id="pip-audit",
-        cmd=["pip-audit", "-r", "requirements.lock", "--require-hashes"],
+        cmd=["pip-audit", "-r", "requirements.lock", "--require-hashes", *_ci_pip_audit_ignores()],
         cwd=".",
         mutate=add_known_vulnerable_pinned_dependency,
         skip_if=_pip_audit_unusable_reason,

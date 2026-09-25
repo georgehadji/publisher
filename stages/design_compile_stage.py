@@ -47,7 +47,7 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # silently ignored, so no chapter or front-matter section started on a recto.
     # v5: the built-in spec is set in GFS Didot. EB Garamond was never installed
     # anywhere, so every v4 render was in a substitute face.
-    version=5,
+    version=6,   # v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped.
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
     # `profile_name` is optional so that a build which omits it still renders --
