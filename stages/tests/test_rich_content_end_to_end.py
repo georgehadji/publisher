@@ -173,7 +173,10 @@ def test_media_materializes_out_of_cas(tmp_path):
     written = materialize_media(html, ctx.cas_root, out)
 
     assert len(written) == 1
-    assert written[0].read_bytes() == PNG_1PX
+    # PNG_1PX has an alpha channel, which print renderers get composited onto
+    # white (stages/media.py `opaque`, test_print_media.py).
+    from stages.media import opaque
+    assert written[0].read_bytes() == opaque(PNG_1PX)
     assert written[0].parent == out / "media"
 
 

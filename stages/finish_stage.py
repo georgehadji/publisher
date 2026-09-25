@@ -45,7 +45,7 @@ from profiles import load_profile
     # collapsed TrimBox onto MediaBox and produced a press file measuring 0.00mm
     # of bleed no matter what the renderer had laid down.
     # v7: proof/report declared terminal outputs (U6).
-    version=7,
+    version=8,   # v8: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline.
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     inputs={"pdf_path": "raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
@@ -55,6 +55,10 @@ from profiles import load_profile
     toolchain=["ghostscript"],
     fixtures="fixtures/finish/v1",
     memory_budget_mb=256,
+    # Ghostscript's press conversion of the first real book (805 pages) takes
+    # 430 s, then the text check reads both files and the proof is written: the
+    # default 300 s failed every book past ~600 pages. See ghostscript.GS_TIMEOUT_S.
+    timeout_s=2400,
     queue="q.prepress",
     description="Apply CMYK, bleed, marks, OutputIntent; emit press + proof PDFs",
 )

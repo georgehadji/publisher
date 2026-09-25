@@ -155,7 +155,14 @@ def find_cmyk_icc() -> Optional[Path]:
     return None
 
 
-def _run(cmd: list[str], timeout: int = 300, *,
+# Wall-clock and CPU ceiling for one Ghostscript run. Measured, not guessed: the
+# first real book (805 pages, CID fonts, 477 notes) takes 430 s to convert to
+# PDF/X-1a in the worker image -- at ~0.45 s a page plus ~30 s of font setup,
+# single-threaded. The old 300 s made every book past ~600 pages unconvertible.
+GS_TIMEOUT_S = 1500
+
+
+def _run(cmd: list[str], timeout: int = GS_TIMEOUT_S, *,
          sandbox: Optional[SandboxPort] = None,
          work_dir: Optional[Path] = None) -> str:
     """Run gs and return its combined output.
@@ -249,6 +256,49 @@ def _assert_pdfx(path: Path) -> None:
         )
 
 
+# Share of the input's text the press file must still carry. Not 1.0: glyphs
+# Ghostscript re-encodes (ligatures, combining accents) can extract a character
+# shorter or longer. A rasterized page carries none.
+TEXT_KEPT_MIN = 0.98
+
+
+def _text_chars(pdf: Path, gs: str, work_dir: Path, sandbox: Optional[SandboxPort]) -> int:
+    """Non-whitespace characters Ghostscript extracts from a PDF."""
+    out = work_dir / f"{pdf.stem}.text.txt"
+    _run([gs, "-dBATCH", "-dNOPAUSE", "-dQUIET", "-sDEVICE=txtwrite",
+          f"-sOutputFile={out}", str(pdf)], sandbox=sandbox, work_dir=work_dir)
+    text = out.read_text(encoding="utf-8", errors="replace") if out.exists() else ""
+    out.unlink(missing_ok=True)
+    return sum(1 for ch in text if not ch.isspace())
+
+
+def _assert_text_kept(input_pdf: Path, output_pdf: Path, gs: str, work_dir: Path,
+                      sandbox: Optional[SandboxPort]) -> None:
+    """
+    Post-condition: the press file still carries the book's text.
+
+    PDF/X-1a is PDF 1.3, which has no transparency, and pdfwrite's answer to
+    transparency it cannot keep is to render the whole page as a picture. It
+    reports nothing and exits 0, and the output passes every other check here.
+    The first real book went through exactly that: one figure's soft mask, which
+    weasyprint puts in the resources every page shares, turned all 805 pages
+    into 300 dpi images -- 1.6 MB and 6 s a page, no text at all. The render
+    side now removes figure alpha (stages/media.py `opaque`); this refuses the
+    result whenever anything else causes the same thing.
+    """
+    before = _text_chars(input_pdf, gs, work_dir, sandbox)
+    if before == 0:
+        return
+    after = _text_chars(output_pdf, gs, work_dir, sandbox)
+    if after < before * TEXT_KEPT_MIN:
+        raise GhostscriptError(
+            f"the press PDF lost its text: {after} of {before} characters survived "
+            "conversion. Pages were rendered as pictures, most likely because they "
+            "use transparency, which PDF/X-1a cannot carry; refusing to certify an "
+            "image-only book as press-ready."
+        )
+
+
 def to_pdfx(
     input_pdf: Path,
     output_pdf: Path,
@@ -338,6 +388,12 @@ def to_pdfx(
         "-dPDFSETTINGS=/prepress",
         "-sColorConversionStrategy=CMYK",
         "-dProcessColorModel=/DeviceCMYK",
+        # PDF/X permits no annotation on a page but TrapNet and PrinterMark, and
+        # a hyperlink is one. The first real book's 200-odd links made
+        # Ghostscript abandon PDF/X for the whole file ("Annotation ... not
+        # permitted in PDF/X, reverting to normal PDF output"). A link does
+        # nothing on paper; the proof, which is read on screen, keeps them.
+        "-dPreserveAnnots=false",
         # SAFER is left ON (gs 10's default). The input PDF is rendered from
         # user manuscript content, so relaxing it would widen the blast radius
         # of a malicious document. The prologue needs to read exactly one file
@@ -350,6 +406,7 @@ def to_pdfx(
     _assert_no_pdfx_downgrade(gs_output)
     _assert_pdf(output_pdf, "press")
     _assert_pdfx(output_pdf)
+    _assert_text_kept(input_pdf, output_pdf, gs, work_dir, sandbox)
 
 
 def to_proof(

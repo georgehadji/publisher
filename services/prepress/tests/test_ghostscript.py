@@ -246,3 +246,54 @@ def test_bleed_offset_matches_the_trim_offset():
     assert trim and bleed
     assert trim.group(1) == bleed.group(1)
     assert set(bleed.group(1).split()) != {"0"}
+
+
+def _fake_gs(tmp_path: Path, monkeypatch, *, input_text: str, press_text: str,
+             calls: list | None = None) -> Path:
+    """A gs that writes a valid PDF/X file, and whose text extraction reads
+    `input_text` from the input and `press_text` from the press file."""
+    icc = tmp_path / "cmyk.icc"
+    icc.write_bytes(b"icc")
+    monkeypatch.setattr("publisher_prepress.ghostscript.find_binary", lambda: "/usr/bin/gs")
+    monkeypatch.setattr("publisher_prepress.ghostscript.find_cmyk_icc", lambda: icc)
+    out = tmp_path / "out.pdf"
+
+    def fake_run(cmd, **kwargs):
+        if calls is not None:
+            calls.append(cmd)
+        target = next(a.split("=", 1)[1] for a in cmd if a.startswith("-sOutputFile="))
+        if "-sDEVICE=txtwrite" in cmd:
+            Path(target).write_text(press_text if cmd[-1] == str(out) else input_text,
+                                    encoding="utf-8")
+        else:
+            Path(target).write_bytes(PDFX_BYTES)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return out
+
+
+def test_a_press_file_that_lost_its_text_is_refused(tmp_path: Path, monkeypatch):
+    """What PDF/X-1a did to the first real book: one figure's soft mask made
+    Ghostscript render every page as a picture. Exit 0, a valid OutputIntent,
+    and no text -- the check has to look at the text itself."""
+    out = _fake_gs(tmp_path, monkeypatch, input_text="Σωκράτης ὁ φιλόσοφος " * 50, press_text="")
+    with pytest.raises(GhostscriptError, match="lost its text"):
+        to_pdfx(tmp_path / "in.pdf", out, tmp_path)
+
+
+def test_a_press_file_that_kept_its_text_passes(tmp_path: Path, monkeypatch):
+    text = "Σωκράτης ὁ φιλόσοφος " * 50
+    out = _fake_gs(tmp_path, monkeypatch, input_text=text, press_text=text)
+    to_pdfx(tmp_path / "in.pdf", out, tmp_path)
+
+
+
+def test_the_press_file_drops_link_annotations(tmp_path: Path, monkeypatch):
+    """PDF/X forbids annotations on a page; the first real book's hyperlinks made
+    Ghostscript abandon PDF/X for the whole file. The press conversion drops them."""
+    calls: list[list[str]] = []
+    out = _fake_gs(tmp_path, monkeypatch, input_text="", press_text="", calls=calls)
+    to_pdfx(tmp_path / "in.pdf", out, tmp_path)
+    press = next(cmd for cmd in calls if "-dPDFX" in cmd)
+    assert "-dPreserveAnnots=false" in press

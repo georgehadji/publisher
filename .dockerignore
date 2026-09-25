@@ -18,3 +18,10 @@
 **/tests/
 **/__pycache__/
 **/*.pyc
+
+# Real manuscripts are placed in corpus/ to run locally and are git-ignored for
+# the same reason (.gitignore): they are authors' unpublished books. Without
+# this, `COPY corpus/ corpus/` bakes whatever manuscript sits there into the
+# worker image.
+corpus/*.docx
+corpus/*.doc

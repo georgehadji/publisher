@@ -348,8 +348,34 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
 
 **Still:**
 - **This book needs its EMF figure ("Εικόνα 6") re-saved as PNG** before it can build.
-- **`finish-gs` and preflight have not run on it.** Locally, Ghostscript 10.07.1 fails as
-  documented (`a31c9bb`), and Docker wasn't running, so the book has no preflight verdict yet.
+- **Preflight verdict (2026-09-25, in the worker image): FAIL, 1 check.** 9 passed, 1
+  warning. Composition: 4 orphans, a paragraph's first line alone at the foot of pages
+  208, 253, 284 and 660 (`composition.maxOrphanPages` is 0). This is the gate working. The
+  CSS already asks for `orphans: 2`, so these need a look at why weasyprint places them.
+  Everything before preflight now passes on the real book:
+  - **Memory budgets were too small (only Linux enforces them).** `ingest` needs 135 MB
+    against a 128 MB budget; `paginate` needs 328 MB against 256. Both failed the book in the
+    worker image, and nothing noticed on Windows. Now 512 and 1024 MB, measured (`VmPeak`
+    minus the stage's starting size). Every other stage is well inside its budget.
+  - **`finish-gs` turned every page into a picture.** One figure had an alpha channel.
+    weasyprint puts its soft mask in the resources every page shares, and PDF/X-1a (PDF 1.3)
+    cannot carry transparency, so Ghostscript rendered all 805 pages as 300 dpi images. There
+    was no text left, 1.6 MB and 6 s a page, and it still passed every check as "PDF/X-1a".
+    - Print figures are now composited onto white (`stages/media.py` `opaque`).
+    - `to_pdfx` now refuses a press file with under 98% of its input's text, so anything
+      else that rasterizes pages fails loudly.
+  - **Hyperlinks voided PDF/X.** Link annotations aren't allowed on a PDF/X page, and the
+    book's 200-odd links made Ghostscript fall back to plain PDF. The existing downgrade
+    check caught it. The press conversion now drops annotations (`-dPreserveAnnots=false`);
+    the proof keeps them.
+  - **Deadlines were too short.** The press conversion alone takes 430 s; the old 300 s
+    killed it. Ghostscript now gets 1500 s (`GS_TIMEOUT_S`) and the finish stages 2400 s.
+    The whole of `finish-gs` took 1293 s. The two text extractions of the new check are a
+    real share of that and could be sampled instead.
+  - **The worker image would have held the manuscript.** `COPY corpus/` copied whatever sat
+    in `corpus/`; `.dockerignore` now excludes `corpus/*.docx` and `*.doc`, like `.gitignore`.
+  - Still: the preflight report isn't stored when the gate fails, and the stage prints the
+    failure but not the warning's text.
 - **Fonts — done (the house faces chosen 2026-09-24: GFS Didot, PN Katsoulidis, Minion
   Pro).** Before this, no book was set in its designed face. Every template asked for EB
   Garamond, it was installed nowhere, and the renderer silently substituted.
@@ -515,9 +541,9 @@ into impossible states.
 
 ## If you do three things
 
-1. **§3.1 — a preflight verdict for the real book.** It ingests, renders (805 pages) and
-   produces an EPUBCheck-clean EPUB with every character verified. Docker is needed for
-   `finish-gs` and preflight.
+1. **§3.1 — the real book's 4 orphans.** It now runs end to end in the worker image. It
+   ingests, renders (805 pages), makes a text-carrying PDF/X-1a and an EPUBCheck-clean
+   EPUB, and preflight fails it on 4 orphan lines alone, despite `orphans: 2` in the CSS.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
    API reports them without defaulting. What's left there is consuming `classification/1`.
 3. **§1.1 — authenticate reviewers.** The loop closes: a reviewer can open

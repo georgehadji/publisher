@@ -341,8 +341,10 @@ def _family_name(font) -> str:
 
 @stage(
     name="paginate",
-    version=10,  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+    version=11,  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
                  # v10: link hrefs are percent-encoded (rendering._safe_href).
+                 # v11: memory budget 256 -> 1024 MB (see memory_budget_mb below); figures
+                 # reach the renderer without alpha (stages/media.py opaque).
                  # v8: fonts are resolved through the vault, pinned with @font-face,
                  # embedded in full, and a family that is not installed fails the
                  # render (INFRA) instead of being silently substituted.
@@ -371,7 +373,11 @@ def _family_name(font) -> str:
     implements="paginate",
     toolchain=["render-engine"],
     fixtures="fixtures/paginate/v1",
-    memory_budget_mb=256,
+    # weasyprint's layout grows with the page count: the first real book
+    # (805 pages) grew the worker's address space by 328 MB here, over the old
+    # 256 MB budget -- which Windows never enforced, so it only failed in the
+    # worker image. 1024 covers a book about twice that long.
+    memory_budget_mb=1024,
     # The first real book (880 pages, 477 footnotes) took 235 s to render on a
     # quiet dev machine -- against the 300 s default, so any load tipped it over.
     # ~5x headroom for slower workers. Note a timed-out stage is not killed: its

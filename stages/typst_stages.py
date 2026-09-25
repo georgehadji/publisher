@@ -259,7 +259,8 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
 
 @stage(
     name="design-compile-typst",
-    version=4,   # v3: default face GFS Didot (was EB Garamond, installed nowhere).
+    version=5,   # v5: figures reach the renderer without alpha (stages/media.py opaque).
+                 # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: none to its output; paginate-typst's rendering changed in this module.
                  # v2: module-level bump (U6) -- pagemap/1 is no longer terminal
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
@@ -512,7 +513,8 @@ class _MeasuredPage:
 
 @stage(
     name="paginate-typst",
-    version=4,   # v3: default face GFS Didot (was EB Garamond, installed nowhere).
+    version=5,   # v5: figures reach the renderer without alpha (stages/media.py opaque).
+                 # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: link hrefs are percent-encoded (rendering._safe_href).
                  # v2: module-level bump (U6) -- pagemap/1 is no longer terminal
     inputs={"doc_path": "doc-effective/1", "typ_path": TYPST_SCHEMA},

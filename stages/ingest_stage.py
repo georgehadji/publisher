@@ -178,14 +178,20 @@ def _check_zip_limits(source: Path) -> None:
     # v6: from the first real manuscript -- bold numbered lines are headings (a
     # whole book was one chapter), back matter keeps its Heading-styled entries,
     # notes keep their pictures, SmartArt text is kept, an EMF image is refused.
-    version=6,
+    # v7: memory budget 128 -> 512 MB (see memory_budget_mb below).
+    version=7,
     inputs={"docx_path": "raw-docx/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["docx_path"],
     implements="ingest",  # alternative to `acquire`; see module docstring
     toolchain=[],
     fixtures=None,
-    memory_budget_mb=128,
+    # Measured, not guessed: the first real book (6.4 MB DOCX, 2 M characters,
+    # 477 notes) grew the worker's address space by 135 MB here, and the
+    # 128 MB budget -- sized on toy manuscripts, and never enforced off Linux --
+    # failed it at the first stage in the worker image. Images are held in
+    # memory, so an illustrated book needs more; 512 is ~4x the measured need.
+    memory_budget_mb=512,
     queue="q.ingest",
     description="Convert an uploaded DOCX manuscript into the ast/1 source",
 )
