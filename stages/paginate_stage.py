@@ -129,9 +129,24 @@ def _chapter_start_pages(chapters: list[dict], rendered_pages) -> dict[str, int]
 # One word is the uncontroversial case; two is already a judgement call, so the
 # threshold stays where nobody has to argue about it.
 RUNT_MAX_WORDS = 1
+# ...and only when that line is short: under this share of the page's measure.
+# A runt is a short last line. A URL breaks at its slashes, so its last line can
+# be one "word" filling most of the measure -- 11 of the first real book's 24
+# remaining runts, none of them short.
+RUNT_MAX_FILL = 0.25
 
 # schemas/pagemap/pagemap.schema.json caps paraRanges at 200 entries per page.
 MAX_PARA_RANGES = 200
+
+
+def _line_boxes(box, measure: float, boxes):
+    """Every line box under `box`, in document order (as `descendants()` walks
+    them), each with the content width of the block that holds it."""
+    for child in getattr(box, "children", None) or []:
+        if isinstance(child, boxes.LineBox):
+            yield child, measure
+        yield from _line_boxes(child, child.width if isinstance(child, boxes.BlockContainerBox)
+                               else measure, boxes)
 
 
 def _measure_pages(rendered_pages) -> dict[int, dict]:
@@ -153,7 +168,8 @@ def _measure_pages(rendered_pages) -> dict[int, dict]:
     so do not "fix" these to agree with it:
       - orphan: a paragraph's FIRST line, alone at the BOTTOM of a page.
       - widow:  a paragraph's LAST line, alone at the TOP of a page.
-      - runt:   a multi-line paragraph whose last line holds a single word.
+      - runt:   a multi-line paragraph whose last line holds a single word and
+                fills under RUNT_MAX_FILL of the measure (a short last line).
 
     ponytail: reads weasyprint's private `_page_box`; 70.0 still exposes no public box
     tree. If that attribute goes away this degrades to unmeasured (fields
@@ -177,14 +193,16 @@ def _measure_pages(rendered_pages) -> dict[int, dict]:
     words: dict[int, int] = {}                # page -> word count
     total_lines: dict[int, int] = {}          # para index -> lines everywhere
     last_line_words: dict[int, int] = {}      # para index -> words on final line
+    last_line_short: dict[int, bool] = {}     # para index -> final line under RUNT_MAX_FILL
 
     try:
         for page_number, page in enumerate(rendered_pages, start=1):
             page_lines: dict[int, int] = {}
             page_words = 0
-            for box in page._page_box.descendants():
-                if not isinstance(box, boxes.LineBox):
-                    continue
+            # Each line against its own block's width (a cell, a note, a
+            # quotation): against the page's, a full line in a narrow table
+            # cell read as a short one -- a runt it was not.
+            for box, measure in _line_boxes(page._page_box, page._page_box.width, boxes):
                 element = getattr(box, "element", None)
                 if element is None:
                     continue   # anonymous box: no source paragraph to attribute
@@ -193,16 +211,14 @@ def _measure_pages(rendered_pages) -> dict[int, dict]:
                 index = para_index[element]
                 page_lines[index] = page_lines.get(index, 0) + 1
                 total_lines[index] = total_lines.get(index, 0) + 1
-                line_words = sum(
-                    len(child.text.split())
-                    for child in box.descendants()
-                    if isinstance(child, boxes.TextBox)
-                )
+                texts = [child for child in box.descendants() if isinstance(child, boxes.TextBox)]
+                line_words = sum(len(child.text.split()) for child in texts)
                 page_words += line_words
                 # Overwritten per line; pages and the boxes within them both walk
                 # in document order, so the value left standing when the walk ends
                 # is that paragraph's genuinely final line.
                 last_line_words[index] = line_words
+                last_line_short[index] = sum(child.width for child in texts) < RUNT_MAX_FILL * measure
             lines[page_number] = page_lines
             words[page_number] = page_words
     except Exception as exc:
@@ -228,6 +244,7 @@ def _measure_pages(rendered_pages) -> dict[int, dict]:
                 page_number == where[-1]
                 and total_lines.get(index, 0) > 1
                 and last_line_words.get(index, 0) <= RUNT_MAX_WORDS
+                and last_line_short.get(index, True)
             ):
                 runt = True
         entry: dict = {
@@ -381,7 +398,8 @@ def _family_name(font) -> str:
 
 @stage(
     name="paginate",
-    version=14,  # v14: weasyprint 70 (URLFetcher subclass; footnote-policy keeps notes on their call page; 2400 s deadline).
+    version=15,  # v15: keep span: a paragraph's last two words (and its note calls) never split in print; a runt is a one-word last line under RUNT_MAX_FILL of the measure.
+                 # v14: weasyprint 70 (URLFetcher subclass; footnote-policy keeps notes on their call page; 2400 s deadline).
                  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
                  # v13: weasyprint loads only the render's own media and fonts (local_only_fetcher).
                  # v12: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped.

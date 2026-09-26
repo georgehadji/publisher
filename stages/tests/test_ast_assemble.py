@@ -13,6 +13,7 @@ function it happens to use internally.
 
 from __future__ import annotations
 import json
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,9 +83,7 @@ def test_ast_assemble_rejects_dropped_paragraph():
     with tempfile.TemporaryDirectory() as td:
         tmp_dir = Path(td)
         html = ast_to_html(GOOD_AST)
-        mutated_html = html.replace(
-            '<p class="paragraph">The third and final sentence.</p>', ""
-        )
+        mutated_html = re.sub(r'<p class="paragraph">The third and .*?</p>', "", html)
         assert mutated_html != html, "mutation didn't take -- fixture text changed?"
 
         html_path = tmp_dir / "extract.html"

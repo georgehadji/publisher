@@ -19,6 +19,7 @@ image, and the footnote and table text are on the rendered page.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import zipfile
 from datetime import datetime, timezone
@@ -148,8 +149,9 @@ def test_rich_content_passes_the_text_integrity_gate(tmp_path):
     result = ast_assemble(ctx, html=str(work / "doc.html"),
                           source=str(work / "source.json"))
     assert result.metrics["integrity_ok"] == 1.0
-    assert FOOTNOTE_TEXT in html
-    assert "Aldine" in html
+    text = re.sub(r"<[^>]+>", "", html)   # a `keep` span wraps each paragraph's last words
+    assert FOOTNOTE_TEXT in text
+    assert "Aldine" in text
 
 
 def test_extract_emits_a_real_img_and_a_real_table(tmp_path):

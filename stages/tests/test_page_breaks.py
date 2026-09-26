@@ -53,7 +53,9 @@ def _first_pages(starts_on: str) -> dict[str, int]:
             yield from texts(child)
 
     for number, page in enumerate(document.pages, start=1):
-        page_text = " ".join(texts(page._page_box))
+        # Whitespace-normalised: a run split across boxes (the `keep` span on a
+        # paragraph's last two words) must still read as one phrase.
+        page_text = " ".join(" ".join(texts(page._page_box)).split())
         for marker in ("TITLE PAGE", "CONTENTS PAGE", "CHAPTER 1 TEXT", "CHAPTER 2 TEXT",
                        "CHAPTER 3 TEXT", "BIBLIOGRAPHY PAGE"):
             if marker in page_text:

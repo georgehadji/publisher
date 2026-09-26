@@ -135,10 +135,81 @@ def _render_inline(content: list) -> str:
         elif ntype == "superscript":
             parts.append(f"<sup>{_render_inline(node.get('content', []))}</sup>")
 
+        elif ntype == KEEP:
+            parts.append(f'<span class="keep">{_render_inline(node["content"])}{node.get("after", "")}</span>')
+
         else:
             parts.append(_escape_html(str(node.get("text", ""))))
 
     return "".join(parts)
+
+
+# A paragraph's last two words are set as one unbreakable unit in print, so its
+# last line can never hold a single word (a runt: 264 pages of the first real
+# book). `KEEP` is a render-only inline node -- never in an AST -- wrapping the
+# words in `<span class="keep">` (`white-space: nowrap`). The characters are the
+# paragraph's own, so the text stream the integrity gate reads is unchanged.
+# The pair may span text runs (Word splits runs at every formatting or revision
+# boundary, so a last word is often a run of its own); each piece keeps its
+# marks. Capped well under a line so the pair always fits one: Greek pairs of
+# 25-28 characters were common, a body line holds about 60. A table cell gets a
+# smaller cap: auto table layout widens a column to fit an unbreakable pair
+# rather than overflow it, so the cap bounds how far a column can move.
+KEEP = "_keep"
+KEEP_TAIL_CHARS = 40
+KEEP_CELL_CHARS = 16
+
+
+def _keep_tail(content: list, cap: int = KEEP_TAIL_CHARS, after: str = "") -> list:
+    """`content` with its final two words wrapped in one KEEP node, when they sit
+    in its trailing text runs and together are at most `cap` long.
+
+    `after` is markup that must stay on the last word's line -- a paragraph's
+    note calls: rendered after the text, a line could break before them and
+    leave the number alone on the last line (5 runts in the first real book).
+    It goes inside the KEEP node. When the pair is longer than `cap` -- a URL,
+    a long citation -- the last three quarters of `cap` characters are kept
+    instead, so the last line still holds a real stretch of text rather than a
+    lone fragment (a URL breaks at its slashes). `content` itself comes back
+    when nothing was kept, and the caller then places `after` itself."""
+    first = len(content)
+    while first and content[first - 1].get("type", "text") == "text":
+        first -= 1
+    runs = content[first:]
+    joined = "".join(run.get("text", "") for run in runs)
+    end = len(joined.rstrip())
+    last = end
+    while last and not joined[last - 1].isspace():
+        last -= 1                               # start of the last word
+    i = last
+    while i and joined[i - 1].isspace():
+        i -= 1                                  # end of the word before it
+    start = i
+    while start and not joined[start - 1].isspace():
+        start -= 1                              # start of the word before it
+    if i and end - start <= cap:
+        pass                                    # the pair
+    elif end > cap:
+        start = end - cap * 3 // 4              # a long pair or word: its last stretch
+    elif after and last < end:
+        start = last                            # one short word, holding its calls
+    else:
+        return content
+    if after:
+        end = len(joined)                       # no break before the calls either
+    head: list = []
+    kept: list = []
+    trail: list = []
+    pos = 0
+    for run in runs:
+        text = run.get("text", "")
+        lo, hi = pos, pos + len(text)
+        for a, b, into in ((lo, min(hi, start), head), (max(lo, start), min(hi, end), kept),
+                           (max(lo, end), hi, trail)):
+            if b > a:
+                into.append({**run, "text": text[a - lo:b - lo]})
+        pos = hi
+    return content[:first] + head + [{"type": KEEP, "content": kept, "after": after}] + trail
 
 
 def _render_table(node: dict, notes: "EpubNotes | None" = None) -> str:
@@ -154,7 +225,7 @@ def _render_table(node: dict, notes: "EpubNotes | None" = None) -> str:
         parts.append("<tr>")
         for cell in row.get("content", []):
             colspan = (cell.get("attrs") or {}).get("colspan", 1)
-            parts.append(f'<{tag} colspan="{colspan}">{_render_content(cell.get("content", []), notes)}</{tag}>')
+            parts.append(f'<{tag} colspan="{colspan}">{_render_content(cell.get("content", []), notes, KEEP_CELL_CHARS)}</{tag}>')
         parts.append("</tr>")
     parts.append("</table>")
     return "\n".join(parts)
@@ -229,6 +300,13 @@ def _split_note(content: list, limit: int) -> list[list]:
         text = node.get("text", "")
         while size + len(text) > limit:
             cut = _note_cut(text, limit - size)
+            if cut > 0 and current and current[-1].get("type") == "hardBreak" \
+                    and " " not in text[:cut].strip():
+                # Right after a forced line break the piece's last line is its
+                # own: one word there is a runt no KEEP can reach (the first real
+                # book, p. 276). Take one more word, a little over the limit.
+                more = text.find(" ", cut)
+                cut = more + 1 if more > 0 else len(text)
             if cut <= 0:
                 # No break inside this run in the room left. The boundary before
                 # it is a break only where the text already has whitespace there:
@@ -275,6 +353,10 @@ class PrintNotes:
         self.count = 0
 
     def render(self, node: dict) -> str:
+        return "".join(self.render_parts(node))
+
+    def render_parts(self, node: dict) -> tuple[str, str]:
+        """The note's call and its body (every piece), separately."""
         self.count += 1
         n = self.count
         content = node.get("content", [])
@@ -285,9 +367,9 @@ class PrintNotes:
         # gate reads "text.Note" against the source's "text. Note". In the
         # footnote area it collapses at line start.
         first, *rest = pieces
-        return (f'<span class="note-call" data-n="{n}"></span>'
-                f'<span class="footnote" data-n="{n}"> {_render_inline(first)}</span>'
-                + "".join(f'<span class="footnote footnote-cont"> {_render_inline(piece)}</span>'
+        return (f'<span class="note-call" data-n="{n}"></span>',
+                f'<span class="footnote" data-n="{n}"> {_render_inline(_keep_tail(first))}</span>'
+                + "".join(f'<span class="footnote footnote-cont"> {_render_inline(_keep_tail(piece))}</span>'
                           for piece in rest))
 
 
@@ -321,7 +403,8 @@ class EpubNotes:
         return f'{opening}<p>{_render_inline(node.get("content", []))}</p></aside>'
 
 
-def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None) -> str:
+def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None,
+                    cap: int = KEEP_TAIL_CHARS) -> str:
     """Render AST block content to HTML.
 
     `notes` selects the EPUB flavour (linked footnotes, see `EpubNotes`); every
@@ -355,11 +438,18 @@ def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None
                     break
                 cited.append(following)
             absorbed = len(cited)
-            text = _render_inline(node.get("content", []))
+            inline = node.get("content", [])
             if isinstance(notes, PrintNotes):
-                spans = "".join(notes.render(note) for note in cited)
-                parts.append(f'<p class="{cls}">{text}{spans}</p>')
+                # Print only (KEEP): a reflowing EPUB has no fixed last line to
+                # protect. All the calls come first, then the note bodies: the
+                # calls hold no text, so the text stream is unchanged.
+                rendered = [notes.render_parts(note) for note in cited]
+                calls = "".join(call for call, _ in rendered)
+                kept = _keep_tail(inline, cap, after=calls)
+                text = _render_inline(kept) + ("" if kept is not inline else calls)
+                parts.append(f'<p class="{cls}">{text}{"".join(body for _, body in rendered)}</p>')
             else:
+                text = _render_inline(inline)
                 calls = [notes.call() for _ in cited]
                 refs = "".join(ref for ref, _ in calls)
                 asides = "".join(notes.aside(opening, note) for (_, opening), note in zip(calls, cited))
@@ -367,7 +457,10 @@ def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None
 
         elif ntype == "heading":
             level = (node.get("attrs") or {}).get("level", 2)
-            parts.append(f'<h{level}>{_render_inline(node.get("content", []))}</h{level}>')
+            inline = node.get("content", [])
+            if isinstance(notes, PrintNotes):
+                inline = _keep_tail(inline)             # a heading's last line too
+            parts.append(f'<h{level}>{_render_inline(inline)}</h{level}>')
 
         elif ntype == "blockquote":
             parts.append(f'<blockquote>{_render_content(node.get("content", []), notes)}</blockquote>')
@@ -485,7 +578,8 @@ def ast_to_html(ast: dict) -> str:
         title_text = attrs.get("title", f"Chapter {attrs.get('number', '?')}")
 
         parts.append(f'<div class="{ctype}" id="{cid}" data-number="{attrs.get("number", "")}">')
-        parts.append(f'<h1 class="chapter-title">{_escape_html(title_text)}</h1>')
+        title_html = _render_inline(_keep_tail([{"type": "text", "text": title_text}]))
+        parts.append(f'<h1 class="chapter-title">{title_html}</h1>')
         parts.append(_render_content(chapter.get("content", []), notes))
         parts.append("</div>")
 
@@ -778,6 +872,11 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "",
         "p.chapter-opening {",
         "  text-indent: 0;",
+        "}",
+        "",
+        # rendering.KEEP: a paragraph's last two words, never split (no runts).
+        ".keep {",
+        "  white-space: nowrap;",
         "}",
         "",
         ".chapter {",

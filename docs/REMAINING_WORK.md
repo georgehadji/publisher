@@ -351,8 +351,8 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
 - **Preflight verdict (2026-09-26, in the worker image, weasyprint 70): PASS, with 2
   warnings.** 9 checks pass and none fail; the book is packaged at 869 pages (819 on
   62.3; see **weasyprint 70** below for the 50 pages).
-  - Warning 1: composition. 264 pages end a paragraph with a runt, a short last line, and
-    27 pages start with a widow. Both warn, they don't gate.
+  - Warning 1: composition. 27 pages start with a widow, which warns and doesn't gate.
+    There are no runts left; they were 264 pages (see **Runts** below).
   - Warning 2: image resolution is unmeasured (no PDF image decoder).
 
   The first verdict, earlier the same day, was FAIL on 4 orphans (pages 208, 253, 284,
@@ -668,7 +668,7 @@ Bugs these runs found, all fixed:
     slow. The first 70 run of the book timed out in `finish-gs` at the old 3600 s. Hours
     later the whole stage took 1089 s. A deadline has to survive the slow afternoon.
 - **The real book on 70, end to end in the worker image:** preflight passes, with 0 failed
-  and 2 warnings (27 widow pages, 264 runt pages; image resolution not measured). It's 869
+  and 2 warnings (27 widow pages, 264 runt pages, since fixed; image resolution not measured). It's 869
   pages, and the book is packaged. `paginate` took 499 s, `finish-gs` 1089 s.
 - **The weasyprint/Typst stage tests now pass on Linux** (worker image, 465 stage and
   service tests). CI skips them, and two had only ever passed on Windows fonts:
@@ -680,12 +680,45 @@ Bugs these runs found, all fixed:
   module-scoped, so its worker outlived the test using it and sometimes claimed the next
   test's "no worker has run" build. It's now function-scoped.
 
+## Runts (2026-09-26): 264 pages to 0
+
+A runt is a paragraph whose last line holds one short word. Preflight warned on 264 of
+the book's 869 pages. weasyprint 70 has no `text-wrap: pretty`, so the print renderer
+glues each ending instead (`stages/rendering.py`, `_keep_tail`). It wraps the last two
+words in `<span class="keep">` (`white-space: nowrap`). The characters are the book's
+own, so the integrity gate is unaffected, and the EPUB, which reflows, isn't touched.
+
+Each pass on the real book, and what the one after it fixed:
+
+| Pass | Runt pages | What was left |
+|---|---|---|
+| none | 264 | |
+| last two words, same text run, ≤ 24 chars | 39 | last word in a run of its own (Word splits runs at every format change), Greek pairs of 25–28 chars, double spaces |
+| across runs, any whitespace, ≤ 40 chars | 24 | note calls alone on a line, headings and titles, table cells, URL tails, one note split |
+| calls kept with the last word; headings, titles, cells (≤ 16) kept; a long ending keeps its last 30 chars | 2 | a narrow cell measured against the page; a note piece cut right after a forced line break |
+| per-block measure; note cut takes one more word after a hard break | **0** | |
+
+Widows (27) and orphans (0) are unchanged, and so is the length (869 pages).
+
+Two measurement changes, both in `paginate`'s `_measure_pages`:
+
+- **A runt is now a short one-word last line:** under `RUNT_MAX_FILL` (a quarter) of the
+  measure. A URL breaks at its slashes, so its last line could be one "word" that filled
+  most of the line. That's no runt, and 11 of the 24 were such lines. A short word alone
+  still counts, which `test_runts` pins with a control that must produce runts.
+- **Each line is measured against its own block** (a cell, a note), not the page. Against
+  the page, a full line in a narrow cell read as a short one.
+
+`stages/tests/test_runts.py` covers each case, and each rendered check has a control
+showing it can fail.
+
 ## If you do three things
 
 1. **§3.1 — done for the first real book: it passes preflight.** It runs end to end in the
    worker image and is packaged. Its 869 pages (weasyprint 70) become a text-carrying
    PDF/X-1a, and the EPUB is EPUBCheck-clean. What's left:
-   - 264 runt and 27 widow warnings; the widows come from `footnote-policy: line`.
+   - 27 widow warnings; they come from `footnote-policy: line`. The runts are fixed
+     (264 pages to 0, see **Runts**).
    - The proof takes about 2.5 s a page.
    - The author must re-save one EMF figure as PNG.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
