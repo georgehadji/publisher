@@ -69,6 +69,13 @@ explicitly so collection can never wander outside the repo.
   Linux: the worker image plus `pip install --target /tmp/pt pytest requests`, the repo
   mounted at `/src`, and `DATABASE_URL` pointed at `host.docker.internal`. Its first Linux
   run found the worker dying with -15 on a SIGTERM during start-up.
+- **The weasyprint/Typst stage tests never run in CI** (its python job doesn't install
+  `requirements.txt`, so `importorskip("weasyprint")` skips them). Run them on Linux in
+  the worker image: `pip install --target /tmp/pt pytest pymupdf` (PyMuPDF is the dev-only
+  PDF reader `test_rich_content_end_to_end` uses), the repo mounted at `/src`, then
+  `python -m pytest stages services` with `/tmp/pt` on `PYTHONPATH`. Their first Linux run
+  found two tests tuned to the Windows fonts: an orphan sweep that never reached a full
+  page, and a footnote call checked as "1" where GFS Didot sets "¹".
 - **A gate that cannot fail is worse than no gate.** Several tests here exist because an
   earlier version of the same test passed while verifying nothing.
 

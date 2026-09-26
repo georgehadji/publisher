@@ -670,6 +670,12 @@ Bugs these runs found, all fixed:
 - **The real book on 70, end to end in the worker image:** preflight passes, with 0 failed
   and 2 warnings (27 widow pages, 264 runt pages; image resolution not measured). It's 869
   pages, and the book is packaged. `paginate` took 499 s, `finish-gs` 1089 s.
+- **The weasyprint/Typst stage tests now pass on Linux** (worker image, 465 stage and
+  service tests). CI skips them, and two had only ever passed on Windows fonts:
+  - The orphan sweep stopped at 164 words, and the image's fonts need 180. It now sweeps
+    a full page (`SWEEP`).
+  - The Typst footnote call was checked as "1", where GFS Didot sets a true "¹". Both
+    forms are accepted, and PyMuPDF is skipped only when absent.
 - **Test isolation.** `test_api_drives_pipeline.py`'s `worker_process` fixture was
   module-scoped, so its worker outlived the test using it and sometimes claimed the next
   test's "no worker has run" build. It's now function-scoped.

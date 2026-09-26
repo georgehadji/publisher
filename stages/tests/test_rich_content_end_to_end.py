@@ -199,7 +199,9 @@ def test_typst_renders_image_footnote_and_table_into_the_pdf(tmp_path):
     because "pandoc emitted #footnote" and "the note is on the page" are
     different claims, and only the second one is the deliverable.
     """
-    import fitz
+    # PyMuPDF is a dev-only reader; the worker image doesn't ship it (install it
+    # beside pytest to run this there -- see the publisher-tests skill).
+    fitz = pytest.importorskip("fitz")
     from stages.resolve_stage import resolve
     from stages.structure_stage import ast_assemble
     from stages.typst_stages import paginate_typst
@@ -239,6 +241,8 @@ def test_typst_renders_image_footnote_and_table_into_the_pdf(tmp_path):
     assert "emphatic1" not in html
     cited = next(i for i, span in enumerate(spans) if span["text"].rstrip().endswith("emphatic"))
     word, call = spans[cited], spans[cited + 1]
-    assert call["text"].strip() == "1", call
+    # Typst uses the face's own superscript glyph when it has one ("¹" -- GFS
+    # Didot in the worker image) and raises a small "1" when it doesn't.
+    assert call["text"].strip().translate(str.maketrans("¹²³⁴⁵⁶⁷⁸⁹⁰", "1234567890")) == "1", call
     assert abs(call["bbox"][0] - word["bbox"][2]) < 0.5, (word["bbox"], call["bbox"])
     assert call["bbox"][1] < word["bbox"][3] and word["bbox"][1] < call["bbox"][3], "not on the word's line"

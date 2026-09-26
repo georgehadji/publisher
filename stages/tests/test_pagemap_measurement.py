@@ -25,6 +25,13 @@ weasyprint = pytest.importorskip("weasyprint")
 # renderer has to be allowed to produce one.
 CSS = "@page{size:200pt 120pt;margin:8pt} p{font-size:9pt;margin:0;orphans:1;widows:1}"
 
+# Word counts to sweep. It has to span a whole page of lines in whatever font the
+# host sets: ~16 words a line on the author's Windows machine, ~24 in the worker
+# image (GFS Didot/Liberation), where the old 120-164 range never reached the
+# 180 words an orphan needed. The step stays under one line's worth of words, so
+# every line count is visited; each loop stops at its first hit.
+SWEEP = range(40, 400, 2)
+
 
 def _measure(body: str) -> dict[int, dict]:
     document = weasyprint.HTML(string=f"<style>{CSS}</style>{body}").render()
@@ -48,7 +55,7 @@ def _pages_of(measured: dict, para: int) -> list[int]:
 
 def test_widow_is_flagged_where_a_last_line_is_stranded():
     """A paragraph's final line, alone at the top of a page."""
-    for words in range(108, 140, 2):
+    for words in SWEEP:
         measured = _measure(f"<p>{'wd ' * words}</p><p>tail here</p>")
         flagged = [p for p, f in measured.items() if f["hasWidows"]]
         if not flagged:
@@ -69,7 +76,7 @@ def test_widow_is_flagged_where_a_last_line_is_stranded():
 
 def test_orphan_is_flagged_where_a_first_line_is_stranded():
     """A paragraph's opening line, alone at the bottom of a page."""
-    for filler in range(120, 164, 2):
+    for filler in SWEEP:
         measured = _measure(f"<p>{'ff ' * filler}</p><p>{'gg ' * 160}</p>")
         flagged = [p for p, f in measured.items() if f["hasOrphans"]]
         if not flagged:
