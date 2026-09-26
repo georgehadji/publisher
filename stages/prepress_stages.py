@@ -13,7 +13,8 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 
 from publisher_prepress.preflight import run_preflight
 from publisher_prepress.geometry import spine_width, cover_dimensions, TrimSize, BleedBox
-from publisher_prepress.ghostscript import GhostscriptError, find_binary, to_pdfx, to_proof
+from publisher_prepress.ghostscript import (FINISH_TIMEOUT_S, GhostscriptError, find_binary, to_pdfx,
+                                            to_proof)
 from publisher_sandbox import sandbox_for
 from profiles import load_profile
 
@@ -33,7 +34,7 @@ def _deterministic_timestamp(ctx: StageCtx) -> str:
 
 @stage(
     name="preflight",
-    version=9,   # v9: a failing verdict carries its report (StageError.artifacts) and warnings print. v8: module-level bump (finish-gs v10). v7: consumes pagemap/1 and gates on composition (widows/orphans/
+    version=10,  # v10: module-level bump (finish-gs v12). v9: a failing verdict carries its report (StageError.artifacts) and warnings print. v8: module-level bump (finish-gs v10). v7: consumes pagemap/1 and gates on composition (widows/orphans/
                  # runts) -- see preflight.check_composition. v6: module-level bump --
                  # same file as cover/finish-gs (U6); v5 fixed the page count
                  # for every Ghostscript-produced file (see preflight._PAGE_RE).
@@ -145,7 +146,7 @@ def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "",
 
 @stage(
     name="cover",
-    version=6,   # v6: module-level bump (preflight v9). v5: module-level bump (finish-gs v10). v4: module-level bump -- same file as preflight (U6). v3: page_count input schema "integer" -> "page-count/1"; v2 dropped the
+    version=7,   # v7: module-level bump (finish-gs v12). v6: module-level bump (preflight v9). v5: module-level bump (finish-gs v10). v4: module-level bump -- same file as preflight (U6). v3: page_count input schema "integer" -> "page-count/1"; v2 dropped the
                  # cover_art root input (art generation is the separate cover-brief/cover-art/
                  # cover-judge fan-out in stages/cover_stages.py -- see COVER_DESIGN.md §0/§1).
     # "profile" -> "profile_name" to match this function's actual parameter name;
@@ -216,7 +217,7 @@ def cover_stage(ctx: StageCtx, page_count: int = 0, profile_name: str = "") -> S
 
 @stage(
     name="cover-preflight",
-    version=5,   # v5: module-level bump (preflight v9). v4: module-level bump (finish-gs v10). v3: module-level bump -- same file as preflight (U6); v2 likewise
+    version=6,   # v6: module-level bump (finish-gs v12). v5: module-level bump (preflight v9). v4: module-level bump (finish-gs v10). v3: module-level bump -- same file as preflight (U6); v2 likewise
     inputs={"pdf_path": "cover-raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
     # Distinct output kind from `preflight`'s -- both stages emit content that
@@ -282,7 +283,7 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
 
 @stage(
     name="finish-gs",
-    version=11,  # v11: module-level bump (preflight v9); v10: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline; v9: module-level bump -- same file as preflight (U6); v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
+    version=12,  # v12: deadline FINISH_TIMEOUT_S (two Ghostscript passes, each GS_TIMEOUT_S); v11: module-level bump (preflight v9); v10: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline; v9: module-level bump -- same file as preflight (U6); v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     # "pdf" -> "pdf_path", "profile" -> "profile_name": see the note on preflight
     # above for why the input dict's KEYS must exactly match this function's
@@ -297,8 +298,8 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
     # Ghostscript's press conversion of the first real book (819 pages) takes
     # 430 s and its proof longer; the whole stage took 1884 s with another job
     # sharing the CPU. The default 300 s failed every book past ~600 pages.
-    # See ghostscript.GS_TIMEOUT_S.
-    timeout_s=3600,
+    # See ghostscript.GS_TIMEOUT_S / FINISH_TIMEOUT_S.
+    timeout_s=FINISH_TIMEOUT_S,
     queue="q.prepress",
     description="Apply CMYK conversion, bleed, marks, OutputIntent via Ghostscript",
 )

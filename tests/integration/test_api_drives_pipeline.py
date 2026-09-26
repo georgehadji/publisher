@@ -42,12 +42,17 @@ API_DIR = REPO_ROOT / "packages" / "api"
 # file drains the same queue the others write to.)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def worker_process():
     """
     A real worker.py, so a queued build actually runs. Without this, detector 1
     would wait for a completion that nothing produces -- the same fabrication
     problem from a different angle.
+
+    Function-scoped on purpose. It was module-scoped, so the worker outlived
+    the one test that asks for it and claimed the next test's build --
+    `test_build_status_is_not_a_hardcoded_literal`, which asserts no worker has
+    run -- whenever the API answered slower than the worker's poll.
 
     The worker runs with allow_stub_engines=False, so it needs the real
     toolchain. On a host without Ghostscript (Windows dev boxes, typically)

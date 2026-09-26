@@ -93,7 +93,8 @@ def test_long_notes_leave_no_orphan_and_nothing_past_the_type_area():
     assert orphans == []
     past = 0
     calls, markers = [], []
-    for page in doc.pages:
+    call_page, note_page = {}, {}
+    for number, page in enumerate(doc.pages, start=1):
         box = page._page_box
         foot = box.content_box_y() + box.height + 0.5
         for b in box.descendants():
@@ -103,13 +104,22 @@ def test_long_notes_leave_no_orphan_and_nothing_past_the_type_area():
             tag = getattr(b, "element_tag", "") or ""
             if type(b).__name__ == "InlineBox" and tag.endswith("::after") and b.element.get("class") == "note-call":
                 calls.append("".join(t.text for t in b.descendants() if isinstance(t, boxes.TextBox)))
+                call_page[calls[-1]] = number
             if type(b).__name__ == "InlineBox" and tag.endswith("::footnote-marker"):
                 text = "".join(t.text for t in b.descendants() if isinstance(t, boxes.TextBox)).rstrip(". ")
                 if text:
                     markers.append(text)
+                    note_page[text] = number
     assert past == 0
     expected = [str(i) for i in range(1, len(calls) + 1)]
     assert calls == expected and markers == expected
+    # Notes begin on the page that calls them. weasyprint 70 defers whole notes to
+    # protect a paragraph's orphans; `footnote-policy: line` (rendering.emit_css)
+    # stops most of that but not all (its orphan path ignores the policy). On
+    # these 30 notes: 15 (Windows fonts) or 12 (worker image) land pages late
+    # without it, 0 or 2 with it.
+    late = sorted(n for n, page in call_page.items() if note_page.get(n) != page)
+    assert len(late) <= len(call_page) // 10, late
 
 
 def test_typst_folds_the_pieces_back_into_one_footnote(tmp_path):

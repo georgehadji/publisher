@@ -163,7 +163,16 @@ def find_cmyk_icc() -> Optional[Path]:
 # single-threaded. The old 300 s made every book past ~600 pages unconvertible.
 # The proof (`/ebook`) is slower still: 1258 s for the same book while another
 # job shared the CPU, which a worker running builds side by side will see.
-GS_TIMEOUT_S = 2400
+# On 2026-09-26 the same Docker VM, otherwise idle, took 2333 s (press) and
+# 1826 s (proof) for that book's 819 pages -- and 2292 s / 2006 s for the 869
+# pages weasyprint 70 sets. 2400 left one pass 3% of headroom. (Hours later the
+# whole finish-gs stage took 1089 s on the same VM; the deadline is for the slow day.)
+GS_TIMEOUT_S = 3600
+
+# A finish stage runs two conversions back to back (press, then proof), each
+# allowed GS_TIMEOUT_S. Its deadline was 3600 s against 2 x 2400 s of allowed
+# Ghostscript, so a book both passes could convert still missed it.
+FINISH_TIMEOUT_S = 2 * GS_TIMEOUT_S + 600
 
 
 def _run(cmd: list[str], timeout: int = GS_TIMEOUT_S, *,

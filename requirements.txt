@@ -6,11 +6,10 @@
 # A1.5: Docker needs a real install list, not an assumption of a pre-set-up
 # dev machine.
 psycopg2-binary>=2.9,<3
-weasyprint>=62,<63
-# weasyprint 62.x calls pydyf's Stream API in a way pydyf 0.11+ removed
-# (AttributeError: 'super' object has no attribute 'transform') -- pin to the
-# last compatible release rather than the resolver's default latest.
-pydyf<0.11
+# 70 clears the fetcher/write_pdf advisories 62.3 carried (see ci.yml's
+# pip-audit step). Its own metadata pins a pydyf it works with; the old
+# `pydyf<0.11` cap belonged to 62.x and would now block the resolve.
+weasyprint>=70,<71
 PyYAML>=6,<7
 jsonschema>=4.20,<5
 # services/ingest: reads .docx manuscripts. Legacy binary .doc is NOT supported

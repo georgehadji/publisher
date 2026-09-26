@@ -34,6 +34,18 @@ $Out = ".publisher/test-output.txt"
 
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
 
+# weasyprint 70 loads Pango/GObject only from WEASYPRINT_DLL_DIRECTORIES (default:
+# msys64 and "GTK3-Runtime Win64"), not from PATH as 62.x did -- so a GTK runtime
+# that only sits on PATH makes `import weasyprint` raise OSError, which
+# importorskip does not catch. Point it at the first PATH directory holding
+# Pango: the same DLLs 62.x picked up.
+if (-not $env:WEASYPRINT_DLL_DIRECTORIES) {
+    $gtk = $env:PATH -split ';' |
+        Where-Object { $_ -and (Test-Path (Join-Path $_ 'libpango-1.0-0.dll')) } |
+        Select-Object -First 1
+    if ($gtk) { $env:WEASYPRINT_DLL_DIRECTORIES = $gtk }
+}
+
 $started = Get-Date
 python -m pytest platform services packages stages tests @args 2>&1 | Tee-Object -FilePath $Out
 $code = $LASTEXITCODE

@@ -348,10 +348,11 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
 
 **Still:**
 - **This book needs its EMF figure ("Εικόνα 6") re-saved as PNG** before it can build.
-- **Preflight verdict (2026-09-25, in the worker image): PASS, with 2 warnings.** 9
-  checks pass and none fail; the book is packaged at 819 pages.
-  - Warning 1: 255 pages end a paragraph with a runt, a short last line. Runts warn, they
-    don't gate.
+- **Preflight verdict (2026-09-26, in the worker image, weasyprint 70): PASS, with 2
+  warnings.** 9 checks pass and none fail; the book is packaged at 869 pages (819 on
+  62.3; see **weasyprint 70** below for the 50 pages).
+  - Warning 1: composition. 264 pages end a paragraph with a runt, a short last line, and
+    27 pages start with a widow. Both warn, they don't gate.
   - Warning 2: image resolution is unmeasured (no PDF image decoder).
 
   The first verdict, earlier the same day, was FAIL on 4 orphans (pages 208, 253, 284,
@@ -589,8 +590,8 @@ Every job in `.github/workflows/ci.yml` was run on the author's machine; each pa
     - The 10 POSIX-only tests (rlimits, the sandbox, process groups, SIGTERM): 51 tests
       across their files pass in the worker image on Linux.
     - The EPUBCheck test passes with `PUBLISHER_EPUBCHECK_JAR` set.
-    - The `pip-audit` meta-gate passes on Linux. That test now reads CI's `--ignore-vuln`
-      list from `ci.yml`, so it runs the command CI runs.
+    - The `pip-audit` meta-gate passes on Linux. That test reads any `--ignore-vuln`
+      flags from `ci.yml`, so it runs the command CI runs (there are none now).
   - The `external` marker passes, 1 test. `requires_temporal` passes, 2 tests.
   - The first real book, end to end in the worker image on this code: preflight passes
     with 2 warnings, a 7.9 MB PDF/X-1a, and the book is packaged.
@@ -605,7 +606,7 @@ Every job in `.github/workflows/ci.yml` was run on the author's machine; each pa
     docs claims, schemas.
 - **supply-chain.**
   - `npm audit --audit-level=high` passes for both packages.
-  - `pip-audit` passes, with three documented acceptances.
+  - `pip-audit` passes, with no advisory accepted (weasyprint 70, below).
 
 Bugs these runs found, all fixed:
 
@@ -621,24 +622,64 @@ Bugs these runs found, all fixed:
 - **`packages/api` had two high-severity advisories:** `fast-uri` and `nanoid`. Fixed with
   `npm audit fix`, within the declared ranges. One moderate `@vitest/mocker` advisory
   needs a breaking upgrade and stays.
-- **weasyprint 62.3 has three advisories** (SSRF through redirects, CSS injection through
-  presentational hints, and a fetcher bypass through `write_pdf` arguments).
-  - None is reachable from `paginate`, the one production call. `paginate` now passes
-    `local_only_fetcher`, so weasyprint loads only the render's own figures and pinned
-    fonts, never a network URL. It enables no presentational hints and passes no
-    `xmp_metadata` or `stylesheets`.
-  - `stages/tests/test_render_fetches.py` pins all of that, and `ci.yml`'s pip-audit
-    accepts exactly those three IDs, with the reasons beside them.
-  - **Still: upgrade to weasyprint ≥ 70.** It needs pydyf ≥ 0.11, and a check of the
-    private box tree (`_page_box`) the pagemap and the tests read. One advisory has no
-    fixed release at all.
+- **weasyprint 62.3 had three advisories** (SSRF through redirects, CSS injection through
+  presentational hints, and a fetcher bypass through `write_pdf` arguments). None was
+  reachable from `paginate`, which renders through `local_only_fetcher`
+  (`stages/tests/test_render_fetches.py` still pins that).
+
+## weasyprint 70 (2026-09-26)
+
+`requirements.txt` pins `weasyprint>=70,<71`; the lock carries 70.0 and pydyf 0.12.1.
+`pip-audit` is clean, so `ci.yml` accepts no advisory any more.
+
+- **What changed in code.**
+  - 70 takes a `URLFetcher` instance, not a function, and `default_url_fetcher` is gone.
+    `local_only_fetcher` is now a `URLFetcher` subclass that overrides `fetch`.
+  - The private box tree (`_page_box`, `LineBox`, `.element`) the pagemap reads is
+    unchanged; measurement works as before.
+  - On Windows, 70 loads GTK only from `WEASYPRINT_DLL_DIRECTORIES`, not from PATH.
+    `scripts/test.ps1` sets it to the first PATH folder holding Pango.
+- **The regenerated lock also picked up `temporalio`.** `requirements.txt` has listed it
+  since R1, but the old lock didn't, and both Dockerfiles install only the lock, so the
+  Temporal worker image never had it.
+- **Footnotes: 70 moves notes to protect orphans, and can print them out of order.** The
+  real book (same input, measured in the worker image on an idle machine):
+
+  | | pages | render | notes not on their call's page | notes in order | widows |
+  |---|---|---|---|---|---|
+  | 62.3 | 819 | 480 s | 150 (up to 5 pages away) | yes | 0 |
+  | 70, default | 821 | 586 s | 169 | **no** | 0 |
+  | 70, `footnote-policy: line` | 869 | 720 s | 53 | yes | 27 |
+
+  The notes span now carries `footnote-policy: line`, and its continuation pieces carry
+  `auto`, because notes printed out of sequence are a plain error. The cost is 48 pages
+  (6%) and 27 widows, which preflight warns about but doesn't fail. 62.3 also left 150
+  notes off their call page, which nobody had measured.
+  `test_long_footnotes` now asserts that each note begins on its call's page.
+- **Deadlines.**
+  - `paginate` rises from 1200 s to 2400 s: 720 s on an idle machine, 940 s beside the
+    test suite.
+  - `finish` and `finish-gs` run two Ghostscript passes, each allowed `GS_TIMEOUT_S`, but
+    their deadline was 3600 s against 2 × 2400 s. It's now
+    `FINISH_TIMEOUT_S = 2 × GS_TIMEOUT_S + 600`, with `GS_TIMEOUT_S` at 3600 s.
+  - The reason: one afternoon the same Docker VM took 2333 s (press) and 1826 s (proof)
+    on the 62.3 PDF, where 430 s was measured before, and 2292 s / 2006 s on 70's. That's
+    the same per page for both, so weasyprint 70 doesn't slow Ghostscript; the VM was
+    slow. The first 70 run of the book timed out in `finish-gs` at the old 3600 s. Hours
+    later the whole stage took 1089 s. A deadline has to survive the slow afternoon.
+- **The real book on 70, end to end in the worker image:** preflight passes, with 0 failed
+  and 2 warnings (27 widow pages, 264 runt pages; image resolution not measured). It's 869
+  pages, and the book is packaged. `paginate` took 499 s, `finish-gs` 1089 s.
+- **Test isolation.** `test_api_drives_pipeline.py`'s `worker_process` fixture was
+  module-scoped, so its worker outlived the test using it and sometimes claimed the next
+  test's "no worker has run" build. It's now function-scoped.
 
 ## If you do three things
 
 1. **§3.1 — done for the first real book: it passes preflight.** It runs end to end in the
-   worker image and is packaged. Its 819 pages become a text-carrying PDF/X-1a, and the
-   EPUB is EPUBCheck-clean. What's left:
-   - 255 runt warnings.
+   worker image and is packaged. Its 869 pages (weasyprint 70) become a text-carrying
+   PDF/X-1a, and the EPUB is EPUBCheck-clean. What's left:
+   - 264 runt and 27 widow warnings; the widows come from `footnote-policy: line`.
    - The proof takes about 2.5 s a page.
    - The author must re-save one EMF figure as PNG.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the

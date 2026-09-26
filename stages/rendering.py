@@ -923,11 +923,17 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     # none. The area is `@footnote` -- this read `@footnotes`, which matches no
     # area, so the rule above the notes and its spacing were never drawn -- and
     # capped (NOTE_AREA_MAX) so notes cannot squeeze a page's text to one line.
+    # `footnote-policy: line`: a note that does not fit takes its call's line to
+    # the next page with it. weasyprint 70 otherwise defers a note to protect a
+    # paragraph's orphans/widows -- notes began pages after their call, and out
+    # of order. The continuation pieces keep `auto`: carrying on overleaf is
+    # exactly what they are for.
     lines.extend([
         "@page { @footnote { border-top: 0.5pt solid currentColor; padding-top: 0.4em; "
         f"max-height: {NOTE_AREA_MAX}; }} }}",
         "span.footnote {",
         "  float: footnote;",
+        "  footnote-policy: line;",
         "  footnote-style-position: outside;",
         f"  font-size: {body_size * 0.82}pt;",
         "  text-align: left;",
@@ -944,6 +950,7 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "  content: attr(data-n) '. ';",
         "  font-weight: normal;",
         "}",
+        "span.footnote-cont { footnote-policy: auto; }",
         "span.footnote-cont::footnote-marker { content: ''; }",
         "",
     ])

@@ -1,12 +1,12 @@
 """
 paginate's renderer loads its own files and nothing else.
 
-weasyprint 62.3 carries three advisories (pip-audit): its default fetcher follows
-HTTP redirects unchecked (CVE-2025-68616), presentational hints allow CSS
-injection (CVE-2026-49452, no fix released), and write_pdf's `xmp_metadata` /
-`stylesheets` bypass a custom fetcher (CVE-2026-55073). CI accepts them for this
-pin because none is reachable from how paginate calls weasyprint. These tests
-are what keep that true: if one fails, the acceptance in ci.yml is void.
+This was first written to justify accepting three weasyprint 62.3 advisories
+(redirects followed unchecked, CSS injection through presentational hints,
+write_pdf options that bypass a custom fetcher). weasyprint 70 fixed all three
+and CI accepts none now, but the property stays: nothing a book contains can make
+the worker open a socket or read a file that is not the book's own, whatever the
+next weasyprint release gets wrong.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def test_no_other_file_on_the_worker_loads(tmp_path):
         fetch((work / ".." / "secret.txt").resolve().as_uri())
 
 
-def test_paginate_calls_weasyprint_the_way_the_audit_acceptance_assumes():
+def test_paginate_renders_through_the_local_only_fetcher():
     source = inspect.getsource(paginate_stage.paginate)
     assert "url_fetcher=local_only_fetcher(" in source
     assert "presentational_hints" not in source

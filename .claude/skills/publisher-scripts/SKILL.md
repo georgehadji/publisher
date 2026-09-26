@@ -9,7 +9,7 @@ Two files, kept deliberately in sync. **Use these instead of a bare `pytest`.**
 
 | File | Platform |
 |---|---|
-| `test.ps1` | Windows / PowerShell — carries the full rationale in its header comment. |
+| `test.ps1` | Windows / PowerShell — carries the full rationale in its header comment. Also sets `WEASYPRINT_DLL_DIRECTORIES` (when unset) to the first PATH folder holding `libpango-1.0-0.dll`: weasyprint 70 no longer searches PATH, and without it `import weasyprint` raises OSError, which `importorskip` does not catch. |
 | `test.sh` | POSIX. **Not what CI runs** — see the warning below. |
 
 ```bash

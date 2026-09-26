@@ -190,28 +190,11 @@ jobs:
       - name: pip-audit (requirements.lock)
         # --require-hashes is also implied by the file having --hash entries
         # at all; spelled out so a future edit that drops hashes fails loudly
-        # here instead of silently auditing an unpinned tree.
-        #
-        # Three weasyprint 62.3 advisories are accepted, each unreachable from
-        # the one place the pipeline calls weasyprint (stages/paginate_stage.py),
-        # and each kept that way by stages/tests/test_render_fetches.py -- if
-        # that test fails, this acceptance is void:
-        #   PYSEC-2026-2034 (CVE-2025-68616) -- the default fetcher follows HTTP
-        #     redirects unchecked. paginate passes `local_only_fetcher`: nothing
-        #     is fetched over any network, only its own media and pinned fonts.
-        #   PYSEC-2026-3412 (CVE-2026-49452) -- CSS injection through
-        #     presentational hints. paginate never enables them. No fixed
-        #     release exists, so an upgrade would not clear this one either.
-        #   PYSEC-2026-3940 (CVE-2026-55073) -- write_pdf's `xmp_metadata` and
-        #     `stylesheets` bypass the fetcher. paginate passes neither.
-        # The real fix is weasyprint >= 70 (docs/REMAINING_WORK.md), which also
-        # needs pydyf >= 0.11 and a check of the private box API the pagemap reads.
+        # here instead of silently auditing an unpinned tree. No advisory is
+        # accepted: the three weasyprint 62.3 carried were cleared by 70.0.
         run: |
           pip install --quiet pip-audit
-          pip-audit -r requirements.lock --require-hashes \
-            --ignore-vuln PYSEC-2026-2034 \
-            --ignore-vuln PYSEC-2026-3412 \
-            --ignore-vuln PYSEC-2026-3940
+          pip-audit -r requirements.lock --require-hashes
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

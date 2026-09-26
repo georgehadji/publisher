@@ -28,6 +28,7 @@ from pathlib import Path
 from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 from publisher_prepress.ghostscript import (
+    FINISH_TIMEOUT_S,
     GhostscriptError, find_binary, to_pdfx, to_proof,
 )
 from publisher_sandbox import sandbox_for
@@ -45,7 +46,7 @@ from profiles import load_profile
     # collapsed TrimBox onto MediaBox and produced a press file measuring 0.00mm
     # of bleed no matter what the renderer had laid down.
     # v7: proof/report declared terminal outputs (U6).
-    version=9,   # v9: 3600 s deadline, cheap text check (Tj/TJ count), notes split. v8: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline.
+    version=10,  # v10: deadline FINISH_TIMEOUT_S, covering both Ghostscript passes. v9: 3600 s deadline, cheap text check (Tj/TJ count), notes split. v8: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline.
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     inputs={"pdf_path": "raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
@@ -58,8 +59,8 @@ from profiles import load_profile
     # Ghostscript's press conversion of the first real book (819 pages) takes
     # 430 s and its proof longer; the whole stage took 1884 s with another job
     # sharing the CPU. The default 300 s failed every book past ~600 pages.
-    # See ghostscript.GS_TIMEOUT_S.
-    timeout_s=3600,
+    # See ghostscript.GS_TIMEOUT_S / FINISH_TIMEOUT_S.
+    timeout_s=FINISH_TIMEOUT_S,
     queue="q.prepress",
     description="Apply CMYK, bleed, marks, OutputIntent; emit press + proof PDFs",
 )

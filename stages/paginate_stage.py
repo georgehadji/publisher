@@ -155,7 +155,7 @@ def _measure_pages(rendered_pages) -> dict[int, dict]:
       - widow:  a paragraph's LAST line, alone at the TOP of a page.
       - runt:   a multi-line paragraph whose last line holds a single word.
 
-    ponytail: reads weasyprint's private `_page_box`; 62.x exposes no public box
+    ponytail: reads weasyprint's private `_page_box`; 70.0 still exposes no public box
     tree. If that attribute goes away this degrades to unmeasured (fields
     absent), never to wrong -- the blanket except below is what guarantees that,
     so keep it blanket.
@@ -346,30 +346,33 @@ def local_only_fetcher(work: Path, font_face_css: str):
 
     The HTML is ours (every tenant string is escaped), so no tenant URL reaches
     the renderer today. This makes that a property of the render rather than of
-    every future edit to the renderer: weasyprint 62.3's default fetcher follows
-    HTTP redirects unchecked (CVE-2025-68616), and the worker's network is not
-    the place to find out. It is also what lets CI's pip-audit accept that
-    advisory for this pin -- see .github/workflows/ci.yml.
+    every future edit to the renderer: nothing a book contains can make the
+    worker open a socket or read a file that is not the book's own.
+
+    weasyprint 70 takes a `URLFetcher` instance, not a function (it reads the
+    fetcher's own `_fail_on_errors`), so the check lives in a `fetch` override.
     """
     from urllib.parse import urlparse
     from urllib.request import url2pathname
 
-    import weasyprint
+    from weasyprint.urls import URLFetcher
 
     root = work.resolve()
     fonts = {Path(url2pathname(urlparse(url).path)).resolve()
              for _, url in _FONT_FACE_URL.findall(font_face_css)}
 
-    def fetch(url: str, *args, **kwargs):
-        if url.startswith("data:"):
-            return weasyprint.default_url_fetcher(url, *args, **kwargs)
-        if url.startswith("file:"):
-            path = Path(url2pathname(urlparse(url).path)).resolve()
-            if path in fonts or path.is_relative_to(root):
-                return weasyprint.default_url_fetcher(url, *args, **kwargs)
-        raise ValueError(f"paginate loads only its own media and fonts; refused {url[:120]!r}")
+    class LocalOnlyFetcher(URLFetcher):
+        def fetch(self, url, headers=None):
+            if url.startswith("file:"):
+                path = Path(url2pathname(urlparse(url).path)).resolve()
+                allowed = path in fonts or path.is_relative_to(root)
+            else:
+                allowed = url.startswith("data:")
+            if not allowed:
+                raise ValueError(f"paginate loads only its own media and fonts; refused {url[:120]!r}")
+            return super().fetch(url, headers)
 
-    return fetch
+    return LocalOnlyFetcher()
 
 
 def _family_name(font) -> str:
@@ -378,7 +381,8 @@ def _family_name(font) -> str:
 
 @stage(
     name="paginate",
-    version=13,  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+    version=14,  # v14: weasyprint 70 (URLFetcher subclass; footnote-policy keeps notes on their call page; 2400 s deadline).
+                 # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
                  # v13: weasyprint loads only the render's own media and fonts (local_only_fetcher).
                  # v12: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped.
                  # v10: link hrefs are percent-encoded (rendering._safe_href).
@@ -421,8 +425,10 @@ def _family_name(font) -> str:
     # quiet dev machine -- against the 300 s default, so any load tipped it over.
     # ~5x headroom for slower workers. Note a timed-out stage is not killed: its
     # thread runs on (the executor cannot stop it), so this is also the budget
-    # for wasted work.
-    timeout_s=1200,
+    # for wasted work. weasyprint 70 with `footnote-policy: line` takes 720 s on
+    # the same book, idle (62.3: 480 s), and 940 s beside the test suite -- so
+    # 1200 no longer had the headroom this comment promises.
+    timeout_s=2400,
     queue="q.composition",
     description="Render the resolved document + CSS into a paginated PDF",
 )
