@@ -60,7 +60,7 @@ def test_calls_and_notes_are_numbered_once_per_note():
     html = ast_to_html(book)
     notes = sum(1 for n in book["body"][0]["content"] if n["type"] == "footnote")
     calls = re.findall(r'<span class="note-call" data-n="(\d+)">', html)
-    firsts = re.findall(r'<span class="footnote" data-n="(\d+)">', html)
+    firsts = re.findall(r'<span class="footnote" data-n="(\d+)"', html)
     assert calls == firsts == [str(i) for i in range(1, notes + 1)]
     assert html.count('class="footnote footnote-cont"') > 0   # the long ones were split
 
@@ -85,12 +85,17 @@ def test_long_notes_leave_no_orphan_and_nothing_past_the_type_area():
     weasyprint = pytest.importorskip("weasyprint")
     from weasyprint.formatting_structure import boxes
 
-    from stages.paginate_stage import _measure_pages
+    from stages.paginate_stage import _measure_pages, notes_in_document_order
 
+    notes_in_document_order()   # what paginate applies before every render
     css = emit_css({"trimSize": {"width": 170, "height": 240}, "chapterOpenings": {"dropCap": False}})
     doc = weasyprint.HTML(string=f"<style>{css}</style>" + ast_to_html(_book(90))).render()
-    orphans = [p for p, m in _measure_pages(doc.pages).items() if m.get("hasOrphans")]
-    assert orphans == []
+    measured = _measure_pages(doc.pages)
+    assert [p for p, m in measured.items() if m.get("hasOrphans")] == []
+    # `footnote-policy: line` kept notes on their call's page by moving the
+    # call's line over, stranding it: 27 widows and 23 one-line pages in the
+    # first real book. It is gone; this is the regression check.
+    assert [p for p, m in measured.items() if m.get("hasWidows")] == []
     past = 0
     calls, markers = [], []
     call_page, note_page = {}, {}
@@ -112,14 +117,11 @@ def test_long_notes_leave_no_orphan_and_nothing_past_the_type_area():
                     note_page[text] = number
     assert past == 0
     expected = [str(i) for i in range(1, len(calls) + 1)]
+    # In order: weasyprint 70 printed "10. 9." here (Windows fonts) until
+    # notes_in_document_order. A note may carry over to a later page than its
+    # call, as it did on 62.3; never ahead of it.
     assert calls == expected and markers == expected
-    # Notes begin on the page that calls them. weasyprint 70 defers whole notes to
-    # protect a paragraph's orphans; `footnote-policy: line` (rendering.emit_css)
-    # stops most of that but not all (its orphan path ignores the policy). On
-    # these 30 notes: 15 (Windows fonts) or 12 (worker image) land pages late
-    # without it, 0 or 2 with it.
-    late = sorted(n for n, page in call_page.items() if note_page.get(n) != page)
-    assert len(late) <= len(call_page) // 10, late
+    assert all(note_page[n] >= call_page[n] for n in call_page)
 
 
 def test_typst_folds_the_pieces_back_into_one_footnote(tmp_path):

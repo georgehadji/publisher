@@ -73,7 +73,7 @@ def test_two_notes_on_one_paragraph_both_attach_to_it():
 def test_a_note_with_no_paragraph_before_it_still_renders():
     html = ast_to_html(_book([_note("A note that opens the chapter."), _para("Prose.")]))
     assert ('<span class="note-call" data-n="1"></span>'
-            '<span class="footnote" data-n="1"> A note that opens <span class="keep">the chapter.</span></span>') in html
+            '<span class="footnote" data-n="1" data-seq="1"> A note that opens <span class="keep">the chapter.</span></span>') in html
 
 
 def test_a_note_inside_its_paragraph_passes_the_integrity_gate(tmp_path):

@@ -352,6 +352,52 @@ def requested_font_families(css: str) -> list[str]:
     return list(dict.fromkeys(v for v in singles if v and v != "inherit"))
 
 
+def _in_seq_order(notes: list) -> None:
+    """Sort weasyprint footnote boxes in place by `data-seq`, when all have one."""
+    seqs = [getattr(note, "element", None) is not None and note.element.get("data-seq")
+            for note in notes]
+    if len(notes) > 1 and all(seqs):
+        order = sorted(range(len(notes)), key=lambda i: int(seqs[i]))
+        notes[:] = [notes[i] for i in order]
+
+
+def notes_in_document_order() -> None:
+    """Keep the book's footnotes in order across pages. Idempotent.
+
+    weasyprint 70 can carry notes over out of order ("10. 9.") when it moves
+    them to protect a paragraph's orphans or widows: its queue of notes waiting
+    for the next page gets reversed, and a later note then fits where an
+    earlier one did not. Two hooks, both sorting by each note's `data-seq`
+    (rendering.PrintNotes), only when every note carries one -- any other
+    document renders exactly as weasyprint lays it out:
+      - `make_page`: the waiting queue, before a page lays it out;
+      - `LayoutContext._update_footnote_area`: the page's own notes, whenever
+        its footnote area is rebuilt.
+
+    ponytail: patches weasyprint internals. If either name goes away the hook
+    is skipped, and test_long_footnotes' order check fails on the Windows fonts.
+    """
+    from weasyprint.layout import LayoutContext, page as page_module
+
+    update = getattr(LayoutContext, "_update_footnote_area", None)
+    if update is not None and not getattr(update, "_in_document_order", False):
+        def _update_footnote_area(self):
+            _in_seq_order(self.current_page_footnotes)
+            return update(self)
+
+        _update_footnote_area._in_document_order = True
+        LayoutContext._update_footnote_area = _update_footnote_area
+
+    make_page = getattr(page_module, "make_page", None)
+    if make_page is not None and not getattr(make_page, "_in_document_order", False):
+        def _make_page(context, *args, **kwargs):
+            _in_seq_order(context.reported_footnotes)
+            return make_page(context, *args, **kwargs)
+
+        _make_page._in_document_order = True
+        page_module.make_page = _make_page
+
+
 _FONT_FACE_URL = re.compile(r"url\((['\"]?)(file:[^'\")]+)\1\)")
 
 
@@ -398,7 +444,8 @@ def _family_name(font) -> str:
 
 @stage(
     name="paginate",
-    version=15,  # v15: keep span: a paragraph's last two words (and its note calls) never split in print; a runt is a one-word last line under RUNT_MAX_FILL of the measure.
+    version=16,  # v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
+                 # v15: keep span: a paragraph's last two words (and its note calls) never split in print; a runt is a one-word last line under RUNT_MAX_FILL of the measure.
                  # v14: weasyprint 70 (URLFetcher subclass; footnote-policy keeps notes on their call page; 2400 s deadline).
                  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
                  # v13: weasyprint loads only the render's own media and fonts (local_only_fetcher).
@@ -511,6 +558,7 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
             # base_url is what makes the relative `media/...` srcs resolve; a
             # string-only HTML() has no base and every figure silently renders
             # as an empty box.
+            notes_in_document_order()
             document = weasyprint.HTML(string=full_html, base_url=str(work),
                                        url_fetcher=local_only_fetcher(work, faces)).render()
             # full_fonts: PN Katsoulidis forbids subsetting (fsType 0x0100), and a

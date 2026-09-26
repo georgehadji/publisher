@@ -351,6 +351,11 @@ class PrintNotes:
 
     def __init__(self) -> None:
         self.count = 0
+        self.seq = 0
+
+    def _seq(self) -> int:
+        self.seq += 1
+        return self.seq
 
     def render(self, node: dict) -> str:
         return "".join(self.render_parts(node))
@@ -367,9 +372,12 @@ class PrintNotes:
         # gate reads "text.Note" against the source's "text. Note". In the
         # footnote area it collapses at line start.
         first, *rest = pieces
+        # `data-seq`: every piece's place in the book, for
+        # paginate_stage.notes_in_document_order.
         return (f'<span class="note-call" data-n="{n}"></span>',
-                f'<span class="footnote" data-n="{n}"> {_render_inline(_keep_tail(first))}</span>'
-                + "".join(f'<span class="footnote footnote-cont"> {_render_inline(_keep_tail(piece))}</span>'
+                f'<span class="footnote" data-n="{n}" data-seq="{self._seq()}"> {_render_inline(_keep_tail(first))}</span>'
+                + "".join(f'<span class="footnote footnote-cont" data-seq="{self._seq()}"> '
+                          f'{_render_inline(_keep_tail(piece))}</span>'
                           for piece in rest))
 
 
@@ -1022,17 +1030,16 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     # none. The area is `@footnote` -- this read `@footnotes`, which matches no
     # area, so the rule above the notes and its spacing were never drawn -- and
     # capped (NOTE_AREA_MAX) so notes cannot squeeze a page's text to one line.
-    # `footnote-policy: line`: a note that does not fit takes its call's line to
-    # the next page with it. weasyprint 70 otherwise defers a note to protect a
-    # paragraph's orphans/widows -- notes began pages after their call, and out
-    # of order. The continuation pieces keep `auto`: carrying on overleaf is
-    # exactly what they are for.
+    # No `footnote-policy: line`: it kept notes on their call's page by moving
+    # the call's line over -- and while any note was waiting to carry over,
+    # weasyprint 70 moved EVERY later call line, leaving 23 pages of the first
+    # real book with one line of text and 27 widows. The default lets a note
+    # carry over; paginate_stage.notes_in_document_order keeps them in order.
     lines.extend([
         "@page { @footnote { border-top: 0.5pt solid currentColor; padding-top: 0.4em; "
         f"max-height: {NOTE_AREA_MAX}; }} }}",
         "span.footnote {",
         "  float: footnote;",
-        "  footnote-policy: line;",
         "  footnote-style-position: outside;",
         f"  font-size: {body_size * 0.82}pt;",
         "  text-align: left;",
@@ -1049,7 +1056,6 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "  content: attr(data-n) '. ';",
         "  font-weight: normal;",
         "}",
-        "span.footnote-cont { footnote-policy: auto; }",
         "span.footnote-cont::footnote-marker { content: ''; }",
         "",
     ])

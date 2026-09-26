@@ -349,10 +349,10 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
 **Still:**
 - **This book needs its EMF figure ("Εικόνα 6") re-saved as PNG** before it can build.
 - **Preflight verdict (2026-09-26, in the worker image, weasyprint 70): PASS, with 2
-  warnings.** 9 checks pass and none fail; the book is packaged at 869 pages (819 on
-  62.3; see **weasyprint 70** below for the 50 pages).
-  - Warning 1: composition. 27 pages start with a widow, which warns and doesn't gate.
-    There are no runts left; they were 264 pages (see **Runts** below).
+  warnings.** 9 checks pass and none fail. The book was packaged at 869 pages; it's 821
+  now that `footnote-policy: line` is gone (819 on 62.3; see **weasyprint 70** below).
+  - Warning 1 was composition: 27 widow pages and 264 runt pages. Both are now 0 (see
+    **Runts** and **Widows** below).
   - Warning 2: image resolution is unmeasured (no PDF image decoder).
 
   The first verdict, earlier the same day, was FAIL on 4 orphans (pages 208, 253, 284,
@@ -649,16 +649,28 @@ Bugs these runs found, all fixed:
   |---|---|---|---|---|---|
   | 62.3 | 819 | 480 s | 150 (up to 5 pages away) | yes | 0 |
   | 70, default | 821 | 586 s | 169 | **no** | 0 |
-  | 70, `footnote-policy: line` | 869 | 720 s | 53 | yes | 27 |
+  | 70, `footnote-policy: line` (5a2a4b0, withdrawn) | 869 | 720 s | 53 | yes | 27 |
+  | **70, default + `notes_in_document_order`** | **821** | **289 s** | 174 | **yes** | **0** |
 
-  The notes span now carries `footnote-policy: line`, and its continuation pieces carry
-  `auto`, because notes printed out of sequence are a plain error. The cost is 48 pages
-  (6%) and 27 widows, which preflight warns about but doesn't fail. 62.3 also left 150
-  notes off their call page, which nobody had measured.
-  `test_long_footnotes` now asserts that each note begins on its call's page.
+  - **The first fix, `footnote-policy: line`, was withdrawn.** It kept notes on their
+    call's page by moving the call's line to the next page. But while any note was waiting
+    to carry over, weasyprint 70 moved every later call line too. That left 23 pages
+    holding one line of text, and the stranded last lines were the 27 widows.
+  - **The fix now is `paginate_stage.notes_in_document_order`,** two hooks into weasyprint
+    that sort by each note piece's `data-seq` (`rendering.PrintNotes`):
+    - the carry-over queue, before each page lays it out (`make_page`);
+    - each page's own notes (`LayoutContext._update_footnote_area`).
+
+    The queue is where 70 reverses notes it moves to protect orphans/widows. The hooks only
+    sort when every note has a `data-seq`, so any other document lays out untouched.
+  - Near-empty pages (under 300 characters) are back to 17, the same set as 62.3's: front
+    matter and chapter-end pages.
+  - 62.3 also left 150 notes off their call page, which nobody had measured. On 70 it's
+    174; a note carries over as on 62.3, never ahead of its call.
+  - `test_long_footnotes` asserts the order, no widows, and no note ahead of its call.
 - **Deadlines.**
-  - `paginate` rises from 1200 s to 2400 s: 720 s on an idle machine, 940 s beside the
-    test suite.
+  - `paginate` rises from 1200 s to 2400 s. With `footnote-policy: line` it took 720 s on
+    an idle machine and 940 s beside the test suite; without it, 289–530 s.
   - `finish` and `finish-gs` run two Ghostscript passes, each allowed `GS_TIMEOUT_S`, but
     their deadline was 3600 s against 2 × 2400 s. It's now
     `FINISH_TIMEOUT_S = 2 × GS_TIMEOUT_S + 600`, with `GS_TIMEOUT_S` at 3600 s.
@@ -667,9 +679,10 @@ Bugs these runs found, all fixed:
     the same per page for both, so weasyprint 70 doesn't slow Ghostscript; the VM was
     slow. The first 70 run of the book timed out in `finish-gs` at the old 3600 s. Hours
     later the whole stage took 1089 s. A deadline has to survive the slow afternoon.
-- **The real book on 70, end to end in the worker image:** preflight passes, with 0 failed
-  and 2 warnings (27 widow pages, 264 runt pages, since fixed; image resolution not measured). It's 869
-  pages, and the book is packaged. `paginate` took 499 s, `finish-gs` 1089 s.
+- **The real book on 70, end to end in the worker image:** preflight passes, and the book
+  is packaged. The first run had 0 failed and 2 warnings: 27 widow pages and 264 runt
+  pages, both since fixed, and image resolution not measured. It's now 821 pages with
+  no composition defect; see **Runts** and **Widows** below.
 - **The weasyprint/Typst stage tests now pass on Linux** (worker image, 465 stage and
   service tests). CI skips them, and two had only ever passed on Windows fonts:
   - The orphan sweep stopped at 164 words, and the image's fonts need 180. It now sweeps
@@ -683,7 +696,7 @@ Bugs these runs found, all fixed:
 ## Runts (2026-09-26): 264 pages to 0
 
 A runt is a paragraph whose last line holds one short word. Preflight warned on 264 of
-the book's 869 pages. weasyprint 70 has no `text-wrap: pretty`, so the print renderer
+the book's pages. weasyprint 70 has no `text-wrap: pretty`, so the print renderer
 glues each ending instead (`stages/rendering.py`, `_keep_tail`). It wraps the last two
 words in `<span class="keep">` (`white-space: nowrap`). The characters are the book's
 own, so the integrity gate is unaffected, and the EPUB, which reflows, isn't touched.
@@ -698,7 +711,8 @@ Each pass on the real book, and what the one after it fixed:
 | calls kept with the last word; headings, titles, cells (≤ 16) kept; a long ending keeps its last 30 chars | 2 | a narrow cell measured against the page; a note piece cut right after a forced line break |
 | per-block measure; note cut takes one more word after a hard break | **0** | |
 
-Widows (27) and orphans (0) are unchanged, and so is the length (869 pages).
+Widows (27) and orphans (0) were unchanged, and so was the length (869 pages). Both came
+from `footnote-policy: line`; see **Widows**.
 
 Two measurement changes, both in `paginate`'s `_measure_pages`:
 
@@ -712,13 +726,26 @@ Two measurement changes, both in `paginate`'s `_measure_pages`:
 `stages/tests/test_runts.py` covers each case, and each rendered check has a control
 showing it can fail.
 
+## Widows (2026-09-26): 27 pages to 0
+
+Every widow was a paragraph's last line, carrying its note calls, alone at the top of a
+page. `footnote-policy: line` had moved that line over to keep its notes beside it. The
+page before usually held that paragraph's single previous line and nothing else: 23
+such near-blank pages. `widows: 3` changed nothing (27 widows, 4 more pages), because
+this path ignores it. `footnote-policy: block` crashes weasyprint 70 on this book
+(`assert not page_is_empty` in `make_page`). The policy is gone, and
+`notes_in_document_order` fixes the out-of-order notes it was there to prevent (see the
+table under **weasyprint 70**).
+
+On the real book: 0 widows, 0 orphans, 0 runts, notes in order, 821 pages.
+
 ## If you do three things
 
 1. **§3.1 — done for the first real book: it passes preflight.** It runs end to end in the
-   worker image and is packaged. Its 869 pages (weasyprint 70) become a text-carrying
+   worker image and is packaged. Its 821 pages (weasyprint 70) become a text-carrying
    PDF/X-1a, and the EPUB is EPUBCheck-clean. What's left:
-   - 27 widow warnings; they come from `footnote-policy: line`. The runts are fixed
-     (264 pages to 0, see **Runts**).
+   - No composition warnings: runts 264 → 0 and widows 27 → 0 (see **Runts**, **Widows**).
+     The one warning left is image resolution, unmeasured.
    - The proof takes about 2.5 s a page.
    - The author must re-save one EMF figure as PNG.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the

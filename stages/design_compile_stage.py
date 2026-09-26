@@ -47,7 +47,8 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
     # silently ignored, so no chapter or front-matter section started on a recto.
     # v5: the built-in spec is set in GFS Didot. EB Garamond was never installed
     # anywhere, so every v4 render was in a substitute face.
-    version=8,   # v8: .keep { white-space: nowrap } (keep span: a paragraph's last two words never split in print (no runts).) v7: footnote-policy keeps each note on its call's page (weasyprint 70).
+    version=9,   # v9: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
+                 # v8: .keep { white-space: nowrap } (keep span: a paragraph's last two words never split in print (no runts).) v7: footnote-policy keeps each note on its call's page (weasyprint 70).
                  # v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped.
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},
     outputs={"css": "text/css"},
