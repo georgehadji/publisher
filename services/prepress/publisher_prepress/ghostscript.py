@@ -24,9 +24,12 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
+import threading
 import zlib
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from publisher_sandbox import ExitReason, ResourceBudget, SandboxPort, SandboxTier
 
@@ -467,3 +470,57 @@ def to_proof(
         str(input_pdf),
     ], sandbox=sandbox, work_dir=output_pdf.parent)
     _assert_pdf(output_pdf, "proof")
+
+
+# Ink is read off a render at this resolution, without anti-aliasing, so each
+# pixel carries the exact colour of whatever covers its centre.
+# ponytail: point sampling misses marks under a pixel (0.35 mm); raise it if a
+# vendor measures finer.
+INK_DPI = 72
+# One render of the press file. 21 pages of the first real book took 3.3 s.
+INK_TIMEOUT_S = 900
+
+
+def page_colours(pdf: Path, *, text_only: bool = False, dpi: int = INK_DPI,
+                 gs_binary: Optional[str] = None,
+                 timeout: int = INK_TIMEOUT_S) -> Iterator[set[tuple[int, int, int, int]]]:
+    """The CMYK colours each page prints, one set of (c, m, y, k) percentages per page.
+
+    Ghostscript renders the pages to raw CMYK (PAM) on stdout, and only each
+    page's distinct colours are kept, so memory does not grow with the book.
+    `text_only` drops images and vector art, leaving what the text is set in.
+    """
+    gs = gs_binary or find_binary()
+    if gs is None:
+        raise GhostscriptError("ghostscript binary not found on PATH")
+    cmd = [gs, "-q", "-dBATCH", "-dNOPAUSE", "-sstdout=%stderr", "-sDEVICE=pamcmyk32",
+           f"-r{dpi}", *(["-dFILTERIMAGE", "-dFILTERVECTOR"] if text_only else []),
+           "-sOutputFile=-", str(pdf)]
+    with tempfile.TemporaryFile() as errors:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errors)
+        timer = threading.Timer(timeout, proc.kill)
+        timer.start()
+        try:
+            while size := _pam_size(proc.stdout):
+                pixels = proc.stdout.read(size[0] * size[1] * 4)
+                yield {tuple(round(ink * 100 / 255) for ink in value.to_bytes(4, sys.byteorder))
+                       for value in set(memoryview(pixels).cast("I"))}
+            proc.wait()
+        finally:
+            timer.cancel()
+            if proc.poll() is None:   # the caller stopped early
+                proc.kill()
+                proc.wait()
+        if proc.returncode:
+            errors.seek(0)
+            raise GhostscriptError(f"ghostscript could not render {pdf.name} for ink "
+                                   f"(exit {proc.returncode}): {errors.read().decode(errors='replace').strip()}")
+
+
+def _pam_size(stream) -> tuple[int, int] | None:
+    """Read one PAM header; (width, height), or None at the end of the stream."""
+    fields = {}
+    while (line := stream.readline()) and line != b"ENDHDR\n":
+        key, _, value = line.decode("ascii").partition(" ")
+        fields[key] = value.strip()
+    return (int(fields["WIDTH"]), int(fields["HEIGHT"])) if "WIDTH" in fields else None

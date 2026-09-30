@@ -18,6 +18,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from publisher_prepress.ghostscript import INK_TIMEOUT_S, GhostscriptError, find_binary, page_colours
+
+# run_preflight renders the pages twice (measure_ink); the rest is byte scanning.
+PREFLIGHT_TIMEOUT_S = 2 * INK_TIMEOUT_S + 300
+
 
 @dataclass
 class PreflightCheck:
@@ -377,6 +382,84 @@ def check_interactive_content(pdf_info: dict, profile: dict) -> PreflightCheck:
     return _pass("interactive-content", "No JavaScript, forms or annotations")
 
 
+# Total ink a page may carry anywhere, C+M+Y+K in percent, when the profile sets
+# no `pdfSpec.maxInkCoverage`: the common offset limit for coated stock.
+DEFAULT_MAX_INK_COVERAGE = 300
+# Rich black text: black (K at least RICH_BLACK_MIN_K) that also carries C+M+Y of
+# RICH_BLACK_MIN_CMY or more. Four plates must then register on every stroke of
+# small type. RGB black converts to C72 M67 Y67 K88; a designer's dark colour
+# rarely goes past K50, so it is not caught.
+RICH_BLACK_MIN_K = 70
+RICH_BLACK_MIN_CMY = 30
+
+
+def is_rich_black(colour: tuple[int, int, int, int]) -> bool:
+    c, m, y, k = colour
+    return k >= RICH_BLACK_MIN_K and c + m + y >= RICH_BLACK_MIN_CMY
+
+
+def measure_ink(pdf_path: Path) -> dict:
+    """Per page: the highest total ink, and whether any text is rich black.
+
+    Both come from Ghostscript renders (`ghostscript.page_colours`); a byte scan
+    cannot see what colour a page prints. When Ghostscript is missing or fails,
+    the reason is returned instead, and both checks say "not measured".
+    """
+    if find_binary() is None:
+        return {"unmeasured": "Ghostscript is not installed"}
+    try:
+        tac = [max(map(sum, colours), default=0) for colours in page_colours(pdf_path)]
+        rich = [number for number, colours in
+                enumerate(page_colours(pdf_path, text_only=True), start=1)
+                if any(map(is_rich_black, colours))]
+    except GhostscriptError as error:
+        return {"unmeasured": str(error)[:300]}
+    return {"tac": tac, "rich_black_text_pages": rich}
+
+
+def _ink_unmeasured(code: str, ink: dict) -> PreflightCheck:
+    return _warn(code, f"Not measured: {ink.get('unmeasured', 'no render of the pages')}",
+                 suggestedFix="Run preflight where Ghostscript is installed (the worker image).")
+
+
+@preflight_check("ink-coverage")
+def check_ink_coverage(pdf_info: dict, profile: dict) -> PreflightCheck:
+    """No point on any page carries more ink than the press allows."""
+    ink = pdf_info.get("ink") or {}
+    if "tac" not in ink:
+        return _ink_unmeasured("ink-coverage", ink)
+    limit = profile.get("pdfSpec", {}).get("maxInkCoverage", DEFAULT_MAX_INK_COVERAGE)
+    over = [number for number, tac in enumerate(ink["tac"], start=1) if tac > limit]
+    highest = max(ink["tac"], default=0)
+    if over:
+        c = _fail("ink-coverage",
+                  f"Total ink reaches {highest}%, over the {limit}% limit, on {_pages_phrase(over)}",
+                  suggestedFix="Convert the images with the vendor's CMYK profile, and set "
+                               "black as K only rather than four-colour black.",
+                  value=highest, expected=limit)
+        c.sourceRef = f"pdf#page={over[0]}"
+        return c
+    return _pass("ink-coverage", f"Total ink at most {highest}% (limit {limit}%)")
+
+
+@preflight_check("rich-black-text")
+def check_rich_black_text(pdf_info: dict, profile: dict) -> PreflightCheck:
+    """Black text is set in K alone, not in four-colour black."""
+    ink = pdf_info.get("ink") or {}
+    if "rich_black_text_pages" not in ink:
+        return _ink_unmeasured("rich-black-text", ink)
+    pages = ink["rich_black_text_pages"]
+    if pages:
+        c = _fail("rich-black-text",
+                  f"Black text is printed in four inks (rich black) on {_pages_phrase(pages)}; "
+                  f"any misregistration blurs it",
+                  suggestedFix="Set black text as K only (CMYK 0 0 0 100).",
+                  value=len(pages), expected=0)
+        c.sourceRef = f"pdf#page={pages[0]}"
+        return c
+    return _pass("rich-black-text", "Black text is K only")
+
+
 def _skip(code: str, humanMessage: str) -> PreflightCheck:
     return PreflightCheck(code=code, status="skip", severity="info",
                           humanMessage=humanMessage)
@@ -542,6 +625,8 @@ def run_preflight(pdf_path: str | Path, profile: dict,
             profileVersion=profile.get("vendorProfileVersion"),
             createdAt=created_at,
         )
+
+    pdf_info["ink"] = measure_ink(pdf_path)
 
     checks = []
     for code, check_fn in sorted(_CHECKS.items()):

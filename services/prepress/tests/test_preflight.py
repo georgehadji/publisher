@@ -274,3 +274,65 @@ def test_interactive_content_is_unmeasured_behind_object_streams():
     raw = _page() + b"2 0 obj<</Type/ObjStm/N 3/First 9/Length 4>>stream\nxxxx\nendstream endobj\n"
     assert _interactive_content(raw) is None
     assert check_interactive_content({"interactive": None}, {}).status == "warn"
+
+
+# --- ink coverage and rich black -----------------------------------------
+
+import subprocess
+
+import pytest
+
+from publisher_prepress.ghostscript import find_binary
+from publisher_prepress.preflight import (check_ink_coverage, check_rich_black_text,
+                                          measure_ink)
+
+needs_gs = pytest.mark.skipif(find_binary() is None, reason="needs Ghostscript")
+
+TEXT = "/Helvetica findfont 36 scalefont setfont 72 300 moveto (Rich) show"
+BOX = "72 72 144 144 rectfill"
+
+
+def _pdf(tmp_path, *pages):
+    """A PDF from PostScript pages, so every colour is exactly what the test set."""
+    ps = tmp_path / "in.ps"
+    ps.write_text("%!\n" + "".join(f"{page}\nshowpage\n" for page in pages))
+    pdf = tmp_path / "in.pdf"
+    subprocess.run([find_binary(), "-q", "-dBATCH", "-dNOPAUSE", "-sDEVICE=pdfwrite",
+                    f"-sOutputFile={pdf}", str(ps)], check=True)
+    return pdf
+
+
+@needs_gs
+def test_rich_black_text_is_found_and_counted_as_ink(tmp_path):
+    pdf = _pdf(tmp_path,
+               f"0 0 0 1 setcmykcolor {TEXT}",
+               f"0.72 0.67 0.67 0.88 setcmykcolor {TEXT}")
+    ink = measure_ink(pdf)
+    assert ink["rich_black_text_pages"] == [2]
+    assert ink["tac"] == [100, 294]
+    assert check_rich_black_text({"ink": ink}, {}).status == "fail"
+    assert check_ink_coverage({"ink": ink}, {}).status == "pass"
+
+
+@needs_gs
+def test_heavy_ink_art_fails_coverage_but_is_not_rich_black_text(tmp_path):
+    """Only text is judged for rich black; a 400% box is an ink-coverage failure."""
+    pdf = _pdf(tmp_path, f"1 1 1 1 setcmykcolor {BOX} 0 0 0 1 setcmykcolor {TEXT}")
+    ink = measure_ink(pdf)
+    assert ink == {"tac": [400], "rich_black_text_pages": []}
+    check = check_ink_coverage({"ink": ink}, {})
+    assert check.status == "fail" and check.value == 400 and check.expected == 300
+    assert check_ink_coverage({"ink": ink}, {"pdfSpec": {"maxInkCoverage": 400}}).status == "pass"
+
+
+def test_ink_checks_warn_when_nothing_rendered_the_pages():
+    for check in (check_ink_coverage, check_rich_black_text):
+        assert check({"ink": {"unmeasured": "Ghostscript is not installed"}}, {}).status == "warn"
+        assert check({}, {}).status == "warn"
+
+
+def test_dark_colour_text_is_not_rich_black():
+    from publisher_prepress.preflight import is_rich_black
+    assert is_rich_black((72, 67, 67, 88)) and is_rich_black((100, 100, 100, 100))
+    assert not is_rich_black((0, 0, 0, 100))
+    assert not is_rich_black((20, 100, 80, 50))   # a burgundy heading

@@ -52,7 +52,7 @@ from templates import DEFAULT_LEADING_PT
 # The fallbacks for the page-furniture blocks, shared with the CSS emitter so
 # both engines cannot drift apart on what a running head is. Moved to
 # stages/rendering.py in E1.3 along with emit_css itself.
-from stages.rendering import _FOLIO_DEFAULTS, _RUNNING_HEAD_DEFAULTS
+from stages.rendering import _COLOR_DEFAULTS, _FOLIO_DEFAULTS, _RUNNING_HEAD_DEFAULTS, black_plate
 
 TYPST_SCHEMA = "text/x-typst"
 
@@ -110,8 +110,11 @@ def _emit_typst(designspec: dict, bleed_mm: float = 0.0) -> str:
     inside = float(margins.get("inside", 15)) + float(margins.get("gutter", 0)) + bleed_mm
     outside = float(margins.get("outside", 20)) + bleed_mm
 
-    text_color = colors.get("text", "#000000")
-    paper_color = colors.get("paper", "#FFFFFF")
+    text_color = colors.get("text", _COLOR_DEFAULTS["text"])
+    paper_color = colors.get("paper", _COLOR_DEFAULTS["paper"])
+    text_k = black_plate(text_color)
+    text_fill = (f"cmyk(0%, 0%, 0%, {text_k * 100:g}%)" if text_k is not None
+                 else f"rgb({_typ_str(text_color)})")
 
     folio_position = folio.get("position", "bottom-center")
     numbering = {"roman-lower": "i", "roman-upper": "I",
@@ -148,7 +151,7 @@ def _emit_typst(designspec: dict, bleed_mm: float = 0.0) -> str:
         f"  fill: rgb({_typ_str(paper_color)}),",
         ")",
         f"#set text(font: ({_typ_str(body_font)}, \"Liberation Serif\"), "
-        f"size: {body_size:g}pt, fill: rgb({_typ_str(text_color)}))",
+        f"size: {body_size:g}pt, fill: {text_fill})",
         f"#set par(justify: {'true' if justified else 'false'}, "
         f"leading: {typst_leading:g}pt, first-line-indent: {paragraph_indent:g}em)",
         "#set heading(numbering: none)",
@@ -259,7 +262,7 @@ def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
 
 @stage(
     name="design-compile-typst",
-    version=8,   # v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
+    version=9,   # v9: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
                  # v5: figures reach the renderer without alpha (stages/media.py opaque).
                  # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: none to its output; paginate-typst's rendering changed in this module.
@@ -548,7 +551,7 @@ class _MeasuredPage:
 
 @stage(
     name="paginate-typst",
-    version=8,   # v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
+    version=9,   # v9: module-level bump (black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black.) v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
                  # v5: figures reach the renderer without alpha (stages/media.py opaque).
                  # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: link hrefs are percent-encoded (rendering._safe_href).

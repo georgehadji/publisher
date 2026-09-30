@@ -229,10 +229,10 @@ would produce a `false` where the truth is "unknown".
 
 ### 2.2 Missing preflight checks
 
-`services/prepress/publisher_prepress/preflight.py` implements twelve checks: trim size
+`services/prepress/publisher_prepress/preflight.py` implements fourteen checks: trim size
 (`:115`), bleed (`:150`), min/max pages (`:175`, `:200`), page multiple (`:225`), colour
 space (`:251`), resolution (`:268`), file size (`:296`), font embedding (`:317`), PDF
-standard (`:335`), interactive content, composition.
+standard (`:335`), interactive content, ink coverage, rich black text, composition.
 
 **Done (2026-09-30): `interactive-content`.** It fails a print PDF that carries JavaScript,
 launch or trigger actions, form fields, or any annotation except the two PDF/X permits
@@ -243,10 +243,24 @@ passing. The real book's press file passes (Ghostscript PDF 1.3, where `finish-g
 drops link annotations); its weasyprint raw PDF would warn. The probe takes 1.5 s on
 7 MB. Preflight is now v11.
 
+**Done (2026-09-30): `ink-coverage` and `rich-black-text`.** Ghostscript renders the
+press file to raw CMYK (`pamcmyk32`, 72 dpi, no anti-aliasing) and preflight reads each
+page's distinct colours (`ghostscript.page_colours`, stdlib only).
+- `ink-coverage` fails a page whose highest total ink exceeds the profile's
+  `pdfSpec.maxInkCoverage`, or 300% when the profile sets none.
+- `rich-black-text` renders a second time with images and vector art filtered out, and
+  fails when black text (K at least 70%) also carries 30% or more of C+M+Y.
+- Without Ghostscript, both checks warn "not measured".
+- The preflight deadline is now `PREFLIGHT_TIMEOUT_S`, two renders' worth.
+
+The check found a real defect at once. Every line of the first real book was rich black,
+**C72 M67 Y67 K88**: weasyprint wrote `#000000` as RGB, and the press conversion turned it
+into four-colour black. `rendering.black_plate` now sends black and neutral grey text to
+K alone, as `device-cmyk()` in the CSS path and `cmyk()` in the Typst path, and
+`stages/tests/test_print_colour.py` checks that through weasyprint and the press conversion.
+
 Not implemented, all of which real POD vendors reject on:
 
-- **Total ink coverage** (KDP/IngramSpark cap ~240–300% TAC). Needs per-pixel CMYK sampling.
-- **Rich black / registration black** in body text — a 4-colour black at 9pt is a reprint.
 - **Transparency and live blend modes** surviving into PDF/X-1a.
 - **Spine width vs. actual page count and paper stock.** `geometry.py:69` computes spine
   from a `paper_basis` default; no profile supplies a real per-vendor stock caliper.

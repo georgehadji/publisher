@@ -444,7 +444,7 @@ def _family_name(font) -> str:
 
 @stage(
     name="paginate",
-    version=16,  # v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
+    version=17,  # v17: fallback CSS: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
                  # v15: keep span: a paragraph's last two words (and its note calls) never split in print; a runt is a one-word last line under RUNT_MAX_FILL of the measure.
                  # v14: weasyprint 70 (URLFetcher subclass; footnote-policy keeps notes on their call page; 2400 s deadline).
                  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).

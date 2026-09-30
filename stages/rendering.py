@@ -663,6 +663,18 @@ _RUNNING_HEAD_DEFAULTS = {"sizeDelta": -3.0, "weight": "bold",
                           "case": "uppercase", "tracking": 100.0}
 _FOLIO_DEFAULTS = {"sizeDelta": -1.0, "weight": "regular",
                    "case": "none", "tracking": 0.0}
+_COLOR_DEFAULTS = {"text": "#000000", "paper": "#FFFFFF"}
+
+
+def black_plate(hex_colour: str) -> float | None:
+    """The K (0..1) a neutral grey or black prints with; None for a colour.
+
+    Grey and black go on the black plate alone. Left as RGB, the press
+    conversion made black text C72 M67 Y67 K88 -- rich black, which
+    preflight's rich-black-text check fails. Both render paths call this.
+    """
+    r, g, b = (int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
+    return round(1 - r / 255, 4) if r == g == b else None
 
 CSS_WEIGHTS = {"regular": "400", "medium": "500", "semibold": "600", "bold": "700"}
 
@@ -758,8 +770,10 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     outside = margins.get("outside", 20)
     gutter = margins.get("gutter", 0)
 
-    text_color = colors.get("text", "#000000")
-    paper_color = colors.get("paper", "#FFFFFF")
+    text_color = colors.get("text", _COLOR_DEFAULTS["text"])
+    text_k = black_plate(text_color)
+    if text_k is not None:
+        text_color = f"device-cmyk(0 0 0 {text_k:g})"
 
     lines = [
         "/* Auto-generated from DesignSpec -- emit_css() */",
