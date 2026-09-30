@@ -618,9 +618,6 @@ export type FrontMatterNode = z.infer<typeof FrontMatterNodeSchema>;
 export const BackMatterNodeSchema = z.union([z.lazy(() => BlockNodeSchema), z.record(z.string(), z.unknown())]);
 export type BackMatterNode = z.infer<typeof BackMatterNodeSchema>;
 
-export const OutputProfile_Sha256Schema = z.string().regex(new RegExp("^[a-f0-9]{64}$"));
-export type OutputProfile_Sha256 = z.infer<typeof OutputProfile_Sha256Schema>;
-
 export const BuildManifest_Sha256Schema = z.string().regex(new RegExp("^[a-f0-9]{64}$"));
 export type BuildManifest_Sha256 = z.infer<typeof BuildManifest_Sha256Schema>;
 
@@ -890,7 +887,7 @@ export const DiagnosticSchema = z.object({
 });
 export type Diagnostic = z.infer<typeof DiagnosticSchema>;
 
-export const StageError_KindSchema: z.ZodTypeAny = z.enum(["bad_input", "policy_violation", "engine_bug", "infra", "external_limit"]);
+export const StageError_KindSchema: z.ZodTypeAny = z.enum(["bad_input", "policy_violation", "engine_bug", "infra", "external_limit", "timeout", "resource_exhausted"]);
 export type StageError_Kind = z.infer<typeof StageError_KindSchema>;
 
 export const StageErrorSchema = z.object({
@@ -1101,7 +1098,7 @@ export type DesignSpec = z.infer<typeof DesignSpecSchema>;
 export const OutputProfile_SchemaSchema: z.ZodTypeAny = z.enum(["profile/1"]);
 export type OutputProfile_Schema = z.infer<typeof OutputProfile_SchemaSchema>;
 
-export const OutputProfile_VendorSchema: z.ZodTypeAny = z.enum(["kdp", "ingramspark", "lulu", "barnesnoble", "generic"]);
+export const OutputProfile_VendorSchema: z.ZodTypeAny = z.enum(["kdp", "ingramspark", "lulu", "barnesnoble", "generic", "greek"]);
 export type OutputProfile_Vendor = z.infer<typeof OutputProfile_VendorSchema>;
 
 export const OutputProfile_TrimSize_UnitSchema: z.ZodTypeAny = z.enum(["mm", "in"]);
@@ -1115,11 +1112,7 @@ export const OutputProfile_TrimSizeSchema: z.ZodTypeAny = z.object({
 export type OutputProfile_TrimSize = z.infer<typeof OutputProfile_TrimSizeSchema>;
 
 export const OutputProfile_BleedSchema: z.ZodTypeAny = z.object({
-  "all": z.number().min(0).max(25).optional(),
-  "top": z.number().min(0).max(25).optional(),
-  "bottom": z.number().min(0).max(25).optional(),
-  "inside": z.number().min(0).max(25).optional(),
-  "outside": z.number().min(0).max(25).optional(),
+  "all": z.number().min(0).max(25),
 });
 export type OutputProfile_Bleed = z.infer<typeof OutputProfile_BleedSchema>;
 
@@ -1132,18 +1125,12 @@ export type OutputProfile_PdfSpec_Standard = z.infer<typeof OutputProfile_PdfSpe
 export const OutputProfile_PdfSpec_ColorSpaceSchema: z.ZodTypeAny = z.enum(["cmyk", "gray", "rgb"]);
 export type OutputProfile_PdfSpec_ColorSpace = z.infer<typeof OutputProfile_PdfSpec_ColorSpaceSchema>;
 
-export const OutputProfile_PdfSpec_OutputIntentSchema: z.ZodTypeAny = z.object({
-  "iccProfileHash": OutputProfile_Sha256Schema,
-  "iccProfileName": z.string().max(128).optional(),
-  "registryUrl": z.string().url().optional(),
-});
-export type OutputProfile_PdfSpec_OutputIntent = z.infer<typeof OutputProfile_PdfSpec_OutputIntentSchema>;
-
 export const OutputProfile_PdfSpecSchema: z.ZodTypeAny = z.object({
   "version": z.lazy(() => OutputProfile_PdfSpec_VersionSchema).optional(),
   "standard": z.lazy(() => OutputProfile_PdfSpec_StandardSchema),
   "colorSpace": z.lazy(() => OutputProfile_PdfSpec_ColorSpaceSchema),
-  "outputIntent": z.lazy(() => OutputProfile_PdfSpec_OutputIntentSchema).optional(),
+  "maxInkCoverage": z.number().int().min(100).max(400).optional(),
+  "minImageDpi": z.number().int().min(72).max(1200).optional(),
 });
 export type OutputProfile_PdfSpec = z.infer<typeof OutputProfile_PdfSpecSchema>;
 
@@ -1160,6 +1147,7 @@ export const OutputProfile_CoverSpecSchema: z.ZodTypeAny = z.object({
   "paperType": z.lazy(() => OutputProfile_CoverSpec_PaperTypeSchema).optional(),
   "ink": z.lazy(() => OutputProfile_CoverSpec_InkSchema).optional(),
   "finish": z.lazy(() => OutputProfile_CoverSpec_FinishSchema).optional(),
+  "pageThicknessMm": z.number().max(1).optional(),
 });
 export type OutputProfile_CoverSpec = z.infer<typeof OutputProfile_CoverSpecSchema>;
 
@@ -1182,13 +1170,18 @@ export const OutputProfile_DeliverySpecSchema: z.ZodTypeAny = z.object({
 });
 export type OutputProfile_DeliverySpec = z.infer<typeof OutputProfile_DeliverySpecSchema>;
 
+export const OutputProfile_CompositionSchema: z.ZodTypeAny = z.object({
+  "maxOrphanPages": z.number().int().min(0).optional(),
+});
+export type OutputProfile_Composition = z.infer<typeof OutputProfile_CompositionSchema>;
+
 export const OutputProfileSchema = z.object({
   "schema": z.lazy(() => OutputProfile_SchemaSchema),
   "name": z.string().max(128),
   "vendor": z.lazy(() => OutputProfile_VendorSchema),
   "vendorProfileVersion": z.string().max(32).optional(),
   "trimSize": z.lazy(() => OutputProfile_TrimSizeSchema),
-  "bleed": z.lazy(() => OutputProfile_BleedSchema).optional(),
+  "bleed": z.lazy(() => OutputProfile_BleedSchema),
   "pdfSpec": z.lazy(() => OutputProfile_PdfSpecSchema),
   "coverSpec": z.lazy(() => OutputProfile_CoverSpecSchema).optional(),
   "proofSpec": z.lazy(() => OutputProfile_ProofSpecSchema).optional(),
@@ -1196,6 +1189,7 @@ export const OutputProfileSchema = z.object({
   "minPages": z.number().int().min(1).optional(),
   "maxPages": z.number().int().min(1).optional(),
   "pageSizeMultiple": z.number().int().min(1).optional(),
+  "composition": z.lazy(() => OutputProfile_CompositionSchema).optional(),
   "validatedAt": z.string().datetime().optional(),
 });
 export type OutputProfile = z.infer<typeof OutputProfileSchema>;

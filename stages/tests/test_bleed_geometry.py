@@ -14,7 +14,7 @@ import re
 import pytest
 
 from profiles import load_profile
-from stages.design_compile_stage import _default_designspec
+from templates import house_designspec
 from stages.rendering import emit_css
 from templates import TEMPLATES
 
@@ -37,7 +37,7 @@ def _first_margin_mm(css: str, side: str) -> float:
 
 
 def test_zero_bleed_declares_no_bleed_at_all():
-    spec = {**_default_designspec(),
+    spec = {**house_designspec(),
             "trimSize": {"width": 170.0, "height": 240.0, "unit": "mm"}}
     css = emit_css(spec, bleed_mm=0.0)
     assert _page_size_mm(css) == (170.0, 240.0)
@@ -51,7 +51,7 @@ def test_bleed_is_declared_to_the_renderer_not_folded_into_the_page_size():
     TrimBox == BleedBox == MediaBox in the PDF, and Ghostscript then refuses
     PDF/X. The renderer has to be told it is bleed.
     """
-    spec = {**_default_designspec(),
+    spec = {**house_designspec(),
             "trimSize": {"width": 170.0, "height": 240.0, "unit": "mm"}}
     css = emit_css(spec, bleed_mm=3.0)
     assert _page_size_mm(css) == (170.0, 240.0)
@@ -61,7 +61,7 @@ def test_bleed_is_declared_to_the_renderer_not_folded_into_the_page_size():
 def test_bleed_does_not_move_the_type_area():
     """The page box stays at trim, so margins are measured from the trim edge
     and every line lands where it did without bleed."""
-    spec = {**_default_designspec(),
+    spec = {**house_designspec(),
             "trimSize": {"width": 170.0, "height": 240.0, "unit": "mm"},
             "margins": {"top": 20, "bottom": 22, "inside": 18, "outside": 22}}
 
@@ -107,7 +107,7 @@ def test_profile_trim_overrides_the_designspec_trim():
     """The two used to be declared independently and never reconciled: the spec
     said 152x229 while the profile said 152.4x228.6, and only check_trim_size's
     0.5mm tolerance kept the disagreement from failing every build."""
-    spec = {**_default_designspec(),
+    spec = {**house_designspec(),
             "trimSize": {"width": 152.0, "height": 229.0, "unit": "mm"}}
     profile = load_profile("Greek 12x17")
     merged = {**spec, "trimSize": profile["trimSize"]}

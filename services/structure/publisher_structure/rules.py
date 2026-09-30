@@ -509,7 +509,13 @@ def _classify_other(block: Block, i: int, text: str, classifications: list[Class
     ))
 
 
-def find_low_confidence(blocks: list[Block], threshold: float = 0.8) -> list[int]:
+# Below this, a structural decision escalates (LLM classifier, review UI). The
+# one copy in Python; the API and the review UI restate it in TypeScript as
+# LOW_CONFIDENCE_BELOW, pinned to this by tests/test_single_source.py.
+ESCALATE_BELOW = 0.8
+
+
+def find_low_confidence(blocks: list[Block], threshold: float = ESCALATE_BELOW) -> list[int]:
     """Find block indices with classification confidence below threshold.
     
     These nodes should be sent to the LLM classifier for resolution.
@@ -530,7 +536,7 @@ def build_ast_draft(html: str, source_ref: Optional[str] = None) -> dict:
     """
     blocks = parse_html(html)
     classifications = classify_blocks(blocks)
-    low_conf = [c for c in classifications if c.confidence < 0.8]
+    low_conf = [c for c in classifications if c.confidence < ESCALATE_BELOW]
     
     # Build chapter structure
     chapters = []

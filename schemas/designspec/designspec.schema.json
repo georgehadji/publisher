@@ -11,7 +11,7 @@
     "preferredEngine": {
       "type": "string",
       "enum": ["chrome-pagedjs", "typst", "prince"],
-      "default": "typst"
+      "default": "chrome-pagedjs"
     },
     "trimSize": { "$ref": "#/$defs/trimSize" },
     "typography": { "$ref": "#/$defs/typography" },
@@ -50,10 +50,10 @@
         "headingFont": { "$ref": "#/$defs/fontRef" },
         "bodySize": { "type": "number", "minimum": 6, "maximum": 20, "description": "pt" },
         "leading": { "type": "number", "minimum": 8, "maximum": 36, "default": 14.173, "description": "pt. House default 14.173pt = 5.000mm exactly, so the baseline grid lands on whole millimetres -- which is what makes a spread's baselines back up against each other and what an imposition in millimetres can be checked against." },
-        "scaleRatio": { "type": "number", "minimum": 1.0, "maximum": 3.0, "description": "Modular scale ratio for heading sizes" },
+        "scaleRatio": { "type": "number", "minimum": 1.0, "maximum": 3.0, "default": 1.25, "description": "Modular scale ratio for heading sizes: a chapter title is bodySize x scaleRatio^3 (rendering.CHAPTER_TITLE_STEPS)." },
         "measure": { "type": "integer", "minimum": 30, "maximum": 90, "description": "Optimal characters per line" },
         "bodyAlignment": { "type": "string", "enum": ["justified", "ragged-right", "ragged-left"], "default": "justified" },
-        "paragraphIndent": { "type": "number", "minimum": 0, "maximum": 5, "description": "em" },
+        "paragraphIndent": { "type": "number", "minimum": 0, "maximum": 5, "default": 1.5, "description": "em" },
         "paragraphSpacing": { "type": "number", "minimum": 0, "maximum": 3, "description": "em" },
         "opticalMargins": { "type": "boolean", "default": true }
       },
@@ -62,6 +62,7 @@
     },
     "grid": {
       "type": "object",
+      "default": {},
       "properties": {
         "type": { "type": "string", "enum": ["single", "double", "split"], "default": "single" },
         "baselineIncrement": { "type": "number", "minimum": 4, "maximum": 36, "description": "pt" },
@@ -76,20 +77,22 @@
         "bottom": { "type": "number", "minimum": 5, "maximum": 60, "description": "mm" },
         "inside": { "type": "number", "minimum": 5, "maximum": 60, "description": "mm" },
         "outside": { "type": "number", "minimum": 5, "maximum": 60, "description": "mm" },
-        "gutter": { "type": "number", "minimum": 0, "maximum": 30, "description": "mm" }
+        "gutter": { "type": "number", "minimum": 0, "maximum": 30, "default": 0, "description": "mm, added to the inside margin" }
       },
       "required": ["top", "bottom", "inside", "outside"],
       "additionalProperties": false
     },
     "folio": {
       "type": "object",
+      "default": {},
       "properties": {
         "position": { "type": "string", "enum": ["bottom-center", "bottom-outside", "top-center", "top-outside", "none"], "default": "bottom-center" },
         "style": { "type": "string", "enum": ["arabic", "roman-lower", "roman-upper", "none"], "default": "arabic" },
         "suppressOn": {
           "type": "array",
           "items": { "type": "string", "enum": ["chapter-opening", "chapter-opening-recto", "full-bleed", "title-page", "part-opening"] },
-          "maxItems": 10
+          "maxItems": 10,
+          "default": ["chapter-opening"]
         },
         "startNumber": { "type": "integer", "minimum": 1, "default": 1 },
         "prefix": { "type": "string", "maxLength": 16 },
@@ -103,6 +106,7 @@
     },
     "runningHeads": {
       "type": "object",
+      "default": {},
       "properties": {
         "rectoSource": { "type": "string", "enum": ["chapter-title", "part-title", "book-title", "none"], "default": "chapter-title" },
         "versoSource": { "type": "string", "enum": ["book-title", "chapter-title", "author", "none"], "default": "book-title" },
@@ -110,7 +114,8 @@
         "suppressOn": {
           "type": "array",
           "items": { "type": "string", "enum": ["chapter-opening", "full-bleed", "title-page", "part-opening"] },
-          "maxItems": 10
+          "maxItems": 10,
+          "default": ["chapter-opening"]
         },
         "separator": { "type": "string", "maxLength": 8 },
         "sizeDelta": { "type": "number", "minimum": -12, "maximum": 12, "default": -3, "description": "Running-head size in points RELATIVE to typography.bodySize. See folio.sizeDelta for why this is a delta." },
@@ -122,6 +127,7 @@
     },
     "chapterOpenings": {
       "type": "object",
+      "default": {},
       "properties": {
         "startsOn": { "type": "string", "enum": ["recto", "verso", "any"], "default": "recto" },
         "dropCap": { "type": "boolean", "default": true },
@@ -156,6 +162,7 @@
     },
     "ornaments": {
       "type": "object",
+      "default": {},
       "properties": {
         "dinkus": { "type": "string", "maxLength": 64, "description": "Unicode or glyph name" },
         "chapterOrnament": { "type": "string", "maxLength": 64 },
@@ -165,6 +172,7 @@
     },
     "hyphenation": {
       "type": "object",
+      "default": {},
       "properties": {
         "language": { "type": "string", "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$" },
         "zone": { "type": "number", "minimum": 0, "maximum": 20, "description": "mm, hyphenation zone width" },
@@ -176,6 +184,7 @@
     },
     "colors": {
       "type": "object",
+      "default": {},
       "properties": {
         "text": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "default": "#000000" },
         "paper": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "default": "#FFFFFF" },

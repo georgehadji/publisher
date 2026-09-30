@@ -78,7 +78,7 @@ for sub in ("platform/stages/py", "platform/cas/py", "platform/cache/py",
 import stages  # noqa: F401 -- registration side effect
 import worker  # reuse claim/lease/record/fail helpers -- see module docstring
 from publisher_exec import plan
-from publisher_stages import StageError, build_registry
+from publisher_stages import ErrorKind, StageError, build_registry
 from publisher_orchestration import discover_queues, ORCHESTRATOR_TASK_QUEUE
 from publisher_orchestration.temporal_runtime import BuildWorkflow, BuildWorkflowInput, run_workers
 from temporalio.client import Client
@@ -95,11 +95,8 @@ TEMPORAL_NAMESPACE = os.environ.get("PUBLISHER_TEMPORAL_NAMESPACE", "default")
 ROLE = os.environ.get("PUBLISHER_TEMPORAL_ROLE", "all").strip().lower()
 _QUEUES_ENV = os.environ.get("PUBLISHER_TEMPORAL_QUEUES", "").strip()
 
-# How often to poll the in-flight workflow's handle so a long build renews
-# its Postgres lease -- comfortably under PUBLISHER_WORKER_LEASE_SECONDS
-# (600s default; worker.py), the same margin worker.py's own per-stage
-# renewal implies for a build with several-second stages.
-_LEASE_RENEW_INTERVAL_S = 60
+# How often to poll the in-flight workflow's handle so a long build renews its
+# Postgres lease: worker.LEASE_RENEW_S, the plain worker's heartbeat interval.
 
 
 def _queues_from_env() -> list[str]:
@@ -126,7 +123,7 @@ async def _run_build_via_temporal(conn, build: dict, client: Client) -> None:
     # ever starting a workflow is strictly cheaper and just as correct.
     if "package" not in execution_plan.order:
         worker._fail(
-            conn, build_id, "ENGINE_BUG",
+            conn, build_id, ErrorKind.ENGINE_BUG.value,
             f"terminal stage 'package' did not appear in the execution plan "
             f"({len(execution_plan.order)} stages planned) -- refusing to "
             "run without a preflight verdict and package report",
@@ -134,6 +131,7 @@ async def _run_build_via_temporal(conn, build: dict, client: Client) -> None:
         return
 
     queue_by_stage = {name: registry.get(name).queue for name in execution_plan.order}
+    timeout_by_stage = {name: registry.get(name).timeout_s for name in execution_plan.order}
     wf_input = BuildWorkflowInput(
         build_id=build_id,
         order=list(execution_plan.order),
@@ -141,6 +139,7 @@ async def _run_build_via_temporal(conn, build: dict, client: Client) -> None:
         cas_root=str(worker.CAS_ROOT),
         database_url=worker._dsn(),
         queue_by_stage=queue_by_stage,
+        timeout_by_stage=timeout_by_stage,
     )
 
     handle = await client.start_workflow(
@@ -152,7 +151,7 @@ async def _run_build_via_temporal(conn, build: dict, client: Client) -> None:
         while True:
             try:
                 results = await asyncio.wait_for(
-                    asyncio.shield(handle.result()), timeout=_LEASE_RENEW_INTERVAL_S,
+                    asyncio.shield(handle.result()), timeout=worker.LEASE_RENEW_S,
                 )
                 break
             except asyncio.TimeoutError:
@@ -160,7 +159,7 @@ async def _run_build_via_temporal(conn, build: dict, client: Client) -> None:
     except Exception as e:
         # Known gap (module docstring): every Temporal-path failure records
         # as INTERNAL, not reclassified back to the original StageError.kind.
-        worker._fail(conn, build_id, "INTERNAL", f"{type(e).__name__}: {e}")
+        worker._fail(conn, build_id, worker.INTERNAL, f"{type(e).__name__}: {e}")
         worker._log_info("build failed via temporal workflow", error=str(e))
         return
 

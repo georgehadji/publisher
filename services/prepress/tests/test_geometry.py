@@ -31,19 +31,19 @@ def test_page_geometry():
 
 
 def test_spine_width():
-    s = spine_width(300)
+    s = spine_width(300, 0.06)
     assert s == 18.0  # 300 * 0.06
 
 
 def test_spine_width_thick_paper():
-    s = spine_width(300, paper_basis=0.09)
+    s = spine_width(300, 0.09)
     assert s == 27.0
 
 
 def test_cover_dimensions():
     trim = TrimSize(152.4, 228.6)
     bleed = BleedBox.uniform(3.0)
-    spine = spine_width(300)  # 18.0
+    spine = spine_width(300, 0.06)  # 18.0
     
     w, h = cover_dimensions(trim, spine, bleed)
     # (152.4 + 6) * 2 + 18 = 334.8

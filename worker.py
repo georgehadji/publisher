@@ -37,6 +37,7 @@ import random
 import re
 import signal
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,14 +83,7 @@ stages.import_idml_if_requested(
 
 
 def _registry_config_from_env() -> RegistryConfig:
-    engine_raw = os.environ.get("PUBLISHER_RENDER_ENGINE", "css").strip().lower()
-    try:
-        engine = RenderEngine(engine_raw)
-    except ValueError:
-        raise ValueError(
-            f"PUBLISHER_RENDER_ENGINE={engine_raw!r} is not a render path. "
-            f"Choose one of {[e.value for e in RenderEngine]}."
-        )
+    engine = RenderEngine.from_env(os.environ.get("PUBLISHER_RENDER_ENGINE"))
     # U2: this worker renders what the tenant uploaded -- the real DOCX path,
     # never the fixture loader `acquire` (ARCHITECTURE_UPLIFT_PLAN.md N1).
     return RegistryConfig(render_engine=engine, ingest_impl="ingest")
@@ -97,9 +91,17 @@ def _registry_config_from_env() -> RegistryConfig:
 
 POLL_INTERVAL_S = 2
 CAS_ROOT = Path(os.environ.get("PUBLISHER_CAS_ROOT", "./.publisher/cas"))
-# U1 lease: a healthy build renews its lease after every stage (on_stage_complete),
-# so a long build never expires while a dead one always does within one lease period.
+# U1 lease: a running build renews its lease every LEASE_RENEW_S, from a heartbeat
+# that runs while a stage does (_keep_lease), so a long stage never expires while
+# a dead worker's build always does within one lease period. Renewing only after
+# each stage let a stage longer than the lease (finish-gs, 1884 s on the first real
+# book, against 600) be reclaimed by a second worker while it was still running.
 LEASE_SECONDS = int(os.environ.get("PUBLISHER_WORKER_LEASE_SECONDS", "600"))
+LEASE_RENEW_S = LEASE_SECONDS / 3
+# The two failure markers the worker writes itself, beside StageError's kinds.
+# builds.error_kind accepts exactly these plus ErrorKind (migration 006).
+INTERNAL = "INTERNAL"
+EXHAUSTED = "exhausted"
 MAX_ATTEMPTS = int(os.environ.get("PUBLISHER_WORKER_MAX_ATTEMPTS", "3"))
 WORKER_ID = os.environ.get("PUBLISHER_WORKER_ID") or f"worker-{os.getpid()}"
 
@@ -202,8 +204,8 @@ def _claim_build(conn) -> dict | None:
                 # looping it forever.
                 cur.execute(
                     "UPDATE builds SET status = 'dead', completed_at = now(), "
-                    "error_kind = 'exhausted', error_message = %s WHERE id = %s",
-                    (f"build exceeded {MAX_ATTEMPTS} attempts -- moved to dead letter", build["id"]),
+                    "error_kind = %s, error_message = %s WHERE id = %s",
+                    (EXHAUSTED, f"build exceeded {MAX_ATTEMPTS} attempts -- moved to dead letter", build["id"]),
                 )
                 _notify(conn, build["id"], {"status": "dead"})
                 conn.commit()
@@ -237,6 +239,28 @@ def _renew_lease(conn, build_id: str) -> None:
             (LEASE_SECONDS, build_id),
         )
         conn.commit()
+
+
+def _keep_lease(build_id: str, tenant_id: str, stop: threading.Event) -> None:
+    """Renew the build's lease every LEASE_RENEW_S until `stop` is set.
+
+    Its own connection, so a renewal never commits in the middle of the build's
+    work on the main one. A database blip is logged and retried on the next beat.
+    """
+    conn = None
+    while not stop.wait(LEASE_RENEW_S):
+        try:
+            if conn is None or conn.closed:
+                conn = psycopg2.connect(_dsn())
+                with conn.cursor() as cur:
+                    cur.execute("SELECT set_config('app.tenant_id', %s, false)", (tenant_id,))
+                conn.commit()
+            _renew_lease(conn, build_id)
+        except psycopg2.Error as e:
+            _log_info("lease renewal failed, retrying", error=str(e))
+            conn = None
+    if conn is not None:
+        conn.close()
 
 
 def _notify(conn, build_id: str, payload: dict) -> None:
@@ -281,13 +305,9 @@ def _resolve_profile_name(build: dict) -> str:
             message="build has no profile_ids -- a book cannot be built without a profile",
         )
     name = ids[0] if isinstance(ids, list) else str(ids)
-    from profiles import load_profile
+    from profiles import resolve_profile
 
-    if load_profile(name) is None:
-        raise StageError(
-            kind=ErrorKind.BAD_INPUT,
-            message=f"unknown profile {name!r} -- refusing to guess a default",
-        )
+    resolve_profile(name)   # BAD_INPUT for an unknown name; never a guessed default
     return name
 
 
@@ -510,10 +530,8 @@ def run_build(conn, build: dict) -> None:
                 conn, build_id, tenant_id, art.kind, decl.outputs.get(art.kind, ""),
                 art.hash, art.media_type, art.size,
             )
-        # U1: a stage just finished -- the build is alive, extend the lease.
-        # A build that takes longer than one lease period between stages is
-        # pathological and will be reclaimed; every healthy build renews here.
-        # (N10: the FAILED counterpart lives in _on_stage_error below -- a
+        # U1: a stage just finished -- the build is alive, extend the lease
+        # (the heartbeat, _keep_lease, covers the time a stage runs). (N10: the FAILED counterpart lives in _on_stage_error below -- a
         # build that dies at stage N must still leave a per-stage row, or the
         # API/SSE can only report "build failed" with no stage evidence.)
         _renew_lease(conn, build_id)
@@ -539,6 +557,10 @@ def run_build(conn, build: dict) -> None:
                 art.hash, art.media_type, art.size,
             )
 
+    heartbeat_stop = threading.Event()
+    heartbeat = threading.Thread(target=_keep_lease, args=(build_id, tenant_id, heartbeat_stop),
+                                 daemon=True, name=f"lease-{build_id}")
+    heartbeat.start()
     try:
         results = executor.execute(
             build_id=build_id,
@@ -591,13 +613,16 @@ def run_build(conn, build: dict) -> None:
         # must not mask the ORIGINAL exception that follows. Log it and carry on
         # to the re-raise.
         try:
-            _fail(conn, build_id, "INTERNAL", f"{type(e).__name__}: {e}")
+            _fail(conn, build_id, INTERNAL, f"{type(e).__name__}: {e}")
         except Exception as record_err:
             _log_info("failed to record build failure -- original error follows",
                       record_error=f"{type(record_err).__name__}: {record_err}")
         _log_info("build crashed -- recorded as failed, process exiting",
                   error_type=type(e).__name__, error=str(e))
         raise
+    finally:
+        heartbeat_stop.set()
+        heartbeat.join()
 
 
 def main() -> int:

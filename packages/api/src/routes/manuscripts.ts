@@ -14,6 +14,10 @@ import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { CAS_ROOT, UPLOAD_MAX_BYTES, casPath, loadOwned, readCasFile, withTenant } from '../db.js';
+import { LOW_CONFIDENCE_BELOW } from '../contract.js';
+import type { OrphanedOp, OverrideOp, StructureReview } from '../contract.js';
+
+export { LOW_CONFIDENCE_BELOW };
 
 export async function registerManuscripts(server: FastifyInstance): Promise<void> {
   // Fastify 5 415s on any content type with no registered parser, and its
@@ -179,7 +183,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
             'SELECT op FROM override_ops WHERE manuscript_id = $1 ORDER BY seq',
             [request.params.id]
           )
-        ).rows.map((row) => row.op),
+        ).rows.map((row) => row.op as OverrideOp),
       }));
 
       if (!artifact) {
@@ -190,7 +194,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
           lowConfidenceNodes: null,   // nothing measured yet -- see structureView
           overrides,
           orphanedOps: null,          // no AST yet to check them against
-        };
+        } satisfies StructureReview;
       }
 
       const ast = JSON.parse(await readCasFile(artifact.sha256));
@@ -200,7 +204,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
         ...structureView(ast),
         overrides,
         orphanedOps: orphanedOps(ast, overrides),
-      };
+      } satisfies StructureReview;
     }
   );
 
@@ -324,18 +328,6 @@ export const OVERRIDE_OP_SCHEMA = {
  * publisher_structure.overrides.UNIMPLEMENTED_OPS. Pinned by manuscripts.test.ts. */
 export const APPLICABLE_OPS: readonly string[] = ['reclassify', 'retitle', 'delete', 'flag_ambiguity'];
 
-export interface OverrideOp {
-  id: string;
-  op: string;
-  [field: string]: unknown;
-}
-
-/**
- * Below this, a structural decision goes to review. The same line
- * `publisher_structure.rules.find_low_confidence` and ingest's scores are set
- * against (LLM_STRATEGY.md §5).
- */
-export const LOW_CONFIDENCE_BELOW = 0.8;
 
 const SECTION_ROOTS = ['frontMatter', 'body', 'backMatter'] as const;
 
@@ -380,7 +372,7 @@ function docxIdOf(node: any): string | null {
  * no sourceRef; its contents have one), or any node of an AST from before
  * ingest v4.
  */
-export function structureView(ast: any) {
+export function structureView(ast: any): Pick<StructureReview, 'chapters' | 'lowConfidenceNodes'> {
   const chapters = (ast?.body ?? [])
     .filter((node: any) => node?.type === 'chapter')
     .map((node: any) => ({
@@ -433,7 +425,7 @@ export function structureView(ast: any) {
  * `docxIdOf` -- so an op is reported orphaned here exactly when resolve would
  * skip it.
  */
-export function orphanedOps(ast: any, ops: any[]) {
+export function orphanedOps(ast: any, ops: OverrideOp[]): OrphanedOp[] {
   const ids = new Set<string>();
   const walk = (node: any): void => {
     if (Array.isArray(node)) {

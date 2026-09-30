@@ -495,6 +495,48 @@ class RenderEngine(str, Enum):
     CSS = "css"
     TYPST = "typst"
 
+    @property
+    def spec_engines(self) -> frozenset[str]:
+        """The DesignSpec `preferredEngine` values this render path implements."""
+        return _SPEC_ENGINES[self]
+
+    @classmethod
+    def from_env(cls, value: str | None) -> "RenderEngine":
+        """Parse PUBLISHER_RENDER_ENGINE (unset means CSS). Every entry point
+        (worker, tracer bullet, CLI, integrity check) parses it here."""
+        raw = (value or cls.CSS.value).strip().lower()
+        try:
+            return cls(raw)
+        except ValueError:
+            raise ValueError(f"PUBLISHER_RENDER_ENGINE={raw!r} is not a render path. "
+                             f"Choose one of {[e.value for e in cls]}.") from None
+
+
+_SPEC_ENGINES: dict["RenderEngine", frozenset[str]] = {
+    RenderEngine.CSS: frozenset({"chrome-pagedjs"}),
+    RenderEngine.TYPST: frozenset({"typst"}),
+}
+
+
+def with_schema_defaults(doc: dict, node: dict, root: dict | None = None) -> dict:
+    """`doc` with every property `node` (a JSON Schema object) gives a `default`
+    filled in, recursively, following local `$ref`s into `root`'s `$defs`.
+
+    How a profile or DesignSpec gets its missing values: from its schema, the
+    one place they are stated, instead of a fallback restated in each reader.
+    """
+    root = root or node
+    out = dict(doc)
+    for key, prop in (node.get("properties") or {}).items():
+        while "$ref" in prop:
+            prop = root["$defs"][prop["$ref"].rsplit("/", 1)[-1]]
+        value = out.get(key, prop.get("default"))
+        if isinstance(value, dict) and prop.get("type") == "object":
+            value = with_schema_defaults(value, prop, root)
+        if value is not None:
+            out[key] = value
+    return out
+
 
 # Which concrete stage names each engine selects for the two steps it decides.
 # This is the same mapping that used to live in stages/__init__.py; moved here

@@ -66,16 +66,13 @@ class PageGeometry:
         return (0, 0, self.media_width, self.media_height)
 
 
-def spine_width(page_count: int, paper_basis: float = 0.06) -> float:
+def spine_width(page_count: int, page_thickness_mm: float) -> float:
+    """Spine width in mm: page_count x the stock's thickness per page.
+
+    The thickness is the vendor profile's `coverSpec.pageThicknessMm` (its
+    schema default is 0.06, typical for 60# cream/white stock).
     """
-    Calculate spine width in mm.
-    
-    Paper basis is mm per page. Default 0.06 mm/page is typical for
-    60# cream/white paper. For thicker paper (glossy art), use ~0.09.
-    
-    From KDP spec: spine = page_count × paper_thickness
-    """
-    return round(page_count * paper_basis, 2)
+    return round(page_count * page_thickness_mm, 2)
 
 
 def cover_dimensions(
@@ -143,14 +140,20 @@ def gutter_offset(page_number: int, binding_margin_mm: float = 5.0) -> float:
     return binding_margin_mm
 
 
+# Exact: 72 points to the inch, 25.4 mm to the inch. The one conversion factor
+# in this package; the rounded 0.352778 mm/pt it replaces drifted from the
+# exact figure other modules used.
+PT_PER_MM = 72.0 / 25.4
+
+
 def mm_to_pt(mm: float) -> float:
-    """Convert millimetres to points (1 pt = 0.352778 mm)."""
-    return mm / 0.352778
+    """Convert millimetres to points."""
+    return mm * PT_PER_MM
 
 
 def pt_to_mm(pt: float) -> float:
     """Convert points to millimetres."""
-    return pt * 0.352778
+    return pt / PT_PER_MM
 
 
 def pt_to_in(pt: float) -> float:

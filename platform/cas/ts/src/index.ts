@@ -125,37 +125,3 @@ export function defaultLocalConfig(cacheRoot?: string): CasConfig {
 export function shardedPath(root: string, hash: Sha256): string {
   return `${root}/${hash.prefix1}/${hash.prefix2}/${hash}`;
 }
-
-/**
- * Compute the cache key for a build stage.
- *
- * From ARCHITECTURE.md §2.5:
- * ```
- * cache_key(stage, version, inputs, params, toolchain) = sha256(canonicalJson({
- *   "stage": stage,
- *   "version": version,
- *   "inputs": sorted(inputs),
- *   "params": params,
- *   "toolchain": toolchain,
- * }))
- * ```
- */
-export function computeCacheKey(
-  stage: string,
-  version: number,
-  inputs: string[],
-  params: Record<string, unknown> | null,
-  toolchain: Record<string, string>
-): Sha256 {
-  const payload = {
-    stage,
-    version,
-    inputs: [...inputs].sort(),
-    params: params ?? {},
-    toolchain,
-  };
-
-  // Canonical JSON: sorted keys, no whitespace
-  const json = JSON.stringify(payload, Object.keys(payload).sort());
-  return Sha256.fromString(json);
-}

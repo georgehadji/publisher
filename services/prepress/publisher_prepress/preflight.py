@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from publisher_prepress.geometry import PT_PER_MM
 from publisher_prepress.ghostscript import INK_TIMEOUT_S, GhostscriptError, find_binary, page_colours
 
 # run_preflight renders the pages twice (measure_ink); the rest is byte scanning.
@@ -115,20 +116,36 @@ def get_checks() -> dict[str, CheckFn]:
 
 
 # ── Individual checks ──────────────────────────────────────────
+#
+# Every requirement is read from the profile, never defaulted here: the profile
+# loader (profiles/) validates each profile against its schema and fills in the
+# schema's defaults, so the schema and the YAML are the one source of a vendor
+# fact. A hand-built profile that states no requirement gets a skip that says so.
+
+def _requirement(profile: dict, *path: str):
+    """profile[path...], or None when the profile does not state it."""
+    node = profile
+    for key in path:
+        node = node.get(key) if isinstance(node, dict) else None
+    return node
+
+
+def _unstated(code: str, what: str) -> PreflightCheck:
+    return _skip(code, f"Profile sets no {what}")
+
 
 @preflight_check("trim-size")
 def check_trim_size(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify PDF trim size matches vendor profile."""
-    expected = profile.get("trimSize", {})
+    exp_w, exp_h = _requirement(profile, "trimSize", "width"), _requirement(profile, "trimSize", "height")
+    if exp_w is None or exp_h is None:
+        return _unstated("trim-size", "trim size")
     pdf_w = pdf_info.get("width_mm") or pdf_info.get("width", 0)
     pdf_h = pdf_info.get("height_mm") or pdf_info.get("height", 0)
 
     if not pdf_w or not pdf_h:
         return _fail("trim-size", "Could not determine PDF page dimensions",
                      suggestedFix="Ensure the PDF has a valid page box")
-
-    exp_w = expected.get("width", 152.4)
-    exp_h = expected.get("height", 228.6)
 
     if abs(pdf_w - exp_w) > 0.5 or abs(pdf_h - exp_h) > 0.5:
         return _fail(
@@ -154,7 +171,9 @@ def check_trim_size(pdf_info: dict, profile: dict) -> PreflightCheck:
 @preflight_check("bleed")
 def check_bleed(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify PDF has adequate bleed for the profile."""
-    expected_bleed = profile.get("bleed", {}).get("all", 3.0)
+    expected_bleed = _requirement(profile, "bleed", "all")
+    if expected_bleed is None:
+        return _unstated("bleed", "bleed")
     pdf_bleed = pdf_info.get("bleed_mm")
 
     if pdf_bleed is None:
@@ -180,7 +199,9 @@ def check_bleed(pdf_info: dict, profile: dict) -> PreflightCheck:
 def check_min_pages(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify page count meets vendor minimum."""
     page_count = pdf_info.get("page_count")
-    min_pages = profile.get("minPages", 1)
+    min_pages = _requirement(profile, "minPages")
+    if min_pages is None:
+        return _unstated("min-pages", "minimum page count")
 
     if page_count is None:
         return _warn(
@@ -205,7 +226,9 @@ def check_min_pages(pdf_info: dict, profile: dict) -> PreflightCheck:
 def check_max_pages(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify page count does not exceed vendor maximum."""
     page_count = pdf_info.get("page_count")
-    max_pages = profile.get("maxPages", 2000)
+    max_pages = _requirement(profile, "maxPages")
+    if max_pages is None:
+        return _unstated("max-pages", "maximum page count")
 
     if page_count is None:
         return _warn(
@@ -230,7 +253,9 @@ def check_max_pages(pdf_info: dict, profile: dict) -> PreflightCheck:
 def check_page_multiple(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify page count is a valid multiple (e.g. 4 for KDP)."""
     page_count = pdf_info.get("page_count")
-    multiple = profile.get("pageSizeMultiple", 4)
+    multiple = _requirement(profile, "pageSizeMultiple")
+    if multiple is None:
+        return _unstated("page-multiple", "page multiple")
 
     if page_count is None:
         return _warn(
@@ -255,7 +280,9 @@ def check_page_multiple(pdf_info: dict, profile: dict) -> PreflightCheck:
 @preflight_check("color-space")
 def check_color_space(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify PDF uses the correct color space."""
-    expected_cs = profile.get("pdfSpec", {}).get("colorSpace", "cmyk")
+    expected_cs = _requirement(profile, "pdfSpec", "colorSpace")
+    if expected_cs is None:
+        return _unstated("color-space", "colour space")
     pdf_cs = pdf_info.get("color_space", "unknown")
 
     if pdf_cs != expected_cs and expected_cs != "any":
@@ -272,7 +299,9 @@ def check_color_space(pdf_info: dict, profile: dict) -> PreflightCheck:
 @preflight_check("resolution")
 def check_resolution(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify image resolution meets minimum DPI."""
-    min_dpi = profile.get("proofSpec", {}).get("dpi", 300)
+    min_dpi = _requirement(profile, "pdfSpec", "minImageDpi")
+    if min_dpi is None:
+        return _unstated("resolution", "minimum image resolution")
     pdf_dpi = pdf_info.get("effective_dpi")
 
     if pdf_dpi is None:
@@ -300,9 +329,9 @@ def check_resolution(pdf_info: dict, profile: dict) -> PreflightCheck:
 @preflight_check("file-size")
 def check_file_size(pdf_info: dict, profile: dict) -> PreflightCheck:
     """O4: Enforce FileSizeBudget — reject PDFs exceeding the vendor size limit."""
-    size_budget = profile.get("proofSpec", {}).get("sizeBudgetBytes")
-    if size_budget is None:
-        return _skip("file-size", "No size budget configured in profile")
+    size_budget = _requirement(profile, "proofSpec", "sizeBudgetBytes")
+    if not size_budget:   # the schema's 0 means "no limit"
+        return _unstated("file-size", "size budget")
 
     pdf_size = pdf_info.get("file_size_bytes", 0)
 
@@ -339,8 +368,8 @@ def check_embed_fonts(pdf_info: dict, profile: dict) -> PreflightCheck:
 @preflight_check("pdf-standard")
 def check_pdf_standard(pdf_info: dict, profile: dict) -> PreflightCheck:
     """Verify PDF standard compliance (PDF/X-1a, PDF/A, etc.)."""
-    expected_standard = profile.get("pdfSpec", {}).get("standard", "none")
-    if expected_standard == "none":
+    expected_standard = _requirement(profile, "pdfSpec", "standard")
+    if expected_standard in (None, "none"):
         return _skip("pdf-standard", "No PDF standard required by profile")
 
     pdf_standard = pdf_info.get("pdf_standard", "none")
@@ -382,9 +411,6 @@ def check_interactive_content(pdf_info: dict, profile: dict) -> PreflightCheck:
     return _pass("interactive-content", "No JavaScript, forms or annotations")
 
 
-# Total ink a page may carry anywhere, C+M+Y+K in percent, when the profile sets
-# no `pdfSpec.maxInkCoverage`: the common offset limit for coated stock.
-DEFAULT_MAX_INK_COVERAGE = 300
 # Rich black text: black (K at least RICH_BLACK_MIN_K) that also carries C+M+Y of
 # RICH_BLACK_MIN_CMY or more. Four plates must then register on every stroke of
 # small type. RGB black converts to C72 M67 Y67 K88; a designer's dark colour
@@ -428,7 +454,9 @@ def check_ink_coverage(pdf_info: dict, profile: dict) -> PreflightCheck:
     ink = pdf_info.get("ink") or {}
     if "tac" not in ink:
         return _ink_unmeasured("ink-coverage", ink)
-    limit = profile.get("pdfSpec", {}).get("maxInkCoverage", DEFAULT_MAX_INK_COVERAGE)
+    limit = _requirement(profile, "pdfSpec", "maxInkCoverage")
+    if limit is None:
+        return _unstated("ink-coverage", "ink limit")
     over = [number for number, tac in enumerate(ink["tac"], start=1) if tac > limit]
     highest = max(ink["tac"], default=0)
     if over:
@@ -546,8 +574,8 @@ def check_composition(pdf_info: dict, profile: dict) -> PreflightCheck:
         c.sourceRef = "pagemap/1"
         return c
 
-    policy = profile.get("composition") or {}
-    allowed = int(policy.get("maxOrphanPages", 0))
+    # Absent allows none: an orphan is a defect unless the profile says otherwise.
+    allowed = int(_requirement(profile, "composition", "maxOrphanPages") or 0)
     orphans, widows, runts = found["orphans"], found["widows"], found["runts"]
 
     if len(orphans) > allowed:
@@ -664,7 +692,6 @@ def run_preflight(pdf_path: str | Path, profile: dict,
     )
 
 
-_PT_PER_MM = 72.0 / 25.4
 
 _BOX_RE = {
     "media": re.compile(rb"/MediaBox\s*\[\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)"),
@@ -778,8 +805,8 @@ def probe_pdf(pdf_path: Path) -> dict:
 
     width_mm = height_mm = None
     if trim:
-        width_mm = round(abs(trim[2] - trim[0]) / _PT_PER_MM, 2)
-        height_mm = round(abs(trim[3] - trim[1]) / _PT_PER_MM, 2)
+        width_mm = round(abs(trim[2] - trim[0]) / PT_PER_MM, 2)
+        height_mm = round(abs(trim[3] - trim[1]) / PT_PER_MM, 2)
 
     # Bleed is the margin the media box extends beyond the trim box, per side.
     bleed_mm = None
@@ -791,7 +818,7 @@ def probe_pdf(pdf_path: Path) -> dict:
                 abs(media[2] - trim[2]),
                 abs(media[3] - trim[3]),
             )
-            / _PT_PER_MM,
+            / PT_PER_MM,
             2,
         )
 

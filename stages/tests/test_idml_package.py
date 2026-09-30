@@ -26,6 +26,9 @@ from publisher_idml import (
     IDMLValidationError, IDMLWriter, normalize_story_xml, validate_idml,
 )
 
+from stages.rendering import chapter_title_pt, design_plan
+from templates import complete_designspec
+
 HAVE_PANDOC = bool(shutil.which("pandoc"))
 
 STORY = """<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Header1">
@@ -53,8 +56,22 @@ PROFILE = {"trimSize": {"width": 152.4, "height": 228.6, "unit": "mm"},
 
 
 def _write(tmp_path: Path, **kwargs) -> Path:
-    return IDMLWriter(STORY, title="Test Book", designspec=SPEC,
-                      profile=PROFILE, **kwargs).write(tmp_path / "book.idml")
+    return IDMLWriter(STORY, title="Test Book", plan=design_plan(SPEC, PROFILE),
+                      **kwargs).write(tmp_path / "book.idml")
+
+
+def test_idml_sets_chapter_titles_by_the_render_paths_rule(tmp_path):
+    """One chapter-title size for all three emitters: the IDML writer used to
+    set 1.6x body while CSS set 1.8x and Typst 1.6x."""
+    styles = zipfile.ZipFile(_write(tmp_path)).read("Resources/Styles.xml").decode()
+    size = round(chapter_title_pt(complete_designspec(SPEC)), 2)
+    assert f'Name="Chapter Title" PointSize="{size}"' in styles
+
+
+def test_idml_points_per_mm_is_prepress_geometrys():
+    import publisher_idml
+    from publisher_prepress.geometry import PT_PER_MM
+    assert publisher_idml.PT_PER_MM == PT_PER_MM
 
 
 def test_package_passes_structural_validation(tmp_path):

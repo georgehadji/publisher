@@ -23,20 +23,33 @@ import html as _html
 # a DesignSpec reaches emit_css() as a plain dict with no schema defaults
 # applied at runtime, so a `.get(key)` with no fallback would emit CSS with a
 # missing value the moment a spec omits a field.
-from templates import DEFAULT_LEADING_PT
+from templates import complete_designspec
 
 # ── ast_to_html (moved from extract_stage.py) ───────────────────────────────
 
 HTML_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
+<html{lang}>
 <head>
 <meta charset="UTF-8">
 <title>{title}</title>
 </head>
-<body>
+<body data-title="{title}" data-author="{author}">
 {body}
 </body>
 </html>"""
+
+
+def book_identity(ast: dict) -> dict:
+    """The book's title, authors and language, as both render paths print them
+    (running heads, hyphenation). CSS reads them off <html lang> and <body>
+    (ast_to_html); Typst from `#set document`/`#set text` (paginate-typst)."""
+    metadata = ast.get("metadata") or {}
+    return {
+        "title": metadata.get("title", "Untitled"),
+        "authors": [c["displayName"] for c in metadata.get("contributors") or []
+                    if c.get("role") == "author"],
+        "language": metadata.get("language"),   # None: not declared, no hyphenation dictionary
+    }
 
 # Extensions for the image types Word actually embeds. The renderers get files
 # on disk, and weasyprint, Typst and InDesign all decide how to decode by
@@ -567,8 +580,7 @@ def ast_to_html(ast: dict) -> str:
     parts = []
     notes = PrintNotes()
 
-    # Title from metadata
-    title = (ast.get("metadata") or {}).get("title", "Untitled")
+    book = book_identity(ast)
 
     # Process front matter
     front_matter = ast.get("frontMatter") or []
@@ -598,7 +610,10 @@ def ast_to_html(ast: dict) -> str:
         parts.append(_render_content(item.get("content", []), notes))
         parts.append("</div>")
 
-    return HTML_TEMPLATE.format(title=_escape_html(title), body="\n".join(parts))
+    lang = f' lang="{_escape_html(book["language"])}"' if book["language"] else ""
+    return HTML_TEMPLATE.format(lang=lang, title=_escape_html(book["title"]),
+                                author=_escape_html(", ".join(book["authors"])),
+                                body="\n".join(parts))
 
 
 # ── the EPUB's sections ─────────────────────────────────────────────────────
@@ -659,11 +674,75 @@ def ast_to_epub_sections(ast: dict) -> list[dict]:
 
 # ── emit_css (moved from design_compile_stage.py) ───────────────────────────
 
-_RUNNING_HEAD_DEFAULTS = {"sizeDelta": -3.0, "weight": "bold",
-                          "case": "uppercase", "tracking": 100.0}
-_FOLIO_DEFAULTS = {"sizeDelta": -1.0, "weight": "regular",
-                   "case": "none", "tracking": 0.0}
-_COLOR_DEFAULTS = {"text": "#000000", "paper": "#FFFFFF"}
+# ── What a DesignSpec means, decided once for every render path ──────────────
+#
+# emit_css and typst_stages._emit_typst both read a spec completed by
+# templates.complete_designspec (no defaults of their own) and take every layout
+# decision from here, so the two engines set the same book. They used to read
+# one spec two ways: CSS never justified and always indented 1.5em, ignored the
+# gutter, and set chapter titles at 1.8 x body where Typst used 1.6.
+
+# A chapter title sits this many steps up the spec's modular scale: bodySize x
+# scaleRatio ** 3, 1.95 x body at the house ratio of 1.25.
+CHAPTER_TITLE_STEPS = 3
+
+# DesignSpec bodyAlignment -> the side text is set to ("justify" = both).
+BODY_ALIGNMENT = {"justified": "justify", "ragged-right": "left", "ragged-left": "right"}
+
+# What a running head shows, by DesignSpec source. The AST has no parts, so a
+# part title is the chapter's.
+HEAD_SOURCES = {"chapter-title": "chapter-title", "part-title": "chapter-title",
+                "book-title": "book-title", "author": "author"}
+
+
+def chapter_title_pt(spec: dict) -> float:
+    typography = spec["typography"]
+    return typography["bodySize"] * typography["scaleRatio"] ** CHAPTER_TITLE_STEPS
+
+
+def inside_margin_mm(spec: dict) -> float:
+    """The binding-side margin: `inside` plus the gutter."""
+    return spec["margins"]["inside"] + spec["margins"]["gutter"]
+
+
+def running_heads_plan(spec: dict) -> dict | None:
+    """{"recto": what, "verso": what} (a HEAD_SOURCES value, or None for a side
+    left blank), or None when neither side has a head."""
+    heads = spec["runningHeads"]
+    sides = {side: HEAD_SOURCES.get(heads[f"{side}Source"]) for side in ("recto", "verso")}
+    return sides if any(sides.values()) else None
+
+
+def design_plan(spec: dict, profile: dict) -> dict:
+    """Every layout number a renderer outside this module needs, resolved from
+    the DesignSpec and the vendor profile by the rules above. The IDML writer
+    (a service, which cannot import this module) takes this instead of reading
+    the spec itself -- it used to carry its own defaults and its own chapter
+    title rule."""
+    spec = complete_designspec(spec)
+    typography, margins = spec["typography"], spec["margins"]
+    return {
+        "trim_mm": (profile["trimSize"]["width"], profile["trimSize"]["height"]),
+        "bleed_mm": profile["bleed"]["all"],
+        "margins_mm": {"top": margins["top"], "bottom": margins["bottom"],
+                       "inside": inside_margin_mm(spec), "outside": margins["outside"]},
+        "body_font": typography["bodyFont"]["family"],
+        "heading_font": (typography.get("headingFont") or typography["bodyFont"])["family"],
+        "body_pt": typography["bodySize"],
+        "leading_pt": typography["leading"],
+        "indent_em": typography["paragraphIndent"],
+        "alignment": BODY_ALIGNMENT[typography["bodyAlignment"]],
+        "chapter_title_pt": chapter_title_pt(spec),
+        "starts_on": spec["chapterOpenings"]["startsOn"],
+    }
+
+
+def head_side(style: str, recto: bool) -> str:
+    """"center", "left" or "right": where a running head of `style` sits."""
+    if style == "centered":
+        return "center"
+    outer, inner = ("right", "left") if recto else ("left", "right")
+    return inner if style == "inner-margin" else outer
 
 
 def black_plate(hex_colour: str) -> float | None:
@@ -679,8 +758,7 @@ def black_plate(hex_colour: str) -> float | None:
 CSS_WEIGHTS = {"regular": "400", "medium": "500", "semibold": "600", "bold": "700"}
 
 
-def _furniture_css(block: dict, body_size: float, family: str,
-                   defaults: dict) -> list[str]:
+def _furniture_css(block: dict, body_size: float, family: str) -> list[str]:
     """CSS declarations for a running head or folio, from the DesignSpec.
 
     The one place these turn into declarations. They used to be `font-size: 9pt`
@@ -688,12 +766,11 @@ def _furniture_css(block: dict, body_size: float, family: str,
     outright and a house rule like "running heads are body minus three" could not
     be expressed at all, let alone changed in one place.
     """
-    size = body_size + float(block.get("sizeDelta", defaults["sizeDelta"]))
-    weight = block.get("weight", defaults["weight"])
-    case = block.get("case", defaults["case"])
+    size = body_size + block["sizeDelta"]
+    weight, case = block["weight"], block["case"]
     # Tracking is authored in InDesign units (1/1000 em) because InDesign is one
     # of the deliverables; CSS wants em.
-    tracking = float(block.get("tracking", defaults["tracking"])) / 1000.0
+    tracking = block["tracking"] / 1000.0
 
     decls = [f"font-family: {family};", f"font-size: {size:g}pt;",
              f"font-weight: {CSS_WEIGHTS.get(weight, '400')};"]
@@ -741,36 +818,19 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
     `design-compile` and `paginate`'s CSS fallback must both call this SAME
     function object -- see the module docstring.
     """
-    typography = designspec.get("typography", {})
-    grid = designspec.get("grid", {})
-    margins = designspec.get("margins", {})
-    folio = designspec.get("folio", {})
-    chapter_openings = designspec.get("chapterOpenings", {})
-    running_heads = designspec.get("runningHeads", {})
-    colors = designspec.get("colors", {})
-    trim_size = designspec.get("trimSize", {})
+    spec = complete_designspec(designspec)
+    typography, margins, folio = spec["typography"], spec["margins"], spec["folio"]
+    chapter_openings, running_heads = spec["chapterOpenings"], spec["runningHeads"]
 
-    # Unit conversion
-    has_unit = trim_size.get("unit", "mm")
-    w_mm = trim_size.get("width", 152)
-    h_mm = trim_size.get("height", 229)
+    w_mm, h_mm = spec["trimSize"]["width"], spec["trimSize"]["height"]
+    body_size, leading = typography["bodySize"], typography["leading"]
+    body_font_family = typography["bodyFont"]["family"]
+    heading_font_family = (typography.get("headingFont") or typography["bodyFont"])["family"]
+    top, bottom, outside = margins["top"], margins["bottom"], margins["outside"]
+    inside = inside_margin_mm(spec)
+    alignment = BODY_ALIGNMENT[typography["bodyAlignment"]]
 
-    body_size = typography.get("bodySize", 10.5)
-    leading = typography.get("leading", DEFAULT_LEADING_PT)
-    measure = typography.get("measure", 66)
-
-    body_font_family = (typography.get("bodyFont") or {}).get("family", "GFS Didot")
-    heading_font_family = (typography.get("headingFont") or {}).get("family", "")
-    if not heading_font_family:
-        heading_font_family = body_font_family
-
-    top = margins.get("top", 18)
-    bottom = margins.get("bottom", 20)
-    inside = margins.get("inside", 15)
-    outside = margins.get("outside", 20)
-    gutter = margins.get("gutter", 0)
-
-    text_color = colors.get("text", _COLOR_DEFAULTS["text"])
+    text_color = spec["colors"]["text"]
     text_k = black_plate(text_color)
     if text_k is not None:
         text_color = f"device-cmyk(0 0 0 {text_k:g})"
@@ -783,83 +843,59 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         # Emitted only when there is bleed to declare, so a no-bleed profile's
         # stylesheet is byte-identical to what it was before bleed existed.
         *([f"  bleed: {bleed_mm:g}mm;"] if bleed_mm > 0 else []),
-        f"  margin-top: {top}mm;",
-        f"  margin-bottom: {bottom}mm;",
-        f"  margin-left: {inside}mm;",
-        f"  margin-right: {outside}mm;",
+        f"  margin-top: {top:g}mm;",
+        f"  margin-bottom: {bottom:g}mm;",
+        f"  margin-left: {inside:g}mm;",
+        f"  margin-right: {outside:g}mm;",
         "}",
         "",
-        "@page :first {",
-        "  @top-left { content: none; }",
-        "  @top-right { content: none; }",
-        "}",
+        f"@page :recto {{ margin-left: {inside:g}mm; margin-right: {outside:g}mm; }}",
+        f"@page :verso {{ margin-left: {outside:g}mm; margin-right: {inside:g}mm; }}",
         "",
-        f"@page :recto {{",
-        f"  margin-left: {inside}mm;",
-        f"  margin-right: {outside}mm;",
-        f"  @top-left {{ content: ''; }}",
-        f"  @top-right {{ content: ''; }}",
-        "}",
-        "",
-        f"@page :verso {{",
-        f"  margin-left: {outside}mm;",
-        f"  margin-right: {inside}mm;",
-        f"  @top-left {{ content: ''; }}",
-        f"  @top-right {{ content: ''; }}",
-        "}",
+        # The strings a running head can show (HEAD_SOURCES). The book's title and
+        # author ride on <body> as attributes (ast_to_html), so they add no text.
+        "body { string-set: book-title attr(data-title), author attr(data-author); }",
         "",
     ]
 
-    # Running heads
-    rh_recto_source = running_heads.get("rectoSource", "chapter-title")
-    rh_verso_source = running_heads.get("versoSource", "book-title")
-    rh_style = running_heads.get("style", "centered")
-
-    if rh_recto_source != "none" or rh_verso_source != "none":
-        head_css = _furniture_css(running_heads, body_size, body_font_family,
-                                  _RUNNING_HEAD_DEFAULTS)
-        lines.extend([
-            "@page :recto {",
-            "  @top-left {",
-            "    content: string(recto-head);",
-            *(f"    {d}" for d in head_css),
-            "  }",
-            "}",
-            "",
-            "@page :verso {",
-            "  @top-right {",
-            "    content: string(verso-head);",
-            *(f"    {d}" for d in head_css),
-            "  }",
-            "}",
-            "",
-        ])
+    heads = running_heads_plan(spec)
+    head_boxes = set()
+    if heads:
+        head_css = _furniture_css(running_heads, body_size, body_font_family)
+        for side, source in heads.items():
+            if source is None:
+                continue
+            box = f"top-{head_side(running_heads['style'], side == 'recto')}"
+            head_boxes.add(box)
+            lines.extend([
+                f"@page :{side} {{",
+                f"  @{box} {{",
+                f"    content: string({source});",
+                *(f"    {d}" for d in head_css),
+                "  }",
+                "}",
+                "",
+            ])
+    if head_boxes and "chapter-opening" in running_heads["suppressOn"]:
+        lines.extend(["@page chapter-opening {",
+                      *(f"  @{box} {{ content: none; }}" for box in sorted(head_boxes)),
+                      "}", ""])
 
     # Folio
-    folio_pos = folio.get("position", "bottom-center")
-    folio_style = folio.get("style", "arabic")
-    folio_suppress = folio.get("suppressOn", ["chapter-opening"])
-
+    folio_pos = folio["position"]
     if folio_pos != "none":
-        folio_side_map = {
-            "bottom-center": ("bottom", "center"),
-            "bottom-outside": ("bottom", "outside"),
-            "top-center": ("top", "center"),
-            "top-outside": ("top", "outside"),
-        }
-        edge, align = folio_side_map.get(folio_pos, ("bottom", "center"))
+        edge, align = folio_pos.split("-")
         lines.extend([
             "@page {",
             f"  @{edge}-{align} {{",
-            f"    content: counter(page, {folio_style});",
-            *(f"    {d}" for d in _furniture_css(folio, body_size,
-                                                 body_font_family, _FOLIO_DEFAULTS)),
+            f"    content: counter(page, {folio['style']});",
+            *(f"    {d}" for d in _furniture_css(folio, body_size, body_font_family)),
             "  }",
             "}",
             "",
         ])
 
-        if "chapter-opening" in folio_suppress:
+        if "chapter-opening" in folio["suppressOn"]:
             lines.extend([
                 "@page chapter-opening {",
                 f"  @{edge}-{align} {{ content: none; }}",
@@ -868,9 +904,9 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
             ])
 
     # Chapter opening styles
-    starts_on = BREAK_BEFORE[chapter_openings.get("startsOn", "recto")]
-    drop_cap = chapter_openings.get("dropCap", True)
-    drop_cap_lines = chapter_openings.get("dropCapLines", 3)
+    starts_on = BREAK_BEFORE[chapter_openings["startsOn"]]
+    drop_cap = chapter_openings["dropCap"]
+    drop_cap_lines = chapter_openings["dropCapLines"]
 
     # Base body
     lines.extend([
@@ -887,7 +923,11 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "",
         "p {",
         "  margin: 0;",
-        "  text-indent: 1.5em;",
+        f"  text-indent: {typography['paragraphIndent']:g}em;",
+        f"  text-align: {alignment};",
+        # Justified type needs hyphenation or its spacing opens up; the language
+        # it hyphenates by is the book's (<html lang>, from the AST).
+        *(["  hyphens: auto;"] if alignment == "justify" else []),
         "  widows: 2;",
         "  orphans: 2;",
         "}",
@@ -909,12 +949,12 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "",
         f".chapter-title {{",
         f"  font-family: {heading_font_family};",
-        f"  font-size: {body_size * 1.8}pt;",
+        f"  font-size: {chapter_title_pt(spec):g}pt;",
         f"  line-height: {leading * 2}pt;",
         f"  text-align: center;",
         f"  margin-top: {leading * 2}pt;",
         f"  margin-bottom: {leading}pt;",
-        f"  string-set: recto-head content(text);",
+        f"  string-set: chapter-title content(text);",
         "}",
         "",
     ])
@@ -1093,15 +1133,6 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "}",
         ".copyrightPage {",
         "  font-size: 0.85em;",
-        "}",
-        "",
-    ])
-
-    # Named pages for chapter openings
-    lines.extend([
-        "@page chapter-opening {",
-        f"  @top-left {{ content: none; }}",
-        f"  @top-right {{ content: none; }}",
         "}",
         "",
     ])

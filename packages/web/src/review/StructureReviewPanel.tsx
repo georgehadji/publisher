@@ -2,6 +2,7 @@
 
 import React, { useActionState, useState } from "react";
 import { submitOverride } from "./actions";
+import { LOW_CONFIDENCE_BELOW } from "../types";
 import type {
   StructureReview,
   ChapterReview,
@@ -95,7 +96,7 @@ function ChapterCard({
   onClick: () => void;
 }) {
   // Unscored counts as an issue: not measured is not certain.
-  const hasIssues = chapter.confidence === null || chapter.confidence < 0.8;
+  const hasIssues = chapter.confidence === null || chapter.confidence < LOW_CONFIDENCE_BELOW;
   return (
     <div
       onClick={onClick}

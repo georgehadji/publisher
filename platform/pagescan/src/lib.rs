@@ -6,9 +6,10 @@
 //! - D6: Bounded everything. Every loop has a max iteration count.
 //!
 //! Scans a pagemap for typographic defects:
-//!   - Widows (single word on last line of a paragraph)
-//!   - Orphans (last line of a paragraph at the top of a page)
-//!   - Runts (short last line that looks accidental)
+//!   - Widows, orphans and runts: as `stages/paginate_stage.py` measures them
+//!     into the pagemap (the one definition; this crate reads its flags):
+//!     widow = a paragraph's LAST line alone at the top of a page, orphan = its
+//!     FIRST line alone at the bottom of one, runt = a short last line.
 //!   - Rivers (vertical alignment of spaces — approximated)
 //!   - Hyphen stacks (three or more consecutive hyphenated lines)
 //!   - Short chapter ends (last page of a chapter has very little text)
@@ -105,9 +106,6 @@ pub struct ScanResult {
 /// Maximum iterations for the fixpoint loop (D6: bounded everything).
 pub const MAX_FIXPOINT_ITERATIONS: u32 = 3;
 
-/// Minimum lines on a page for a paragraph to *not* be considered an orphan/widow.
-const MIN_LINES_PER_PARA: u32 = 2;
-
 /// If a page has fewer than this many words, flag as short chapter end.
 const SHORT_PAGE_WORD_THRESHOLD: u32 = 30;
 
@@ -165,26 +163,9 @@ pub fn scan(pagemap: &PageMap) -> ScanResult {
     }
 }
 
-/// Detect widows: a paragraph whose last line is alone at the top of a page.
-///
-/// A widow occurs when a paragraph starts on one page and its last line
-/// appears alone at the top of the next page.
+/// Widows: a paragraph's last line alone at the top of a page (the pagemap's
+/// `hasWidows`, measured by paginate).
 fn detect_widows(page: &PageEntry, defects: &mut Vec<Defect>) {
-    // Simplified detection: a paragraph with exactly 1 line on this page
-    // that also has lines on the previous page => widow candidate.
-    if let Some(ref ranges) = page.para_ranges {
-        for pr in ranges {
-            // A paragraph with fewer than MIN_LINES_PER_PARA lines on this page,
-            // where that line is the last of the paragraph (not the first),
-            // suggests a widow.
-            if pr.lines_on_page < MIN_LINES_PER_PARA {
-                // Check if this paragraph continues from previous page
-                // (not implemented in stub: needs inter-page paragraph tracking)
-            }
-        }
-    }
-
-    // Use pagemap's pre-computed hint
     if page.has_widows == Some(true) {
         defects.push(Defect {
             defect_type: DefectType::Widow,
@@ -200,10 +181,9 @@ fn detect_widows(page: &PageEntry, defects: &mut Vec<Defect>) {
     }
 }
 
-/// Detect orphans: the last line of a paragraph appearing at the top of a page
-/// while the rest of the paragraph is on the previous page.
-///
-/// In book typography, orphans are generally considered worse than widows.
+/// Orphans: a paragraph's first line alone at the bottom of a page, the rest
+/// on the next (the pagemap's `hasOrphans`, measured by paginate). Preflight
+/// fails a book on them; widows and runts only warn.
 fn detect_orphans(page: &PageEntry, defects: &mut Vec<Defect>) {
     if page.has_orphans == Some(true) {
         defects.push(Defect {
@@ -211,7 +191,7 @@ fn detect_orphans(page: &PageEntry, defects: &mut Vec<Defect>) {
             page_number: page.page_number,
             severity: Severity::Error,
             description: format!(
-                "Page {}: orphan detected (last line of paragraph alone at top)",
+                "Page {}: orphan detected (first line of paragraph alone at bottom)",
                 page.page_number
             ),
             para_index: None,

@@ -88,10 +88,10 @@ def test_the_commercial_faces_are_not_licensed_for_epub(family):
 
 
 def test_the_default_design_is_set_in_gfs_didot():
-    from stages.design_compile_stage import _default_designspec
+    from templates import house_designspec
     import templates
 
-    assert _default_designspec()["typography"]["bodyFont"]["family"] == "GFS Didot"
+    assert house_designspec()["typography"]["bodyFont"]["family"] == "GFS Didot"
     greek = [v for v in vars(templates).values()
              if isinstance(v, dict) and str(v.get("name", "")).startswith("Greek")]
     assert greek and all(t["typography"]["bodyFont"]["family"] == "GFS Didot" for t in greek)

@@ -41,10 +41,11 @@ sharded `h[:2]/h[2:4]/h`.
 | `Cargo.toml`, `py/pyproject.toml`, `ts/package.json`, `ts/tsconfig.json` | Per-language package manifests. |
 
 ### `platform/cache/` — build-graph memoization
+Python only. A TypeScript copy of the key computation (`ts/`) was deleted: nothing called it, and a second canonicalisation is a second meaning for one cache key. The API computes no keys -- it owns no pipeline logic.
+
 | File | What it does |
 |---|---|
 | `py/publisher_cache/__init__.py` | `compute_cache_key()`, `compute_toolchain_digest()`, `canonical_json()`, `CacheEntry`, and three backends: `CacheStore` (base), `SqliteCacheStore` (dev harness), `PostgresCacheStore` (worker — cache state visible across processes). |
-| `ts/src/index.ts` | `canonicalJson` + key computation for the TS side. Must stay byte-identical to the Python canonicalization or a cache key means two different things. |
 
 ### `platform/stages/` — the registry
 | File | What it does |

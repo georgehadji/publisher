@@ -33,7 +33,6 @@ Two rules govern the whole folder:
 | `cover/art-brief.schema.json` | `art-brief/1` | **ArtBrief** — semantic cover direction. Closed enums everywhere except `concept`/`subject`. |
 | `cover/art-provenance.schema.json` | `art-provenance/1` | **ArtProvenance** — compliance + reproducibility record for generated art. Ships in the delivery package; retailers require AI-generation disclosure. |
 | `cover/cover-verdict.schema.json` | `cover-verdict/1` | **CoverVerdict** — one judge's pairwise vote. Closed enum, deliberately **no rationale field**. |
-| `ts/shared.types.json` | `types/1` | **Nothing references it.** There is not one cross-file `$ref` in `schemas/`, and `codegen/generate.mjs` skips it (it only reads `*.schema.json`). Its `$defs` are duplicated inline in the individual schemas; codegen recovers shared types by content-hash dedup instead. Editing this file changes nothing. |
 | `codegen/generate.mjs` | — | The two-pass generator. Two-pass because a single pass decided a type's *name* at point of use instead of registering types up front, which produced dangling refs and a literal `z.object({...PROPERTIES...})` placeholder. |
 | `codegen/test.mjs` | — | **Executes** the generated types rather than grepping them. The previous version only ran substring checks and passed while the generated TS had 39 dangling refs and the generated Python was an unimportable SyntaxError. |
 | `package.json` | — | `@publisher/schemas`. Scripts: `gen`, `gen:check`, `test`, `build`. Depends on `zod`. |
@@ -44,6 +43,11 @@ files are tracked, none exist in a fresh checkout, and `git add` refuses them. C
 only tracked files, so it can never detect drift. CI's step regenerates and then runs a bare
 `git diff --exit-code`, which is equally blind to ignored files. Treat codegen freshness as
 *unverified* and rerun `node codegen/test.mjs`, which actually executes the output.
+
+`ts/shared.types.json` (a `types/1` file nothing referenced -- its `$defs` were
+duplicated inline in every schema and codegen skipped it) was deleted: a second copy of
+shared types that editing changed nothing about. Shared types are recovered by codegen's
+content-hash dedup.
 
 ## Working with schemas
 

@@ -2,7 +2,8 @@
 DesignSpec template presets.
 
 From ARCHITECTURE.md §2.7 and BUILD_PLAN.md §3.7:
-8 starter templates plus the tracer bullet default, each with:
+the genre presets and Greek trade sizes in TEMPLATES, plus HOUSE_DESIGNSPEC (the
+default every build completes against), each with:
 - Trim size, margins, typography, grid
 - Folio and running head policies
 - Chapter opening treatments
@@ -15,12 +16,71 @@ they were not derived from anything, and a book set on a non-millimetre baseline
 cannot be checked against an imposition measured in millimetres.
 """
 
-# 5.000 mm exactly (14.173 / 72 * 25.4). The single source for leading: the
-# runtime fallbacks in the CSS, Typst and IDML emitters import this rather than
-# each carrying its own number, which is how they came to disagree before.
-DEFAULT_LEADING_PT = 14.173
+import copy as _copy
+import json as _json
+from pathlib import Path as _Path
 
-# ── Literary Novel (6x9, EB Garamond) ───────────────────────────
+from publisher_stages import with_schema_defaults as _with_schema_defaults
+
+_SCHEMA = _json.loads((_Path(__file__).resolve().parent.parent / "schemas" / "designspec"
+                       / "designspec.schema.json").read_text(encoding="utf-8"))
+
+# 5.000 mm exactly (14.173 / 72 * 25.4), read from the DesignSpec schema's
+# `typography.leading` default -- the one place the number is written.
+DEFAULT_LEADING_PT = _SCHEMA["$defs"]["typography"]["properties"]["leading"]["default"]
+
+# The house DesignSpec: what a build uses when it supplies none, and the base
+# every spec is completed from. It carries only what the schema cannot default
+# (the required fields and the house face); everything else comes from the
+# schema's own `default`s (complete_designspec).
+HOUSE_DESIGNSPEC = {
+    "schema": "designspec/1",
+    "name": "House -- Literary 6x9",
+    "trimSize": {"width": 152.4, "height": 228.6},
+    "typography": {
+        "bodyFont": {"family": "GFS Didot"},
+        "bodySize": 10.5,
+        "measure": 66,
+    },
+    "grid": {"baselineIncrement": DEFAULT_LEADING_PT},
+    "margins": {"top": 18, "bottom": 20, "inside": 15, "outside": 20},
+    "fonts": [{"family": "GFS Didot", "source": "bundled_ofl"}],
+}
+
+_MM_PER_IN = 25.4
+
+
+def house_designspec() -> dict:
+    """A copy of HOUSE_DESIGNSPEC, safe to modify."""
+    return _copy.deepcopy(HOUSE_DESIGNSPEC)
+
+
+def _over(base: dict, spec: dict) -> dict:
+    """`spec` laid over `base`: nested objects merge, anything else replaces."""
+    out = dict(base)
+    for key, value in spec.items():
+        out[key] = _over(base[key], value) if isinstance(value, dict) and isinstance(base.get(key), dict) else value
+    return out
+
+
+def complete_designspec(spec: dict | None) -> dict:
+    """`spec` over HOUSE_DESIGNSPEC, with every schema default filled in and the
+    trim in millimetres.
+
+    The one place a DesignSpec gets its missing values. The CSS, Typst and IDML
+    emitters read the completed spec and restate no default of their own; they
+    used to carry three sets that disagreed (trim 152x229 against 152.4x228.6,
+    GFS Didot against EB Garamond). A trim given in inches is converted here --
+    every emitter used to read its numbers as millimetres.
+    """
+    done = _with_schema_defaults(_over(HOUSE_DESIGNSPEC, spec or {}), _SCHEMA)
+    trim = done["trimSize"]
+    if trim["unit"] == "in":
+        done["trimSize"] = {"width": trim["width"] * _MM_PER_IN,
+                            "height": trim["height"] * _MM_PER_IN, "unit": "mm"}
+    return done
+
+# ── Literary Novel (5.5x8.5, EB Garamond) ───────────────────────────
 
 LITERARY = {
     "schema": "designspec/1",

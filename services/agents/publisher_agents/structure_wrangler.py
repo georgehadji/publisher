@@ -91,7 +91,7 @@ def evaluate_structure_wrangler(
     for i, case in enumerate(test_cases):
         html = case.get("html", "")
         blocks = parse_html(html)
-        low_conf_indices = find_low_confidence(blocks, threshold=0.8)
+        low_conf_indices = find_low_confidence(blocks)
         
         low_conf_nodes = [
             {

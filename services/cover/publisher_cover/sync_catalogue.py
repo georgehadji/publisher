@@ -27,13 +27,12 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
+from publisher_cover.art_policy import COVER_ASPECT
+
 BASE = "https://openrouter.ai/api/v1"
 TIMEOUT_S = 90
 RETRIES = 3
 
-# 2:3 is exactly 6x9in -- the default trim. A model without it cannot render a
-# native cover and must crop, which loses the type zone the brief reserved.
-COVER_ASPECT = "2:3"
 
 OUT_PATH = Path(__file__).parent / "model_catalogue.yaml"
 

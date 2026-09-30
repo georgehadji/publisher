@@ -27,12 +27,9 @@ from pathlib import Path
 
 from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
-from publisher_prepress.ghostscript import (
-    FINISH_TIMEOUT_S,
-    GhostscriptError, find_binary, to_pdfx, to_proof,
-)
+from publisher_prepress.ghostscript import FINISH_TIMEOUT_S, GhostscriptError, find_binary, press_and_proof
 from publisher_sandbox import sandbox_for
-from profiles import load_profile
+from profiles import resolve_profile
 
 
 @stage(
@@ -46,7 +43,7 @@ from profiles import load_profile
     # collapsed TrimBox onto MediaBox and produced a press file measuring 0.00mm
     # of bleed no matter what the renderer had laid down.
     # v7: proof/report declared terminal outputs (U6).
-    version=10,  # v10: deadline FINISH_TIMEOUT_S, covering both Ghostscript passes. v9: 3600 s deadline, cheap text check (Tj/TJ count), notes split. v8: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline.
+    version=11,  # v11: profile via resolve_profile, press + proof via ghostscript.press_and_proof (proof dpi from the profile). v10: deadline FINISH_TIMEOUT_S, covering both Ghostscript passes. v9: 3600 s deadline, cheap text check (Tj/TJ count), notes split. v8: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline.
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     inputs={"pdf_path": "raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
@@ -70,18 +67,9 @@ def finish(ctx: StageCtx, pdf_path: str | None = None,
     if pdf_path is None:
         raise StageError(kind=ErrorKind.BAD_INPUT, message="finish requires 'pdf_path' (from paginate)")
 
-    # Must be the same figure design-compile grew the page box by, or the
-    # TrimBox lands somewhere the type was not laid out for.
-    bleed_mm = 0.0
-    if profile_name:
-        profile = load_profile(profile_name)
-        if profile is None:
-            raise StageError(
-                kind=ErrorKind.BAD_INPUT,
-                message=f"Unknown vendor profile: {profile_name!r}",
-            )
-        bleed_mm = float((profile.get("bleed") or {}).get("all", 0.0))
-    bleed_pt = bleed_mm * 72.0 / 25.4
+    # The same profile design-compile grew the page box by, or the TrimBox lands
+    # somewhere the type was not laid out for.
+    profile = resolve_profile(profile_name)
 
     pdf_path_p = Path(pdf_path)
     if not pdf_path_p.exists():
@@ -101,17 +89,14 @@ def finish(ctx: StageCtx, pdf_path: str | None = None,
     work.mkdir(parents=True, exist_ok=True)
 
     if gs_binary is not None:
-        press_path = work / "press.pdf"
-        proof_path = work / "proof.pdf"
         # E3.2: real rlimit containment around ghostscript. Dockerfile.worker
         # is Linux-only, so production always gets RlimitSubprocessSandbox;
         # InProcessSandbox is only ever reached in local dev/test on a
         # platform with no rlimits (Windows) -- see sandbox_for()'s docstring.
         sandbox = sandbox_for()
         try:
-            to_pdfx(pdf_path_p, press_path, work, title=ctx.build_id,
-                    bleed_pt=bleed_pt, gs_binary=gs_binary, sandbox=sandbox)
-            to_proof(pdf_path_p, proof_path, gs_binary=gs_binary, sandbox=sandbox)
+            press_path, proof_path = press_and_proof(pdf_path_p, work, profile, title=ctx.build_id,
+                                                     gs_binary=gs_binary, sandbox=sandbox)
         except GhostscriptError as e:
             # A failed conversion is an engine failure, not a reason to fall back
             # to passing the input through -- that is precisely the silent

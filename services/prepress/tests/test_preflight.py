@@ -102,9 +102,11 @@ def test_preflight_file_size_fail():
 
 def test_preflight_resolution_pass():
     pdf_info = {"effective_dpi": 300}
-    profile = {"proofSpec": {"dpi": 150}}
+    profile = {"pdfSpec": {"minImageDpi": 300}}
     result = check_resolution(pdf_info, profile)
     assert result.status == "pass"
+    # A profile that states no minimum is not a pass by assumption.
+    assert check_resolution(pdf_info, {}).status == "skip"
 
 
 def test_preflight_embed_fonts_pass():
@@ -311,7 +313,8 @@ def test_rich_black_text_is_found_and_counted_as_ink(tmp_path):
     assert ink["rich_black_text_pages"] == [2]
     assert ink["tac"] == [100, 294]
     assert check_rich_black_text({"ink": ink}, {}).status == "fail"
-    assert check_ink_coverage({"ink": ink}, {}).status == "pass"
+    assert check_ink_coverage({"ink": ink}, {"pdfSpec": {"maxInkCoverage": 300}}).status == "pass"
+    assert check_ink_coverage({"ink": ink}, {}).status == "skip"   # no limit stated
 
 
 @needs_gs
@@ -320,7 +323,7 @@ def test_heavy_ink_art_fails_coverage_but_is_not_rich_black_text(tmp_path):
     pdf = _pdf(tmp_path, f"1 1 1 1 setcmykcolor {BOX} 0 0 0 1 setcmykcolor {TEXT}")
     ink = measure_ink(pdf)
     assert ink == {"tac": [400], "rich_black_text_pages": []}
-    check = check_ink_coverage({"ink": ink}, {})
+    check = check_ink_coverage({"ink": ink}, {"pdfSpec": {"maxInkCoverage": 300}})
     assert check.status == "fail" and check.value == 400 and check.expected == 300
     assert check_ink_coverage({"ink": ink}, {"pdfSpec": {"maxInkCoverage": 400}}).status == "pass"
 

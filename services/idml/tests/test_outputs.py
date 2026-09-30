@@ -20,6 +20,14 @@ class TestIDMLWriter:
     writer's. These assertions check the package InDesign actually needs --
     the previous ones passed on a file InDesign rejects."""
 
+    # What stages.rendering.design_plan hands the writer (this service cannot
+    # import stages; stages/tests/test_idml_package.py drives the real one).
+    PLAN = {"trim_mm": (152.4, 228.6), "bleed_mm": 3.0,
+            "margins_mm": {"top": 18, "bottom": 20, "inside": 15, "outside": 20},
+            "body_font": "GFS Didot", "heading_font": "GFS Didot", "body_pt": 10.5,
+            "leading_pt": 14.173, "indent_em": 1.5, "alignment": "justify",
+            "chapter_title_pt": 20.5, "starts_on": "recto"}
+
     STORY = (
         '<ParagraphStyleRange AppliedParagraphStyle="ParagraphStyle/Header1">'
         '<CharacterStyleRange AppliedCharacterStyle="$ID/NormalCharacterStyle">'
@@ -31,7 +39,7 @@ class TestIDMLWriter:
 
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "test.idml"
-            result = IDMLWriter(self.STORY, title="T").write(output)
+            result = IDMLWriter(self.STORY, title="T", plan=self.PLAN).write(output)
             assert result.exists()
             assert result.suffix == ".idml"
             validate_idml(result)
@@ -49,7 +57,7 @@ class TestIDMLWriter:
         from publisher_idml import IDMLWriter
 
         with tempfile.TemporaryDirectory() as tmp:
-            result = IDMLWriter(self.STORY, page_count=3).write(Path(tmp) / "test.idml")
+            result = IDMLWriter(self.STORY, title="T", plan=self.PLAN, page_count=3).write(Path(tmp) / "test.idml")
 
             with zipfile.ZipFile(result) as zf:
                 stories = [n for n in zf.namelist() if n.startswith("Stories/")]
@@ -61,23 +69,16 @@ class TestIDMLWriter:
     def test_idml_with_designspec(self):
         from publisher_idml import IDMLWriter, validate_idml
 
-        designspec = {
-            "trimSize": {"width": 152.4, "height": 228.6},
-            "typography": {
-                "bodyFont": {"family": "Source Serif Pro"},
-                "bodySize": 11.0,
-                "leading": 14.5,
-                "paragraphIndent": 1.2,
-            },
-            "margins": {"top": 16, "bottom": 18, "inside": 14, "outside": 18},
-        }
+        plan = {**self.PLAN, "body_font": "Source Serif Pro", "alignment": "right"}
 
         with tempfile.TemporaryDirectory() as tmp:
-            result = IDMLWriter(self.STORY, designspec=designspec).write(
+            result = IDMLWriter(self.STORY, title="T", plan=plan).write(
                 Path(tmp) / "test.idml")
             validate_idml(result)
             with zipfile.ZipFile(result) as zf:
                 assert "Source Serif Pro" in zf.read("Resources/Fonts.xml").decode()
+                # ragged-left reached InDesign; it used to fall back to LeftAlign.
+                assert 'Justification="RightAlign"' in zf.read("Resources/Styles.xml").decode()
 
     def _make_test_ast(self, chapters: int = 1) -> dict:
         return {

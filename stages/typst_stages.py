@@ -42,17 +42,19 @@ import subprocess
 from pathlib import Path
 
 from publisher_stages import (
+    RenderEngine,
     stage, StageCtx, StageResult, StageError, ErrorKind,
     ArtifactRef as StageArtifactRef,
 )
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
-from publisher_prepress.fontvault import FontLicenseViolation, validate_font_use
-from profiles import load_profile
-from templates import DEFAULT_LEADING_PT
+from publisher_prepress.fontvault import FontLicenseViolation, validate_spec_fonts
+from profiles import resolve_profile
+from templates import complete_designspec, house_designspec
 # The fallbacks for the page-furniture blocks, shared with the CSS emitter so
 # both engines cannot drift apart on what a running head is. Moved to
 # stages/rendering.py in E1.3 along with emit_css itself.
-from stages.rendering import _COLOR_DEFAULTS, _FOLIO_DEFAULTS, _RUNNING_HEAD_DEFAULTS, black_plate
+from stages.rendering import (BODY_ALIGNMENT, black_plate, book_identity, chapter_title_pt, head_side,
+                              inside_margin_mm, running_heads_plan)
 
 TYPST_SCHEMA = "text/x-typst"
 
@@ -84,41 +86,32 @@ def _emit_typst(designspec: dict, bleed_mm: float = 0.0) -> str:
     the CSS path; see this module's docstring for why the arithmetic is done
     here rather than declared.
     """
-    typography = designspec.get("typography") or {}
-    margins = designspec.get("margins") or {}
-    folio = designspec.get("folio") or {}
-    running_heads = designspec.get("runningHeads") or {}
-    chapter_openings = designspec.get("chapterOpenings") or {}
-    colors = designspec.get("colors") or {}
-    trim_size = designspec.get("trimSize") or {}
-    metadata = designspec.get("metadata") or {}
+    spec = complete_designspec(designspec)
+    typography, margins, folio = spec["typography"], spec["margins"], spec["folio"]
+    running_heads, chapter_openings = spec["runningHeads"], spec["chapterOpenings"]
 
-    w_mm = float(trim_size.get("width", 152.4)) + 2 * bleed_mm
-    h_mm = float(trim_size.get("height", 228.6)) + 2 * bleed_mm
+    w_mm = spec["trimSize"]["width"] + 2 * bleed_mm
+    h_mm = spec["trimSize"]["height"] + 2 * bleed_mm
 
-    body_size = float(typography.get("bodySize", 10.5))
-    leading = float(typography.get("leading", DEFAULT_LEADING_PT))
-    paragraph_indent = float(typography.get("paragraphIndent", 1.5))
-    justified = typography.get("bodyAlignment", "justified") == "justified"
+    body_size, leading = typography["bodySize"], typography["leading"]
+    paragraph_indent = typography["paragraphIndent"]
+    alignment = BODY_ALIGNMENT[typography["bodyAlignment"]]
 
-    body_font = (typography.get("bodyFont") or {}).get("family", "GFS Didot")
-    heading_font = (typography.get("headingFont") or typography.get("displayFont")
-                    or {}).get("family") or body_font
+    body_font = typography["bodyFont"]["family"]
+    heading_font = (typography.get("headingFont") or typography["bodyFont"])["family"]
 
-    top = float(margins.get("top", 18)) + bleed_mm
-    bottom = float(margins.get("bottom", 20)) + bleed_mm
-    inside = float(margins.get("inside", 15)) + float(margins.get("gutter", 0)) + bleed_mm
-    outside = float(margins.get("outside", 20)) + bleed_mm
+    top = margins["top"] + bleed_mm
+    bottom = margins["bottom"] + bleed_mm
+    inside = inside_margin_mm(spec) + bleed_mm
+    outside = margins["outside"] + bleed_mm
 
-    text_color = colors.get("text", _COLOR_DEFAULTS["text"])
-    paper_color = colors.get("paper", _COLOR_DEFAULTS["paper"])
+    text_color, paper_color = spec["colors"]["text"], spec["colors"]["paper"]
     text_k = black_plate(text_color)
     text_fill = (f"cmyk(0%, 0%, 0%, {text_k * 100:g}%)" if text_k is not None
                  else f"rgb({_typ_str(text_color)})")
 
-    folio_position = folio.get("position", "bottom-center")
-    numbering = {"roman-lower": "i", "roman-upper": "I",
-                 "arabic": "1"}.get(folio.get("style", "arabic"), "1")
+    folio_position = folio["position"]
+    numbering = {"roman-lower": "i", "roman-upper": "I", "arabic": "1"}.get(folio["style"], "1")
     # `outside` alternates by parity. The previous map sent both outside
     # positions to `center`, so a spec asking for outside folios silently got
     # centred ones -- and centred folios on a book with outer running heads is a
@@ -131,8 +124,6 @@ def _emit_typst(designspec: dict, bleed_mm: float = 0.0) -> str:
     # ponytail: linear approximation; a strict baseline grid needs per-face
     # tuning of `#set par(spacing:)`, which is a calibration job, not a formula.
     typst_leading = max(0.0, leading - body_size)
-
-    book_title = metadata.get("title") or designspec.get("name") or ""
 
     lines = [
         "// Auto-generated from DesignSpec -- emit_typst()",
@@ -152,34 +143,50 @@ def _emit_typst(designspec: dict, bleed_mm: float = 0.0) -> str:
         ")",
         f"#set text(font: ({_typ_str(body_font)}, \"Liberation Serif\"), "
         f"size: {body_size:g}pt, fill: {text_fill})",
-        f"#set par(justify: {'true' if justified else 'false'}, "
+        f"#set par(justify: {'true' if alignment == 'justify' else 'false'}, "
         f"leading: {typst_leading:g}pt, first-line-indent: {paragraph_indent:g}em)",
+        *(["#show par: set align(right)"] if alignment == "right" else []),
         "#set heading(numbering: none)",
         "",
     ]
 
-    if running_heads.get("versoSource") is not None:
-        # Suppressed on chapter-opening pages, per DesignSpec.folio.suppressOn --
-        # a running head on a chapter opening is the commonest amateur tell in a
-        # typeset book.
-        head_args, head_wrap = _furniture_typst(running_heads, body_size,
-                                                _RUNNING_HEAD_DEFAULTS)
+    heads = running_heads_plan(spec)
+    if heads:
+        head_args, head_wrap = _furniture_typst(running_heads, body_size)
+        # What each source prints: the chapter's title is the last level-1
+        # heading at or before this page; title and author come from
+        # `#set document(...)`, which paginate-typst writes from the AST.
+        shows = {
+            "chapter-title": ("{ let h = query(heading.where(level: 1).before(here())); "
+                              "if h.len() > 0 { h.last().body } }"),
+            "book-title": "document.title",
+            "author": "document.author.join(\", \")",
+        }
+
+        def head_line(side: str) -> str:
+            source = heads[side]
+            if source is None:
+                return "none"
+            align = head_side(running_heads["style"], side == "recto")
+            return f"align({align}, text({head_args}, {head_wrap % shows[source]}))"
+
         lines += [
-            "// Running head, suppressed on chapter-opening pages.",
+            "// Running heads: recto on odd pages, verso on even ones.",
             "#set page(header: context {",
-            "  let openings = query(heading.where(level: 1))"
-            ".map(h => h.location().page())",
-            "  if here().page() in openings { return }",
-            f"  align(center, text({head_args}, "
-            f"{head_wrap % _typ_str(book_title)}))",
+            *(["  let openings = query(heading.where(level: 1))"
+               ".map(h => h.location().page())",
+               "  if here().page() in openings { return }"]
+              if "chapter-opening" in running_heads["suppressOn"] else []),
+            f"  if calc.odd(here().page()) {{ {head_line('recto')} }} "
+            f"else {{ {head_line('verso')} }}",
             "})",
             "",
         ]
 
     if folio_position != "none":
-        folio_args, folio_wrap = _furniture_typst(folio, body_size, _FOLIO_DEFAULTS)
+        folio_args, folio_wrap = _furniture_typst(folio, body_size)
         folio_number = folio_wrap % f"numbering({_typ_str(numbering)}, here().page())"
-        suppressed = folio.get("suppressOn") or ["chapter-opening"]
+        suppressed = folio["suppressOn"]
         lines += [
             "// Folio. An explicit footer rather than page(numbering:) so the",
             "// DesignSpec's size, weight and tracking actually apply to it.",
@@ -193,14 +200,13 @@ def _emit_typst(designspec: dict, bleed_mm: float = 0.0) -> str:
             "",
         ]
 
-    pagebreak_to = {"recto": '"odd"', "verso": '"even"'}.get(
-        chapter_openings.get("startsOn", "recto"))
+    pagebreak_to = {"recto": '"odd"', "verso": '"even"'}.get(chapter_openings["startsOn"])
     opening_break = (
         f"  pagebreak(to: {pagebreak_to}, weak: true)" if pagebreak_to
         else "  pagebreak(weak: true)"
     )
     title_align = {"centered": "center", "left": "left", "right": "right"}.get(
-        chapter_openings.get("titleTreatment", "centered"), "center")
+        chapter_openings["titleTreatment"], "center")
 
     lines += [
         "// Chapter opening: break to the right sheet, then set the title.",
@@ -208,7 +214,7 @@ def _emit_typst(designspec: dict, bleed_mm: float = 0.0) -> str:
         opening_break,
         "  v(6%)",
         f"  align({title_align}, text(font: {_typ_str(heading_font)}, "
-        f"size: {body_size * 1.6:g}pt, weight: \"regular\", it.body))",
+        f"size: {chapter_title_pt(spec):g}pt, weight: \"regular\", it.body))",
         "  v(4%)",
         "}",
         "",
@@ -229,7 +235,7 @@ TYPST_CASE = {
 }
 
 
-def _furniture_typst(block: dict, body_size: float, defaults: dict) -> tuple[str, str]:
+def _furniture_typst(block: dict, body_size: float) -> tuple[str, str]:
     """`(text(...) arguments, content wrapper)` for a running head or folio.
 
     The Typst counterpart of `_furniture_css`, reading the same DesignSpec
@@ -238,31 +244,20 @@ def _furniture_typst(block: dict, body_size: float, defaults: dict) -> tuple[str
     the two engines came to disagree in the first place (CSS said 9pt flat,
     Typst said body minus 1.5).
     """
-    size = body_size + float(block.get("sizeDelta", defaults["sizeDelta"]))
-    weight = block.get("weight", defaults["weight"])
-    tracking = float(block.get("tracking", defaults["tracking"])) / 1000.0
+    size = body_size + block["sizeDelta"]
+    weight = block["weight"]
+    tracking = block["tracking"] / 1000.0
 
     args = [f"size: {size:g}pt", f'weight: {_typ_str(weight)}']
     if tracking:
         args.append(f"tracking: {tracking:g}em")
-    wrapper = TYPST_CASE.get(block.get("case", defaults["case"]), "%s")
+    wrapper = TYPST_CASE.get(block["case"], "%s")
     return ", ".join(args), wrapper
-
-
-def _fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
-    """(family, style) pairs referenced by a DesignSpec's typography block."""
-    typography = spec.get("typography") or {}
-    out = []
-    for key in ("bodyFont", "displayFont", "monoFont", "headingFont"):
-        family = (typography.get(key) or {}).get("family")
-        if family:
-            out.append((family, (typography.get(key) or {}).get("style", "regular")))
-    return out
 
 
 @stage(
     name="design-compile-typst",
-    version=9,   # v9: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
+    version=10,   # v10: the completed DesignSpec (see design-compile v11); document title/author/lang from the AST. v9: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
                  # v5: figures reach the renderer without alpha (stages/media.py opaque).
                  # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: none to its output; paginate-typst's rendering changed in this module.
@@ -288,21 +283,20 @@ def design_compile_typst(ctx: StageCtx, designspec_path: str | None = None,
     `bad_input` (never silently rendered by the wrong engine), and a font that
     is not licensed for print is a `policy_violation`.
     """
-    IMPLEMENTED_ENGINES = {"typst"}
+    IMPLEMENTED_ENGINES = RenderEngine.TYPST.spec_engines
 
-    from stages.design_compile_stage import _default_designspec
     # The built-in default spec says preferredEngine="chrome-pagedjs" because
     # CSS is the default path. Selecting THIS stage is the declaration that the
     # build renders with Typst, so its default follows the selection. An
     # explicitly supplied spec is still checked below.
-    spec = {**_default_designspec(), "preferredEngine": "typst"}
+    spec = {**house_designspec(), "preferredEngine": "typst"}
 
     if designspec_path:
         p = Path(designspec_path)
         if p.exists():
             spec = json.loads(p.read_bytes())
 
-    engine = spec.get("preferredEngine")
+    engine = complete_designspec(spec)["preferredEngine"]
     if engine not in IMPLEMENTED_ENGINES:
         raise StageError(
             kind=ErrorKind.BAD_INPUT,
@@ -313,28 +307,17 @@ def design_compile_typst(ctx: StageCtx, designspec_path: str | None = None,
                     f"render with CSS/Paged.js.",
         )
 
-    for family, style in _fonts_in_spec(spec):
-        try:
-            validate_font_use(family, style, "PRINT_PDF")
-        except FontLicenseViolation as exc:
-            raise StageError(kind=ErrorKind.POLICY_VIOLATION, message=str(exc))
+    try:
+        validate_spec_fonts(spec, "PRINT_PDF")
+    except FontLicenseViolation as exc:
+        raise StageError(kind=ErrorKind.POLICY_VIOLATION, message=str(exc))
 
     # Trim and bleed belong to the vendor profile, never the DesignSpec -- the
     # same split design_compile enforces, for the same reason: the renderer and
     # preflight must measure one geometry, not two.
-    bleed_mm = 0.0
-    if profile_name:
-        profile = load_profile(profile_name)
-        if profile is None:
-            raise StageError(
-                kind=ErrorKind.BAD_INPUT,
-                message=f"Unknown vendor profile: {profile_name!r}. Profiles are "
-                        f"loaded from profiles/*/*.yaml by their `name:` field.",
-            )
-        trim = profile.get("trimSize") or {}
-        if trim.get("width") and trim.get("height"):
-            spec = {**spec, "trimSize": trim}
-        bleed_mm = float((profile.get("bleed") or {}).get("all", 0.0))
+    profile = resolve_profile(profile_name)
+    spec = {**spec, "trimSize": profile["trimSize"]}
+    bleed_mm = profile["bleed"]["all"]
 
     styles = _emit_typst(spec, bleed_mm=bleed_mm)
     styles_bytes = styles.encode("utf-8")
@@ -504,7 +487,15 @@ def _build_main_typ(doc: dict, styles: str, chapters: list[dict],
                    what="pandoc html -> typst")
         return out.decode("utf-8")
 
-    parts = [styles, ""]
+    # Title, authors and language from the AST, as the CSS path reads them
+    # (rendering.book_identity): running heads print `document.title`/`.author`.
+    book = book_identity(doc)
+    lang, _, region = (book["language"] or "").partition("-")
+    authors = "".join(_typ_str(a) + ", " for a in book["authors"])
+    parts = [f"#set document(title: {_typ_str(book['title'])}, author: ({authors}))",
+             *([f"#set text(lang: {_typ_str(lang.lower())}"
+                + (f", region: {_typ_str(region)}" if region else "") + ")"] if lang else []),
+             styles, ""]
 
     for item in doc.get("frontMatter") or []:
         parts.append(to_typst(item.get("content") or []))
@@ -551,7 +542,7 @@ class _MeasuredPage:
 
 @stage(
     name="paginate-typst",
-    version=9,   # v9: module-level bump (black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black.) v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
+    version=10,   # v10: module-level bump (design-compile-typst v10). v9: module-level bump (black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black.) v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
                  # v5: figures reach the renderer without alpha (stages/media.py opaque).
                  # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: link hrefs are percent-encoded (rendering._safe_href).
@@ -591,8 +582,7 @@ def paginate_typst(ctx: StageCtx, doc_path: str | None = None,
         # Same posture as `paginate`: a missing stylesheet falls back to the
         # built-in default rather than failing, because preflight -- not this
         # stage -- is the authority on whether the resulting geometry is legal.
-        from stages.design_compile_stage import _default_designspec
-        styles = _emit_typst({**_default_designspec(), "preferredEngine": "typst"})
+        styles = _emit_typst({**house_designspec(), "preferredEngine": "typst"})
 
     chapters = _chapters_of(doc)
     work = Path(ctx.work_dir) / "typst"

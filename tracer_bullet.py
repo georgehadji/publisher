@@ -21,7 +21,8 @@ from publisher_exec import DagExecutor
 from publisher_stages import StageError, RegistryConfig, RenderEngine, build_registry
 
 
-def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9"):
+def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9",
+                      designspec: str | None = None):
     """Run the full tracer bullet pipeline.
 
     `manuscript` is a path to an `ast/1` JSON document; it defaults to the
@@ -31,6 +32,9 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
 
     `profile` names a vendor profile from profiles/*/*.yaml -- e.g.
     "Greek 17x24". It drives trim size and bleed for the whole build.
+
+    `designspec` is a path to a `designspec/1` JSON document (margins, type,
+    leading ...), completed over the house spec; omitted, the house spec is used.
     """
     # A single `import stages` registers every stage (stages/__init__.py owns that
     # list). Previously this function and platform/stages/integrity.py each hand-
@@ -46,14 +50,7 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
     stages.import_idml_if_requested(
         os.environ.get("PUBLISHER_EMIT_IDML", "").strip().lower() in ("1", "true", "yes")
     )
-    engine_raw = os.environ.get("PUBLISHER_RENDER_ENGINE", "css").strip().lower()
-    try:
-        engine = RenderEngine(engine_raw)
-    except ValueError:
-        raise ValueError(
-            f"PUBLISHER_RENDER_ENGINE={engine_raw!r} is not a render path. "
-            f"Choose one of {[e.value for e in RenderEngine]}."
-        )
+    engine = RenderEngine.from_env(os.environ.get("PUBLISHER_RENDER_ENGINE"))
     # A build renders what the tenant submitted by default (U2); this local
     # harness runs off the synthetic corpus unless handed a Word file, so it
     # selects the fixture loader `acquire` for anything else.
@@ -89,7 +86,7 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
         # geometry. design-compile grows the page box by its bleed, finish insets
         # the TrimBox by the same amount, preflight measures the result. Give two
         # of them different profiles and the third will correctly fail the build.
-        design_stage: {"designspec_path": None, "profile_name": profile},
+        design_stage: {"designspec_path": designspec, "profile_name": profile},
         finish_stage: {"profile_name": profile},
         "preflight": {"profile_name": profile},
     }
@@ -124,4 +121,5 @@ if __name__ == "__main__":
     sys.exit(run_tracer_bullet(
         sys.argv[1] if len(sys.argv) > 1 else None,
         sys.argv[2] if len(sys.argv) > 2 else "Generic 6x9",
+        sys.argv[3] if len(sys.argv) > 3 else None,
     ))

@@ -110,7 +110,15 @@ class BuildWorkflowInput:
     # from) rather than re-derived in here -- see this module's docstring on
     # why workflow code stays out of the publisher_stages import graph.
     queue_by_stage: dict[str, str] = field(default_factory=dict)
-    stage_timeout_s: int = 900
+    # decl.timeout_s for every stage in `order`, from the same registry. A flat
+    # 900 s here killed finish-gs (FINISH_TIMEOUT_S) and paginate (2400 s) on a
+    # real book; each stage's own declaration is the one deadline.
+    timeout_by_stage: dict[str, int] = field(default_factory=dict)
+
+
+# Temporal's own start-to-close is the stage's deadline plus this, so the
+# executor's deadline middleware fires first and reports a TIMEOUT StageError.
+ACTIVITY_TIMEOUT_MARGIN_S = 60
 
 
 @workflow.defn
@@ -146,7 +154,8 @@ class BuildWorkflow:
                 run_stage_activity,
                 payload,
                 task_queue=queue,
-                start_to_close_timeout=timedelta(seconds=input.stage_timeout_s),
+                start_to_close_timeout=timedelta(
+                    seconds=input.timeout_by_stage[stage_name] + ACTIVITY_TIMEOUT_MARGIN_S),
             )
             results[stage_name] = output
             artifact_paths.update(output.new_artifact_paths)

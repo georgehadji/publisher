@@ -37,7 +37,6 @@ from __future__ import annotations
 import re
 import zipfile
 from pathlib import Path
-from typing import Optional
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape, quoteattr
 
@@ -45,7 +44,10 @@ IDML_MIMETYPE = "application/vnd.adobe.indesign-idml-package"
 DOM_VERSION = "10.0"
 IDPKG_NS = "http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"
 
-PT_PER_MM = 72.0 / 25.4
+PT_PER_MM = 72.0 / 25.4   # = publisher_prepress.geometry.PT_PER_MM (pinned by a test)
+
+# design_plan's body alignment -> InDesign paragraph Justification.
+_JUSTIFICATION = {"justify": "LeftJustified", "left": "LeftAlign", "right": "RightAlign"}
 
 # Self ids. Fixed rather than generated: an IDML built twice from the same inputs
 # must be byte-identical, and random ids would make it a different artifact every
@@ -105,26 +107,22 @@ def normalize_story_xml(icml: str) -> str:
 
 
 class IDMLWriter:
-    """Builds an IDML package from a story fragment plus a DesignSpec/profile.
+    """Builds an IDML package from a story fragment plus a design plan.
 
-    `story_xml` is ICML markup (ParagraphStyleRange elements). `page_count` is the
-    measured extent from the render path's pagemap -- a hint for how many threaded
-    frames to lay down, never a claim about how InDesign will paginate.
+    `story_xml` is ICML markup (ParagraphStyleRange elements). `plan` is
+    `stages.rendering.design_plan(spec, profile)`: every layout number already
+    resolved by the rules the CSS and Typst emitters use. This package reads it
+    as given and carries no defaults of its own -- it used to, and they drifted
+    from the other two emitters (a 1.6x chapter title, EB Garamond, no gutter).
+    `page_count` is the measured extent from the render path's pagemap -- a
+    hint for how many threaded frames to lay down, never a claim about how
+    InDesign will paginate.
     """
 
-    def __init__(
-        self,
-        story_xml: str,
-        *,
-        title: str = "Untitled",
-        designspec: Optional[dict] = None,
-        profile: Optional[dict] = None,
-        page_count: int = 1,
-    ):
+    def __init__(self, story_xml: str, *, title: str, plan: dict, page_count: int = 1):
         self.story_xml = normalize_story_xml(story_xml)
         self.title = title
-        self.spec = designspec or {}
-        self.profile = profile or {}
+        self.plan = plan
         # Slack in both directions: Smart Text Reflow adds pages when the story
         # overruns and deletes the empties when it does not fill them, so an
         # approximate frame count converges on open instead of leaving overset
@@ -135,42 +133,28 @@ class IDMLWriter:
 
     @property
     def _trim(self) -> tuple[float, float]:
-        trim = self.profile.get("trimSize") or self.spec.get("trimSize") or {}
-        return (
-            float(trim.get("width", 152.4)) * PT_PER_MM,
-            float(trim.get("height", 228.6)) * PT_PER_MM,
-        )
+        width, height = self.plan["trim_mm"]
+        return width * PT_PER_MM, height * PT_PER_MM
 
     @property
     def _bleed_pt(self) -> float:
-        return float((self.profile.get("bleed") or {}).get("all", 0.0)) * PT_PER_MM
+        return self.plan["bleed_mm"] * PT_PER_MM
 
     @property
     def _margins(self) -> tuple[float, float, float, float]:
-        m = self.spec.get("margins") or {}
-        return (
-            float(m.get("top", 18)) * PT_PER_MM,
-            float(m.get("bottom", 20)) * PT_PER_MM,
-            (float(m.get("inside", 15)) + float(m.get("gutter", 0))) * PT_PER_MM,
-            float(m.get("outside", 20)) * PT_PER_MM,
-        )
+        m = self.plan["margins_mm"]
+        return tuple(m[k] * PT_PER_MM for k in ("top", "bottom", "inside", "outside"))
 
     def _typography(self) -> dict:
-        t = self.spec.get("typography") or {}
+        plan = self.plan
         return {
-            "font": (t.get("bodyFont") or {}).get("family", "EB Garamond"),
-            "heading_font": ((t.get("headingFont") or t.get("displayFont") or {})
-                             .get("family")
-                             or (t.get("bodyFont") or {}).get("family", "EB Garamond")),
-            "size": float(t.get("bodySize", 10.5)),
-            # 14.173pt = 5.000mm, the house baseline. Restated rather than
-            # imported: this package is standalone (services/idml is on its own
-            # sys.path in the worker) and must not depend on the repo-root
-            # `templates` module. If one changes, the other has to follow --
-            # which is why the number carries its derivation here too.
-            "leading": float(t.get("leading", 14.173)),
-            "indent": float(t.get("paragraphIndent", 1.5)),
-            "justified": t.get("bodyAlignment", "justified") == "justified",
+            "font": plan["body_font"],
+            "heading_font": plan["heading_font"],
+            "size": plan["body_pt"],
+            "leading": plan["leading_pt"],
+            "indent": plan["indent_em"],
+            "justification": _JUSTIFICATION[plan["alignment"]],
+            "chapter_scale": plan["chapter_title_pt"] / plan["body_pt"],
         }
 
     # ── package ──────────────────────────────────────────────────────────
@@ -315,7 +299,7 @@ class IDMLWriter:
 
     def _styles(self) -> str:
         t = self._typography()
-        justification = "LeftJustified" if t["justified"] else "LeftAlign"
+        justification = t["justification"]
         indent_pt = t["indent"] * t["size"]
 
         def pstyle(self_id: str, name: str, **attrs) -> str:
@@ -343,8 +327,8 @@ class IDMLWriter:
             # what the DesignSpec's chapterOpenings.startsOn asks for.
             pstyle("ParagraphStyle/Header1", "Chapter Title",
                    _font=t["heading_font"],
-                   PointSize=round(t["size"] * 1.6, 2),
-                   Leading=round(t["leading"] * 1.6, 2),
+                   PointSize=round(t["size"] * t["chapter_scale"], 2),
+                   Leading=round(t["leading"] * t["chapter_scale"], 2),
                    SpaceBefore=round(t["leading"] * 3, 2),
                    SpaceAfter=round(t["leading"] * 2, 2),
                    Justification="CenterAlign",
@@ -381,7 +365,7 @@ class IDMLWriter:
         )
 
     def _chapter_start(self) -> str:
-        starts_on = (self.spec.get("chapterOpenings") or {}).get("startsOn", "recto")
+        starts_on = self.plan["starts_on"]
         return {"recto": "NextOddPage", "verso": "NextEvenPage"}.get(starts_on, "NextPage")
 
     def _preferences(self) -> str:
@@ -662,11 +646,10 @@ def validate_idml(path: str | Path) -> dict:
     }
 
 
-def write_idml(story_xml: str, output_path: str | Path, *, title: str = "Untitled",
-               designspec: Optional[dict] = None, profile: Optional[dict] = None,
+def write_idml(story_xml: str, output_path: str | Path, *, title: str, plan: dict,
                page_count: int = 1) -> Path:
     """Convenience wrapper: build the package and validate it before returning."""
-    out = IDMLWriter(story_xml, title=title, designspec=designspec,
-                     profile=profile, page_count=page_count).write(output_path)
+    out = IDMLWriter(story_xml, title=title, plan=plan,
+                     page_count=page_count).write(output_path)
     validate_idml(out)
     return out

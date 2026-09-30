@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { LOW_CONFIDENCE_BELOW, orphanedOps, structureView } from './manuscripts.js';
+import type { OverrideOp } from '../contract.js';
 
 const para = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text }] });
 const chapter = (n: number, title: string, confidence?: number) => ({
@@ -65,10 +66,7 @@ describe('structureView', () => {
     const { chapters, lowConfidenceNodes } = structureView(ast);
     const shown = [...chapters, ...(lowConfidenceNodes ?? [])].map((n: any) => n.docxId);
     expect(shown.every((id: any) => typeof id === 'string')).toBe(true);
-    const ops = shown.map((docxId: string, i: number) => ({
-      id: `ov-${i}`, sourceRef: { docxId }, op: 'retitle', value: 'X', actor: 'u',
-      at: '2026-01-01T00:00:00Z',
-    }));
+    const ops = shown.map((docxId: string, i: number) => op(`ov-${i}`, docxId));
     expect(orphanedOps(ast, ops)).toEqual([]);
   });
 
@@ -97,7 +95,7 @@ describe('structureView', () => {
 const tagged = (type: string, docxId: string, extra: object = {}) => ({
   type, sourceRef: { docxId }, content: [para(docxId)], ...extra,
 });
-const op = (id: string, docxId: string) => ({
+const op = (id: string, docxId: string): OverrideOp => ({
   id, sourceRef: { docxId }, op: 'retitle', value: 'X', actor: 'u', at: '2026-01-01T00:00:00Z',
 });
 

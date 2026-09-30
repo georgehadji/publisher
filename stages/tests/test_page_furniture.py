@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from stages.design_compile_stage import _default_designspec
+from templates import house_designspec
 from stages.rendering import emit_css
 from stages.typst_stages import _emit_typst
 from templates import DEFAULT_LEADING_PT, TEMPLATES
@@ -25,7 +25,7 @@ BODY_SIZE = 10.5
 
 
 def _spec(**overrides) -> dict:
-    spec = _default_designspec()
+    spec = house_designspec()
     spec["typography"]["bodySize"] = BODY_SIZE
     for block, values in overrides.items():
         spec.setdefault(block, {}).update(values)
@@ -40,7 +40,7 @@ def _css_block(css: str, needle: str) -> str:
 
 def test_running_head_size_is_body_minus_three(tmp_path):
     css = emit_css(_spec())
-    head = _css_block(css, "string(recto-head)")
+    head = _css_block(css, "content: string(")
 
     assert f"font-size: {BODY_SIZE - 3:g}pt;" in head
     assert "font-weight: 700;" in head
@@ -68,7 +68,7 @@ def test_both_engines_read_the_same_spec():
     head_size = f"{BODY_SIZE - 3:g}pt"
     folio_size = f"{BODY_SIZE - 1:g}pt"
 
-    assert f"font-size: {head_size};" in _css_block(css, "string(recto-head)")
+    assert f"font-size: {head_size};" in _css_block(css, "content: string(")
     assert f"size: {head_size}" in typ
     assert f"font-size: {folio_size};" in _css_block(css, "counter(page,")
     assert f"size: {folio_size}" in typ
@@ -86,7 +86,7 @@ def test_changing_the_spec_moves_both_engines():
     spec["typography"]["bodySize"] = 12.0
 
     css, typ = emit_css(spec), _emit_typst(spec)
-    head = _css_block(css, "string(recto-head)")
+    head = _css_block(css, "content: string(")
 
     assert "font-size: 10pt;" in head
     assert "font-variant-caps: small-caps;" in head

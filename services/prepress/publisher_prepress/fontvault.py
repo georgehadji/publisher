@@ -159,6 +159,26 @@ def validate_font_use(family: str, style: str, target_output: str) -> None:
         )
 
 
+_SPEC_FONT_KEYS = ("bodyFont", "headingFont", "displayFont", "monoFont")
+
+
+def fonts_in_spec(spec: dict) -> list[tuple[str, str]]:
+    """Every (family, style) a DesignSpec names: its typography's font refs and
+    its `fonts` list. The one walker both render paths' licence gates use; two
+    copies had drifted, and the CSS path never checked the heading font."""
+    typography = spec.get("typography") or {}
+    refs = [typography.get(key) or {} for key in _SPEC_FONT_KEYS] + list(spec.get("fonts") or [])
+    return list(dict.fromkeys((ref["family"], ref.get("style", "regular"))
+                              for ref in refs if ref.get("family")))
+
+
+def validate_spec_fonts(spec: dict, target_output: str) -> None:
+    """Raise FontLicenseViolation for the first font the spec names that is not
+    licensed for `target_output`."""
+    for family, style in fonts_in_spec(spec):
+        validate_font_use(family, style, target_output)
+
+
 def build_font_manifest(font_refs: list[tuple[str, str]], build_id: str) -> FontLicenseManifest:
     """
     Build a font license manifest for a set of font references.

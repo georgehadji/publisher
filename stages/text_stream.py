@@ -10,12 +10,14 @@ the other would catch.
 
 from __future__ import annotations
 
-# ast.schema.json's `inlineNode` types: they sit inside a block's text and are
-# rendered inline, so no boundary goes between them.
-INLINE_TYPES = frozenset({
-    "text", "emphasis", "strong", "link", "superscript", "subscript", "smallCaps",
-    "codeInline", "hardBreak", "indexEntry", "crossReference",
-})
+import json
+from pathlib import Path
+
+# ast.schema.json's `inlineNode` types, read from the schema: they sit inside a
+# block's text and are rendered inline, so no boundary goes between them.
+_AST_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "ast" / "ast.schema.json"
+INLINE_TYPES = frozenset(json.loads(_AST_SCHEMA.read_text(encoding="utf-8"))
+                         ["$defs"]["inlineNode"]["properties"]["type"]["enum"])
 
 
 def ast_text(ast: dict) -> str:

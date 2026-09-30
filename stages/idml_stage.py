@@ -30,7 +30,7 @@ from publisher_stages import (
 )
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 from publisher_idml import IDMLValidationError, IDMLWriter, validate_idml
-from profiles import load_profile
+from profiles import resolve_profile
 
 # Reused rather than re-implemented: same binary lookup and same subprocess
 # discipline (pinned SOURCE_DATE_EPOCH, timeouts, stderr surfaced in the error)
@@ -42,7 +42,7 @@ IDML_SCHEMA = "idml/1"
 
 @stage(
     name="idml",
-    version=6,   # v6: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages). v5: keep span: a paragraph's last two words never split in print (no runts). v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+    version=7,   # v7: layout from rendering.design_plan (same chapter-title size, gutter, alignment and fonts as CSS/Typst; no IDML-local defaults). v6: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages). v5: keep span: a paragraph's last two words never split in print (no runts). v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
                  # v3: link hrefs are percent-encoded (rendering._safe_href).
                  # v4: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped.
     inputs={
@@ -86,7 +86,7 @@ def idml(ctx: StageCtx, doc_path: str | None = None, pagemap_path: str | None = 
     # --standalone: the standalone wrapper carries pandoc's own style
     # definitions and a <Document> root, and this package defines its styles
     # from the DesignSpec instead.
-    from stages.rendering import ast_to_html
+    from stages.rendering import ast_to_html, book_identity, design_plan
     story_xml = _run(
         [pandoc, "--from=html", "--to=icml", "--wrap=preserve"],
         timeout=PANDOC_TIMEOUT_S, what="pandoc html -> icml",
@@ -97,18 +97,10 @@ def idml(ctx: StageCtx, doc_path: str | None = None, pagemap_path: str | None = 
     if designspec_path and Path(designspec_path).exists():
         spec = json.loads(Path(designspec_path).read_bytes())
     if spec is None:
-        from stages.design_compile_stage import _default_designspec
-        spec = _default_designspec()
+        from templates import house_designspec
+        spec = house_designspec()
 
-    profile = None
-    if profile_name:
-        profile = load_profile(profile_name)
-        if profile is None:
-            raise StageError(
-                kind=ErrorKind.BAD_INPUT,
-                message=f"Unknown vendor profile: {profile_name!r}. Profiles are "
-                        f"loaded from profiles/*/*.yaml by their `name:` field.",
-            )
+    profile = resolve_profile(profile_name)
 
     page_hint = _page_hint(pagemap_path)
 
@@ -116,9 +108,8 @@ def idml(ctx: StageCtx, doc_path: str | None = None, pagemap_path: str | None = 
     work.mkdir(parents=True, exist_ok=True)
     out_path = work / "book.idml"
 
-    title = (doc.get("metadata") or {}).get("title") or "Untitled"
-    IDMLWriter(story_xml, title=title, designspec=spec, profile=profile,
-               page_count=page_hint).write(out_path)
+    IDMLWriter(story_xml, title=book_identity(doc)["title"],
+               plan=design_plan(spec, profile), page_count=page_hint).write(out_path)
 
     # Validate the bytes that are about to be delivered, not a model of them.
     # A package that InDesign refuses is a failed build, not a shipped file the

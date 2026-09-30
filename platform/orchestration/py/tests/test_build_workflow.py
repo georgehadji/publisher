@@ -79,6 +79,7 @@ async def _dispatches_stages_in_order_onto_their_declared_queues():
                     cas_root="/data/cas",
                     database_url="postgresql://unused/unused",
                     queue_by_stage={"ingest": "q.ingest", "finish-gs": "q.prepress"},
+                    timeout_by_stage={"ingest": 300, "finish-gs": 7800},
                 ),
                 id="wf-b1",
                 task_queue="q.orchestrator",
@@ -123,6 +124,7 @@ async def _a_stage_with_no_queue_entry_falls_back_to_q_default():
                     cas_root="/data/cas",
                     database_url="postgresql://unused/unused",
                     queue_by_stage={},  # deliberately empty -- exercises the fallback
+                    timeout_by_stage={"package": 300},
                 ),
                 id="wf-b2",
                 task_queue="q.orchestrator",

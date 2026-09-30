@@ -17,6 +17,8 @@ export enum ErrorKind {
   EngineBug = "engine_bug",
   Infra = "infra",
   ExternalLimit = "external_limit",
+  Timeout = "timeout",
+  ResourceExhausted = "resource_exhausted",
 }
 
 /** Structured diagnostic message. */

@@ -38,7 +38,7 @@ def main():
     stages.import_idml_if_requested(
         os.environ.get("PUBLISHER_EMIT_IDML", "").strip().lower() in ("1", "true", "yes")
     )
-    engine = RenderEngine(os.environ.get("PUBLISHER_RENDER_ENGINE", "css").strip().lower())
+    engine = RenderEngine.from_env(os.environ.get("PUBLISHER_RENDER_ENGINE"))
     registry = build_registry(RegistryConfig(render_engine=engine))
     violations = registry.check_integrity()
     

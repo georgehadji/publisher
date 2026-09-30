@@ -22,7 +22,7 @@ from stages.rendering import ast_to_html
 
 @stage(
     name="extract",
-    version=6,   # v6: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages). v5: keep span: a paragraph's last two words never split in print (no runts). v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+    version=7,   # v7: the typescript HTML carries the book's language on <html lang> and title/author on <body> (rendering.book_identity). v6: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages). v5: keep span: a paragraph's last two words never split in print (no runts). v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
                  # v3: link hrefs are percent-encoded (rendering._safe_href).
                  # v4: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped.
     inputs={"source": "raw-source/1"},

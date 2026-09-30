@@ -32,6 +32,11 @@ DEFAULT_TIERS_PATH = _PACKAGE_DIR / "art_policy_tiers.yaml"
 # ── Data types ───────────────────────────────────────────────────
 
 
+# The cover art's aspect ratio: 2:3 is exactly 6x9in, the default profile's trim
+# (pinned by tests/test_single_source.py). A model without it cannot render a
+# native cover and must crop, which loses the type zone the brief reserved.
+COVER_ASPECT = "2:3"
+
 @dataclass(frozen=True)
 class ProviderCapability:
     """What one (model, provider) endpoint actually accepts. From /images/models/{id}/endpoints."""
@@ -239,7 +244,7 @@ def resolve_tier_panel(
         spec = DispatchSpec(
             model_id=entry["model"],
             provider_slug=entry["provider"],
-            aspect_ratio=entry.get("aspect_ratio", "2:3"),
+            aspect_ratio=entry.get("aspect_ratio", COVER_ASPECT),
             resolution=entry.get("resolution"),
             n=entry.get("n", 1),
             seeds=tuple(entry.get("seeds", ())),

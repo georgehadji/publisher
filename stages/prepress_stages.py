@@ -13,10 +13,9 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 
 from publisher_prepress.preflight import PREFLIGHT_TIMEOUT_S, run_preflight
 from publisher_prepress.geometry import spine_width, cover_dimensions, TrimSize, BleedBox
-from publisher_prepress.ghostscript import (FINISH_TIMEOUT_S, GhostscriptError, find_binary, to_pdfx,
-                                            to_proof)
+from publisher_prepress.ghostscript import FINISH_TIMEOUT_S, GhostscriptError, find_binary, press_and_proof
 from publisher_sandbox import sandbox_for
-from profiles import load_profile
+from profiles import resolve_profile
 
 
 def _deterministic_timestamp(ctx: StageCtx) -> str:
@@ -34,7 +33,7 @@ def _deterministic_timestamp(ctx: StageCtx) -> str:
 
 @stage(
     name="preflight",
-    version=12,  # v12: ink-coverage and rich-black-text checks (two Ghostscript renders; deadline PREFLIGHT_TIMEOUT_S). v11: interactive-content check (JavaScript, forms, annotations). v10: module-level bump (finish-gs v12). v9: a failing verdict carries its report (StageError.artifacts) and warnings print. v8: module-level bump (finish-gs v10). v7: consumes pagemap/1 and gates on composition (widows/orphans/
+    version=13,  # v13: requirements read from the validated, default-filled profile; one the profile does not state is skipped, not assumed. v12: ink-coverage and rich-black-text checks (two Ghostscript renders; deadline PREFLIGHT_TIMEOUT_S). v11: interactive-content check (JavaScript, forms, annotations). v10: module-level bump (finish-gs v12). v9: a failing verdict carries its report (StageError.artifacts) and warnings print. v8: module-level bump (finish-gs v10). v7: consumes pagemap/1 and gates on composition (widows/orphans/
                  # runts) -- see preflight.check_composition. v6: module-level bump --
                  # same file as cover/finish-gs (U6); v5 fixed the page count
                  # for every Ghostscript-produced file (see preflight._PAGE_RE).
@@ -80,20 +79,20 @@ def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "",
     if pagemap_path and Path(pagemap_path).exists():
         pagemap = json.loads(Path(pagemap_path).read_bytes())
 
-    profile = load_profile(profile_name) if profile_name else _default_profile()
+    profile = resolve_profile(profile_name)
     report = run_preflight(pdf_path, profile,
                            created_at=_deterministic_timestamp(ctx),
                            pagemap=pagemap)
     report_dict = report.to_dict()
-    
+
     cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))
     report_bytes = json.dumps(report_dict, indent=2).encode("utf-8")
     ref = cas.put(report_bytes, media_type=MediaType("application/json"))
-    
+
     print(f"  [preflight] Status: {report.status} ({report.summary['passed']} passed, "
           f"{report.summary['failed']} failed, {report.summary['warnings']} warnings)")
-    
+
     # Warn-severity findings must reach StageResult.warnings, not just stdout — the
     # stage contract (§2.8) carries them as Diagnostics, and §3.15 requires every
     # user-facing finding to carry a sourceRef. This list was initialised and returned
@@ -147,7 +146,7 @@ def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "",
 
 @stage(
     name="cover",
-    version=9,   # v9: module-level bump (preflight v12). v8: module-level bump (preflight v11). v7: module-level bump (finish-gs v12). v6: module-level bump (preflight v9). v5: module-level bump (finish-gs v10). v4: module-level bump -- same file as preflight (U6). v3: page_count input schema "integer" -> "page-count/1"; v2 dropped the
+    version=10,   # v10: module-level bump (preflight v13); trim, bleed and page thickness from the profile. v9: module-level bump (preflight v12). v8: module-level bump (preflight v11). v7: module-level bump (finish-gs v12). v6: module-level bump (preflight v9). v5: module-level bump (finish-gs v10). v4: module-level bump -- same file as preflight (U6). v3: page_count input schema "integer" -> "page-count/1"; v2 dropped the
                  # cover_art root input (art generation is the separate cover-brief/cover-art/
                  # cover-judge fan-out in stages/cover_stages.py -- see COVER_DESIGN.md §0/§1).
     # "profile" -> "profile_name" to match this function's actual parameter name;
@@ -173,16 +172,13 @@ def cover_stage(ctx: StageCtx, page_count: int = 0, profile_name: str = "") -> S
     """
     if not page_count:
         raise StageError(kind=ErrorKind.BAD_INPUT, message="page_count is required")
-    
-    profile = load_profile(profile_name) if profile_name else _default_profile()
-    ts = profile.get("trimSize", {})
-    bl = profile.get("bleed", {})
-    
-    trim = TrimSize(width=ts.get("width", 152.4), height=ts.get("height", 228.6))
-    bleed = BleedBox.uniform(bl.get("all", 3.0))
-    spine = spine_width(page_count)
+
+    profile = resolve_profile(profile_name)
+    trim = TrimSize(width=profile["trimSize"]["width"], height=profile["trimSize"]["height"])
+    bleed = BleedBox.uniform(profile["bleed"]["all"])
+    spine = spine_width(page_count, profile["coverSpec"]["pageThicknessMm"])
     cover_w, cover_h = cover_dimensions(trim, spine, bleed)
-    
+
     cover_geom = {
         "schema": "cover-geometry/1",
         "pageCount": page_count,
@@ -192,15 +188,15 @@ def cover_stage(ctx: StageCtx, page_count: int = 0, profile_name: str = "") -> S
         "coverWidthMm": round(cover_w, 2),
         "coverHeightMm": round(cover_h, 2),
     }
-    
+
     print(f"  [cover] Spine: {spine} mm | Cover: {cover_w:.1f} x {cover_h:.1f} mm "
           f"(for {page_count} pages, trim {trim.width}x{trim.height} mm)")
-    
+
     cas_root = Path(ctx.cas_root)
     cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root))
     geom_bytes = json.dumps(cover_geom, indent=2).encode("utf-8")
     ref = cas.put(geom_bytes, media_type=MediaType("application/json"))
-    
+
     return StageResult(
         artifacts=[StageArtifactRef(
             kind="cover-geometry",
@@ -218,7 +214,7 @@ def cover_stage(ctx: StageCtx, page_count: int = 0, profile_name: str = "") -> S
 
 @stage(
     name="cover-preflight",
-    version=8,   # v8: module-level bump (preflight v12); runs the ink checks too. v7: module-level bump (preflight v11); runs interactive-content too. v6: module-level bump (finish-gs v12). v5: module-level bump (preflight v9). v4: module-level bump (finish-gs v10). v3: module-level bump -- same file as preflight (U6); v2 likewise
+    version=9,   # v9: module-level bump (preflight v13). v8: module-level bump (preflight v12); runs the ink checks too. v7: module-level bump (preflight v11); runs interactive-content too. v6: module-level bump (finish-gs v12). v5: module-level bump (preflight v9). v4: module-level bump (finish-gs v10). v3: module-level bump -- same file as preflight (U6); v2 likewise
     inputs={"pdf_path": "cover-raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
     # Distinct output kind from `preflight`'s -- both stages emit content that
@@ -248,7 +244,7 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
     if not pdf_path:
         raise StageError(kind=ErrorKind.BAD_INPUT, message="pdf_path is required")
 
-    profile = load_profile(profile_name) if profile_name else _default_profile()
+    profile = resolve_profile(profile_name)
     report = run_preflight(pdf_path, profile, created_at=_deterministic_timestamp(ctx))
     report_dict = report.to_dict()
 
@@ -285,7 +281,7 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
 
 @stage(
     name="finish-gs",
-    version=14,  # v14: module-level bump (preflight v12); v13: module-level bump (preflight v11); v12: deadline FINISH_TIMEOUT_S (two Ghostscript passes, each GS_TIMEOUT_S); v11: module-level bump (preflight v9); v10: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline; v9: module-level bump -- same file as preflight (U6); v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
+    version=15,  # v15: module-level bump (preflight v13); press + proof via ghostscript.press_and_proof. v14: module-level bump (preflight v12); v13: module-level bump (preflight v11); v12: deadline FINISH_TIMEOUT_S (two Ghostscript passes, each GS_TIMEOUT_S); v11: module-level bump (preflight v9); v10: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline; v9: module-level bump -- same file as preflight (U6); v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     # "pdf" -> "pdf_path", "profile" -> "profile_name": see the note on preflight
     # above for why the input dict's KEYS must exactly match this function's
@@ -324,7 +320,7 @@ def finish_gs(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -> Stag
     if not pdf_path:
         raise StageError(kind=ErrorKind.BAD_INPUT, message="pdf_path is required")
 
-    profile = load_profile(profile_name) if profile_name else _default_profile()
+    profile = resolve_profile(profile_name)
 
     geometry = {
         "trimSize": profile.get("trimSize"),
@@ -350,22 +346,12 @@ def finish_gs(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -> Stag
     work.mkdir(parents=True, exist_ok=True)
 
     if gs_binary is not None:
-        press_path = work / "press.pdf"
-        proof_path = work / "proof.pdf"
         # E3.2: real rlimit containment around ghostscript -- see finish_stage.py's
         # matching call site and sandbox_for()'s docstring.
         sandbox = sandbox_for()
         try:
-            to_pdfx(
-                pdf_path_p, press_path, work,
-                title=ctx.build_id,
-                output_condition=str(profile.get("name", "Commercial printing")),
-                # Same figure design-compile grew the page box by; see finish v6.
-                bleed_pt=float((profile.get("bleed") or {}).get("all", 0.0)) * 72.0 / 25.4,
-                gs_binary=gs_binary,
-                sandbox=sandbox,
-            )
-            to_proof(pdf_path_p, proof_path, gs_binary=gs_binary, sandbox=sandbox)
+            press_path, proof_path = press_and_proof(pdf_path_p, work, profile, title=ctx.build_id,
+                                                     gs_binary=gs_binary, sandbox=sandbox)
         except GhostscriptError as e:
             raise StageError(
                 kind=ErrorKind.ENGINE_BUG,
@@ -427,16 +413,3 @@ def finish_gs(ctx: StageCtx, pdf_path: str = "", profile_name: str = "") -> Stag
         metrics={"gs_available": 1.0 if gs_binary else 0.0, "stub_engine": stub},
     )
 
-
-def _default_profile() -> dict:
-    p = load_profile("Generic 6x9")
-    if p:
-        return p
-    return {
-        "name": "Default",
-        "trimSize": {"width": 152.4, "height": 228.6, "unit": "mm"},
-        "bleed": {"all": 3.0},
-        "pdfSpec": {"version": "1.7", "standard": "pdfx-1a", "colorSpace": "cmyk"},
-        "proofSpec": {"dpi": 150, "sizeBudgetBytes": 100000000},
-        "minPages": 1, "maxPages": 2000, "pageSizeMultiple": 1,
-    }

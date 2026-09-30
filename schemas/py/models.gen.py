@@ -792,9 +792,6 @@ FrontMatterNode = Union[BlockNode, dict[str, Any]]
 BackMatterNode = Union[BlockNode, dict[str, Any]]
 
 
-OutputProfile_Sha256 = str
-
-
 BuildManifest_Sha256 = str
 
 
@@ -1202,6 +1199,8 @@ class StageError_Kind(str, Enum):
     ENGINE_BUG = "engine_bug"
     INFRA = "infra"
     EXTERNAL_LIMIT = "external_limit"
+    TIMEOUT = "timeout"
+    RESOURCE_EXHAUSTED = "resource_exhausted"
 
 
 class StageError(BaseModel):
@@ -1600,6 +1599,7 @@ class OutputProfile_Vendor(str, Enum):
     LULU = "lulu"
     BARNESNOBLE = "barnesnoble"
     GENERIC = "generic"
+    GREEK = "greek"
 
 
 class OutputProfile_TrimSize_Unit(str, Enum):
@@ -1614,11 +1614,7 @@ class OutputProfile_TrimSize(BaseModel):
 
 
 class OutputProfile_Bleed(BaseModel):
-    all: Optional[float] = Field(default=None)
-    top: Optional[float] = Field(default=None)
-    bottom: Optional[float] = Field(default=None)
-    inside: Optional[float] = Field(default=None)
-    outside: Optional[float] = Field(default=None)
+    all: float
 
 
 class OutputProfile_PdfSpec_Version(str, Enum):
@@ -1644,17 +1640,12 @@ class OutputProfile_PdfSpec_ColorSpace(str, Enum):
     RGB = "rgb"
 
 
-class OutputProfile_PdfSpec_OutputIntent(BaseModel):
-    iccProfileHash: OutputProfile_Sha256
-    iccProfileName: Optional[str] = Field(default=None)
-    registryUrl: Optional[str] = Field(default=None)
-
-
 class OutputProfile_PdfSpec(BaseModel):
     version: Optional[OutputProfile_PdfSpec_Version] = Field(default=None)
     standard: OutputProfile_PdfSpec_Standard
     colorSpace: OutputProfile_PdfSpec_ColorSpace
-    outputIntent: Optional[OutputProfile_PdfSpec_OutputIntent] = Field(default=None)
+    maxInkCoverage: Optional[int] = Field(default=None)
+    minImageDpi: Optional[int] = Field(default=None)
 
 
 class OutputProfile_CoverSpec_PaperType(str, Enum):
@@ -1681,6 +1672,7 @@ class OutputProfile_CoverSpec(BaseModel):
     paperType: Optional[OutputProfile_CoverSpec_PaperType] = Field(default=None)
     ink: Optional[OutputProfile_CoverSpec_Ink] = Field(default=None)
     finish: Optional[OutputProfile_CoverSpec_Finish] = Field(default=None)
+    pageThicknessMm: Optional[float] = Field(default=None)
 
 
 class OutputProfile_ProofSpec(BaseModel):
@@ -1706,6 +1698,10 @@ class OutputProfile_DeliverySpec(BaseModel):
     coverFormat: Optional[list[OutputProfile_DeliverySpec_CoverFormatItem]] = Field(default=None)
 
 
+class OutputProfile_Composition(BaseModel):
+    maxOrphanPages: Optional[int] = Field(default=None)
+
+
 class OutputProfile(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1714,7 +1710,7 @@ class OutputProfile(BaseModel):
     vendor: OutputProfile_Vendor
     vendorProfileVersion: Optional[str] = Field(default=None)
     trimSize: OutputProfile_TrimSize
-    bleed: Optional[OutputProfile_Bleed] = Field(default=None)
+    bleed: OutputProfile_Bleed
     pdfSpec: OutputProfile_PdfSpec
     coverSpec: Optional[OutputProfile_CoverSpec] = Field(default=None)
     proofSpec: Optional[OutputProfile_ProofSpec] = Field(default=None)
@@ -1722,6 +1718,7 @@ class OutputProfile(BaseModel):
     minPages: Optional[int] = Field(default=None)
     maxPages: Optional[int] = Field(default=None)
     pageSizeMultiple: Optional[int] = Field(default=None)
+    composition: Optional[OutputProfile_Composition] = Field(default=None)
     validatedAt: Optional[datetime] = Field(default=None)
 
 

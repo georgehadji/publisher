@@ -29,8 +29,10 @@ from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 
 
+# No `lang` on this root: the document nested in {html} is ast_to_html's, whose
+# <html lang> (the book's language) the HTML parser carries onto this root.
 PAGE_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -135,8 +137,10 @@ RUNT_MAX_WORDS = 1
 # remaining runts, none of them short.
 RUNT_MAX_FILL = 0.25
 
-# schemas/pagemap/pagemap.schema.json caps paraRanges at 200 entries per page.
-MAX_PARA_RANGES = 200
+# schemas/pagemap/pagemap.schema.json's cap on paraRanges entries per page.
+_PAGEMAP_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "pagemap" / "pagemap.schema.json"
+MAX_PARA_RANGES = (json.loads(_PAGEMAP_SCHEMA.read_text(encoding="utf-8"))
+                   ["$defs"]["pageEntry"]["properties"]["paraRanges"]["maxItems"])
 
 
 def _line_boxes(box, measure: float, boxes):
@@ -444,7 +448,7 @@ def _family_name(font) -> str:
 
 @stage(
     name="paginate",
-    version=17,  # v17: fallback CSS: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
+    version=18,  # v18: fallback CSS from house_designspec (see design-compile v11); <html> takes the book's lang; paraRanges cap read from the pagemap schema. v17: fallback CSS: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
                  # v15: keep span: a paragraph's last two words (and its note calls) never split in print; a runt is a one-word last line under RUNT_MAX_FILL of the measure.
                  # v14: weasyprint 70 (URLFetcher subclass; footnote-policy keeps notes on their call page; 2400 s deadline).
                  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
@@ -514,9 +518,9 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
     if css_path and Path(css_path).exists():
         css = Path(css_path).read_text()
     else:
-        from stages.design_compile_stage import _default_designspec
+        from templates import house_designspec
         from stages.rendering import emit_css
-        css = emit_css(_default_designspec())
+        css = emit_css(house_designspec())
 
     full_html = PAGE_TEMPLATE.format(css=css, html=html_body)
     families = requested_font_families(css)

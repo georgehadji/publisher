@@ -31,6 +31,7 @@ import zlib
 from pathlib import Path
 from typing import Iterator, Optional
 
+from publisher_prepress.geometry import mm_to_pt
 from publisher_sandbox import ExitReason, ResourceBudget, SandboxPort, SandboxTier
 
 # Ghostscript's -dPDFX alone does NOT produce a conformant PDF/X file: the
@@ -442,7 +443,7 @@ def to_proof(
     input_pdf: Path,
     output_pdf: Path,
     *,
-    dpi: int = 150,
+    dpi: int,
     gs_binary: Optional[str] = None,
     sandbox: Optional[SandboxPort] = None,
 ) -> None:
@@ -470,6 +471,19 @@ def to_proof(
         str(input_pdf),
     ], sandbox=sandbox, work_dir=output_pdf.parent)
     _assert_pdf(output_pdf, "proof")
+
+
+def press_and_proof(input_pdf: Path, work_dir: Path, profile: dict, *, title: str,
+                    gs_binary: Optional[str] = None,
+                    sandbox: Optional[SandboxPort] = None) -> tuple[Path, Path]:
+    """The finish step's two files, both driven by one vendor profile: the PDF/X-1a
+    press file (TrimBox inset by the profile's bleed) and the proof (at its
+    proofSpec.dpi). Both finish stages call this, so they cannot drift apart."""
+    press, proof = work_dir / "press.pdf", work_dir / "proof.pdf"
+    to_pdfx(input_pdf, press, work_dir, title=title,
+            bleed_pt=mm_to_pt(profile["bleed"]["all"]), gs_binary=gs_binary, sandbox=sandbox)
+    to_proof(input_pdf, proof, dpi=profile["proofSpec"]["dpi"], gs_binary=gs_binary, sandbox=sandbox)
+    return press, proof
 
 
 # Ink is read off a render at this resolution, without anti-aliasing, so each

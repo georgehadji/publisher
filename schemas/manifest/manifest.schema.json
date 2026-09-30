@@ -164,7 +164,8 @@
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["bad_input", "policy_violation", "engine_bug", "infra", "external_limit"]
+          "enum": ["bad_input", "policy_violation", "engine_bug", "infra", "external_limit",
+                   "timeout", "resource_exhausted"]
         },
         "message": { "type": "string", "maxLength": 2048 },
         "diagnostics": {
