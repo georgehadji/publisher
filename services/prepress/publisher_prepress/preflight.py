@@ -411,6 +411,43 @@ def check_interactive_content(pdf_info: dict, profile: dict) -> PreflightCheck:
     return _pass("interactive-content", "No JavaScript, forms or annotations")
 
 
+# The standards that forbid transparency. PDF/X-4 and PDF/A-2 carry it live.
+NO_TRANSPARENCY_STANDARDS = frozenset({"pdfx-1a", "pdfx-3"})
+
+
+@preflight_check("transparency")
+def check_transparency(pdf_info: dict, profile: dict) -> PreflightCheck:
+    """No live transparency under a standard that forbids it (PDF/X-1a, X-3).
+
+    A soft mask, constant alpha below 1, a blend mode other than Normal, or a
+    transparency group has no defined result in a PDF/X-1a RIP: vendors reject
+    the file, or it prints as something else. Ghostscript flattens transparency
+    at PDF 1.3, so on a `finish-gs` press file this proves it did.
+    """
+    standard = _requirement(profile, "pdfSpec", "standard")
+    if standard is None:
+        return _unstated("transparency", "PDF standard")
+    if standard not in NO_TRANSPARENCY_STANDARDS:
+        return _skip("transparency", f"{standard} permits live transparency")
+    found = pdf_info.get("transparency")
+    if found is None:
+        return _warn(
+            "transparency",
+            "Transparency not measured: the PDF stores its objects in compressed "
+            "object streams, which byte scanning cannot read",
+            suggestedFix="Deliver the Ghostscript PDF/X output (PDF 1.3 has no object streams).",
+        )
+    if found:
+        return _fail(
+            "transparency",
+            f"{standard} forbids transparency; the PDF uses {', '.join(found)}",
+            suggestedFix="Flatten transparency (finish-gs does at PDF 1.3), or give "
+                         "images an opaque background instead of an alpha channel.",
+            value=found, expected=[],
+        )
+    return _pass("transparency", "No live transparency")
+
+
 # Rich black text: black (K at least RICH_BLACK_MIN_K) that also carries C+M+Y of
 # RICH_BLACK_MIN_CMY or more. Four plates must then register on every stroke of
 # small type. RGB black converts to C72 M67 Y67 K88; a designer's dark colour
@@ -736,6 +773,34 @@ _INTERACTIVE_RE = {
 }
 
 
+# Live transparency, as PDF/X-1a's RIP would meet it.
+_SMASK_RE = re.compile(rb"/SMask(?!\w)\s*(/?\w+)")              # /SMask /None is opaque
+_ALPHA_RE = re.compile(rb"/(?:CA|ca)\s+([0-9.]+)")
+_BLEND_RE = re.compile(rb"/BM\s*(\[[^\]]*\]|/\w+)")
+_OPAQUE_BLENDS = {b"Normal", b"Compatible"}
+_GROUP_RE = re.compile(rb"/S\s*/Transparency(?!\w)")
+
+
+def _transparency(raw: bytes) -> list[str] | None:
+    """The kinds of live transparency a PDF uses, sorted; None when it cannot be
+    seen (dictionaries hidden in an /ObjStm, as for `_interactive_content`)."""
+    dicts = _STREAM_RE.sub(b"", raw)
+    if _OBJSTM_RE.search(dicts):
+        return None
+    found = set()
+    if any(m.group(1) != b"/None" for m in _SMASK_RE.finditer(dicts)):
+        found.add("soft masks")
+    if any(float(m.group(1)) < 1 for m in _ALPHA_RE.finditer(dicts)
+           if m.group(1).strip(b".")):
+        found.add("constant alpha below 1")
+    blends = {name for m in _BLEND_RE.finditer(dicts)
+              for name in re.findall(rb"/(\w+)", m.group(1))}
+    found |= {f"{name.decode()} blend mode" for name in blends - _OPAQUE_BLENDS}
+    if _GROUP_RE.search(dicts):
+        found.add("transparency groups")
+    return sorted(found)
+
+
 def _interactive_content(raw: bytes) -> list[str] | None:
     """What a print PDF must not carry, sorted; None when it cannot be seen.
 
@@ -861,4 +926,5 @@ def probe_pdf(pdf_path: Path) -> dict:
         "fonts": fonts,
         "pdf_standard": "pdfx-1a" if has_pdfx else "none",
         "interactive": _interactive_content(raw),
+        "transparency": _transparency(raw),
     }

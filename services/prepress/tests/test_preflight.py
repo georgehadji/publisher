@@ -339,3 +339,49 @@ def test_dark_colour_text_is_not_rich_black():
     assert is_rich_black((72, 67, 67, 88)) and is_rich_black((100, 100, 100, 100))
     assert not is_rich_black((0, 0, 0, 100))
     assert not is_rich_black((20, 100, 80, 50))   # a burgundy heading
+
+
+# --- transparency -----------------------------------------------------------
+
+from publisher_prepress.preflight import _transparency, check_transparency
+
+X1A = {"pdfSpec": {"standard": "pdfx-1a"}}
+
+
+def test_transparency_clean_file_and_opaque_settings_pass():
+    """/SMask /None, alpha 1 and the Normal blend mode are all opaque."""
+    raw = _page(b"/Resources<</ExtGState<</G0<</SMask/None/CA 1/ca 1.0/BM/Normal>>"
+                b"/G1<</BM[/Compatible]>>>>>>")
+    assert _transparency(raw) == []
+    assert check_transparency({"transparency": []}, X1A).status == "pass"
+
+
+def test_transparency_finds_every_kind_a_pdfx_1a_rip_rejects():
+    raw = (_page(b"/Group<</S/Transparency/CS/DeviceRGB>>")
+           + b"2 0 obj<</Type/ExtGState/ca 0.5/BM/Multiply>>endobj\n"
+           + b"3 0 obj<</Type/XObject/Subtype/Image/SMask 4 0 R>>endobj\n")
+    found = _transparency(raw)
+    assert found == ["Multiply blend mode", "constant alpha below 1",
+                     "soft masks", "transparency groups"]
+    check = check_transparency({"transparency": found}, X1A)
+    assert check.status == "fail" and check.severity == "error"
+
+
+def test_transparency_ignores_bytes_inside_streams():
+    raw = _page() + b"2 0 obj<</Length 30>>stream\n/SMask 9 0 R /ca 0.2 /BM/Screen\nendstream endobj\n"
+    assert _transparency(raw) == []
+
+
+def test_transparency_is_unmeasured_behind_object_streams():
+    raw = _page() + b"2 0 obj<</Type/ObjStm/N 3>>stream\nx\nendstream endobj\n"
+    assert _transparency(raw) is None
+    assert check_transparency({"transparency": None}, X1A).status == "warn"
+
+
+def test_transparency_is_gated_by_the_profiles_standard():
+    """PDF/X-4 carries transparency live; a profile stating no standard is not
+    assumed to forbid it."""
+    found = {"transparency": ["soft masks"]}
+    assert check_transparency(found, {"pdfSpec": {"standard": "pdfx-3"}}).status == "fail"
+    assert check_transparency(found, {"pdfSpec": {"standard": "pdfx-4"}}).status == "skip"
+    assert check_transparency(found, {}).status == "skip"

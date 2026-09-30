@@ -232,7 +232,8 @@ would produce a `false` where the truth is "unknown".
 `services/prepress/publisher_prepress/preflight.py` implements fourteen checks: trim size
 (`:115`), bleed (`:150`), min/max pages (`:175`, `:200`), page multiple (`:225`), colour
 space (`:251`), resolution (`:268`), file size (`:296`), font embedding (`:317`), PDF
-standard (`:335`), interactive content, ink coverage, rich black text, composition.
+standard (`:335`), interactive content, transparency, ink coverage, rich black text,
+composition.
 
 **Done (2026-09-30): `interactive-content`.** It fails a print PDF that carries JavaScript,
 launch or trigger actions, form fields, or any annotation except the two PDF/X permits
@@ -259,21 +260,26 @@ into four-colour black. `rendering.black_plate` now sends black and neutral grey
 K alone, as `device-cmyk()` in the CSS path and `cmyk()` in the Typst path, and
 `stages/tests/test_print_colour.py` checks that through weasyprint and the press conversion.
 
-Not implemented, all of which real POD vendors reject on:
+**Done (2026-09-30): `transparency`.** When the profile's `pdfSpec.standard` is PDF/X-1a
+or X-3, preflight fails a PDF with a soft mask (anything but `/SMask /None`), constant
+alpha below 1, a blend mode other than Normal/Compatible, or a transparency group. X-4 and
+PDF/A-2 skip it, since they carry transparency live. A profile with no standard also skips.
+It is a byte scan of dictionaries with stream bodies cut out, like `interactive-content`, so
+a file with object streams warns "not measured". Verified end to end: weasyprint writes
+alpha and a transparency group for `opacity: .5`, and Ghostscript's PDF 1.3 press file
+flattens both, so the check passes on it. The real book's press file passes. Preflight
+is v14.
 
-- **Transparency and live blend modes** surviving into PDF/X-1a.
-- **Spine width vs. actual page count and paper stock.** `geometry.py:69` computes spine
-  from a `paper_basis` default; no profile supplies a real per-vendor stock caliper.
+Not implemented, both of which real POD vendors reject on:
+
+- **Spine width vs. actual paper stock.** The `cover` stage reads the profile's
+  `coverSpec.pageThicknessMm`, but no profile states one, so every book gets the schema's
+  0.06 mm default rather than the vendor's real stock caliper.
 - **Gutter/creep** for the bound edge at high page counts.
 
-Related profile gap: **no profile file declares a `composition:` block**, so the gate added
-in `65f5834` runs entirely on its `maxOrphanPages=0` default. Verified against
-`profiles/kdp/us-trade.yaml` — it carries trim, bleed, pdfSpec, coverSpec, proofSpec,
-min/max pages, page multiple, and nothing else. There is also no `maxInkCoverage` for 2.2
-to gate against when it is written.
-
-**Work:** ink coverage and rich black are the two that actually cause rejections; both
-need a rasterizer, which Ghostscript already provides.
+Profile limits come from the profile schema's defaults when a profile file omits them
+(`profiles.load_profile`): `composition.maxOrphanPages` 0, `pdfSpec.maxInkCoverage` 300%.
+No profile file states either, so every vendor gets the default.
 
 ### 2.3 Eight override ops are declared but unimplementable
 
