@@ -101,7 +101,7 @@ def test_preflight_file_size_fail():
 
 
 def test_preflight_resolution_pass():
-    pdf_info = {"effective_dpi": 300}
+    pdf_info = {"images": {"placements": [(1, 300.0), (4, 450.0)]}}
     profile = {"pdfSpec": {"minImageDpi": 300}}
     result = check_resolution(pdf_info, profile)
     assert result.status == "pass"
@@ -282,6 +282,8 @@ def test_interactive_content_is_unmeasured_behind_object_streams():
 
 import subprocess
 
+import shutil
+
 import pytest
 
 from publisher_prepress.ghostscript import find_binary
@@ -385,3 +387,55 @@ def test_transparency_is_gated_by_the_profiles_standard():
     assert check_transparency(found, {"pdfSpec": {"standard": "pdfx-3"}}).status == "fail"
     assert check_transparency(found, {"pdfSpec": {"standard": "pdfx-4"}}).status == "skip"
     assert check_transparency(found, {}).status == "skip"
+
+
+# --- image resolution -------------------------------------------------------
+
+from publisher_prepress.preflight import measure_image_ppi, parse_pdfimages_list
+
+LISTING = """\
+page   num  type   width height color comp bpc  enc interp  object ID x-ppi y-ppi size ratio
+--------------------------------------------------------------------------------------------
+   1     0 image    2400  1600  rgb     3   8  jpeg   no         9  0   300   300  90K 0.8%
+   1     1 smask    2400  1600  gray    1   8  image  no         9  0    72    72  10K 0.3%
+   3     2 image     600   400  cmyk    4   8  image  no        12  0   150   210  30K 3.1%
+   5     3 stencil    64    64  -       1   1  image  no        15  0    40    40   1K 1.0%
+"""
+
+
+def test_pdfimages_listing_keeps_placed_images_at_their_weaker_axis():
+    """Masks and stencils are not pictures; a stretched image is as sharp as
+    its stretched direction."""
+    assert parse_pdfimages_list(LISTING) == [(1, 300.0), (3, 150.0)]
+
+
+def test_resolution_warns_on_the_pages_below_the_minimum():
+    info = {"images": {"placements": parse_pdfimages_list(LISTING)}}
+    check = check_resolution(info, {"pdfSpec": {"minImageDpi": 300}})
+    assert check.status == "warn" and check.value == 150.0
+    assert "page 3" in check.humanMessage and check.sourceRef == "pdf#page=3"
+
+
+def test_resolution_on_a_book_without_images_passes():
+    check = check_resolution({"images": {"placements": []}}, {"pdfSpec": {"minImageDpi": 300}})
+    assert check.status == "pass"
+
+
+def test_resolution_unmeasured_is_a_warning_not_a_pass():
+    info = {"images": {"unmeasured": "pdfimages (poppler-utils) is not installed"}}
+    check = check_resolution(info, {"pdfSpec": {"minImageDpi": 300}})
+    assert check.status == "warn" and "not measured" in check.humanMessage
+
+
+needs_pdfimages = pytest.mark.skipif(shutil.which("pdfimages") is None,
+                                     reason="pdfimages (poppler-utils) not installed")
+
+
+@needs_pdfimages
+def test_measure_image_ppi_reads_placed_size_from_a_real_pdf(tmp_path):
+    """300 pixels placed at 2 inches is 150 ppi -- the number a printer sees."""
+    from PIL import Image
+    pdf = tmp_path / "images.pdf"
+    Image.new("RGB", (300, 200), "red").save(pdf, resolution=150)
+    assert measure_image_ppi(pdf) == {"placements": [(1, 150.0)]}
+

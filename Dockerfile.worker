@@ -35,6 +35,10 @@ FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1
 # PN Katsoulidis) are not redistributable and are not in this image: mount them
 # at /fonts/licensed (docker-compose.yml, PUBLISHER_FONT_DIRS).
 #
+# poppler-utils provides `pdfimages -list`, which preflight's resolution check
+# reads each image placement's effective ppi from. Without it that check warns
+# "not measured" rather than passing.
+#
 # libreoffice-writer is the converter of record for legacy binary .doc uploads
 # (stages/ingest_stage.py `_convert_legacy_doc`). It is the single largest
 # thing in this image (~400 MB); it is here because "publish from .doc" is a
@@ -42,7 +46,7 @@ FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 \
     libffi-dev shared-mime-info fonts-liberation fonts-gfs-didot \
-    ghostscript \
+    ghostscript poppler-utils \
     libreoffice-writer \
     curl xz-utils ca-certificates \
     && rm -rf /var/lib/apt/lists/*

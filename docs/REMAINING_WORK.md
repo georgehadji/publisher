@@ -270,6 +270,15 @@ alpha and a transparency group for `opacity: .5`, and Ghostscript's PDF 1.3 pres
 flattens both, so the check passes on it. The real book's press file passes. Preflight
 is v14.
 
+**Done (2026-09-30): `resolution` measured.** It used to warn "not measured" on every
+book. Preflight now reads each image placement's effective ppi (pixels over placed size,
+lower axis) from poppler's `pdfimages -list`, which the worker image installs
+(`poppler-utils`). It warns, with pages, below the profile's `pdfSpec.minImageDpi`. Masks,
+soft masks and one-bit stencils are not counted as pictures. Without `pdfimages` it
+still warns "not measured". Checked end to end: 600 pixels placed at 2 in and 4 in read
+300 and 150 ppi from both weasyprint's raw PDF and the Ghostscript press file. The real
+book has no images, so it passes. Preflight is v15.
+
 Not implemented, both of which real POD vendors reject on:
 
 - **Spine width vs. actual paper stock.** The `cover` stage reads the profile's
@@ -380,7 +389,8 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
   now that `footnote-policy: line` is gone (819 on 62.3; see **weasyprint 70** below).
   - Warning 1 was composition: 27 widow pages and 264 runt pages. Both are now 0 (see
     **Runts** and **Widows** below).
-  - Warning 2: image resolution is unmeasured (no PDF image decoder).
+  - Warning 2: image resolution was unmeasured (no PDF image decoder). Measured since
+    2026-09-30 -- see §2.2.
 
   The first verdict, earlier the same day, was FAIL on 4 orphans (pages 208, 253, 284,
   660). They were real, and not a CSS problem:

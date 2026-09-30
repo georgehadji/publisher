@@ -13,6 +13,8 @@ import json
 import math
 import os
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,8 +23,13 @@ from typing import Any, Callable, Optional
 from publisher_prepress.geometry import PT_PER_MM
 from publisher_prepress.ghostscript import INK_TIMEOUT_S, GhostscriptError, find_binary, page_colours
 
-# run_preflight renders the pages twice (measure_ink); the rest is byte scanning.
-PREFLIGHT_TIMEOUT_S = 2 * INK_TIMEOUT_S + 300
+# pdfimages lists image placements without decoding them: seconds, even for a
+# large book. The deadline is for a hung process, not a slow one.
+PDFIMAGES_TIMEOUT_S = 120
+
+# run_preflight renders the pages twice (measure_ink) and lists the images once
+# (measure_image_ppi); the rest is byte scanning.
+PREFLIGHT_TIMEOUT_S = 2 * INK_TIMEOUT_S + PDFIMAGES_TIMEOUT_S + 300
 
 
 @dataclass
@@ -298,32 +305,41 @@ def check_color_space(pdf_info: dict, profile: dict) -> PreflightCheck:
 
 @preflight_check("resolution")
 def check_resolution(pdf_info: dict, profile: dict) -> PreflightCheck:
-    """Verify image resolution meets minimum DPI."""
+    """Every raster image prints at the profile's minimum resolution or more.
+
+    Effective resolution: the image's pixels over the size it is placed at on
+    the page, so a 3000-pixel photo stretched across a spread can still fail.
+    Below the minimum warns rather than fails -- vendors print a soft image,
+    and whether that is acceptable is the publisher's call.
+    """
     min_dpi = _requirement(profile, "pdfSpec", "minImageDpi")
     if min_dpi is None:
         return _unstated("resolution", "minimum image resolution")
-    pdf_dpi = pdf_info.get("effective_dpi")
-
-    if pdf_dpi is None:
-        # Byte scanning cannot decode image streams. Saying so is the honest
-        # result; the previous hard-coded 300 silently passed this check for
-        # every book, including one full of 72-DPI screenshots.
+    images = pdf_info.get("images") or {}
+    if "placements" not in images:
         return _warn(
             "resolution",
-            "Effective image resolution not measured (no PDF image decoder available)",
-            suggestedFix="Install PyMuPDF in the worker image to enable DPI checking",
+            f"Image resolution not measured: {images.get('unmeasured', 'no image listing')}",
+            suggestedFix="Run preflight where poppler-utils (pdfimages) is installed "
+                         "(the worker image).",
             expected=min_dpi,
         )
-
-    if pdf_dpi < min_dpi:
-        return _warn(
+    placements = images["placements"]
+    if not placements:
+        return _pass("resolution", "No raster images")
+    lowest = min(ppi for _, ppi in placements)
+    low = sorted({page for page, ppi in placements if ppi < min_dpi})
+    if low:
+        c = _warn(
             "resolution",
-            f"Effective resolution {pdf_dpi} DPI is below {min_dpi} DPI",
-            suggestedFix="Use higher-resolution source images",
-            value=pdf_dpi, expected=min_dpi,
+            f"Images print below {min_dpi} ppi on {_pages_phrase(low)} "
+            f"(lowest {lowest:g} ppi)",
+            suggestedFix="Replace them with higher-resolution originals, or place them smaller.",
+            value=lowest, expected=min_dpi,
         )
-
-    return _pass("resolution", f"Resolution {pdf_dpi} DPI OK")
+        c.sourceRef = f"pdf#page={low[0]}"
+        return c
+    return _pass("resolution", f"{len(placements)} image placement(s), lowest {lowest:g} ppi")
 
 
 @preflight_check("file-size")
@@ -459,6 +475,42 @@ RICH_BLACK_MIN_CMY = 30
 def is_rich_black(colour: tuple[int, int, int, int]) -> bool:
     c, m, y, k = colour
     return k >= RICH_BLACK_MIN_K and c + m + y >= RICH_BLACK_MIN_CMY
+
+
+def parse_pdfimages_list(listing: str) -> list[tuple[int, float]]:
+    """(page, effective ppi) for every placed raster image in `pdfimages -list`.
+
+    Only `image` rows count: `smask` and `mask` rows are an image's alpha or
+    stencil, not a picture of their own, and `stencil` rows are one-bit masks
+    whose resolution requirement is line art's, not a photo's. The lower of the
+    two axes is the image's resolution -- the direction it is stretched in.
+    """
+    placements = []
+    for line in listing.splitlines()[2:]:          # header and rule
+        fields = line.split()
+        if len(fields) < 14 or fields[2] != "image":
+            continue
+        try:
+            placements.append((int(fields[0]), min(float(fields[12]), float(fields[13]))))
+        except ValueError:                           # an unplaced image lists "-"
+            continue
+    return placements
+
+
+def measure_image_ppi(pdf_path: Path) -> dict:
+    """The effective resolution of every image placement, via poppler's
+    `pdfimages -list`: it walks each page's content stream and reports pixels
+    over placed size, which a byte scan cannot. When the tool is missing or
+    fails, the reason is returned instead, and the check says "not measured"."""
+    binary = shutil.which("pdfimages")
+    if binary is None:
+        return {"unmeasured": "pdfimages (poppler-utils) is not installed"}
+    try:
+        listing = subprocess.run([binary, "-list", str(pdf_path)], capture_output=True,
+                                 text=True, timeout=PDFIMAGES_TIMEOUT_S, check=True).stdout
+    except (subprocess.SubprocessError, OSError) as error:
+        return {"unmeasured": f"pdfimages failed: {str(error)[:300]}"}
+    return {"placements": parse_pdfimages_list(listing)}
 
 
 def measure_ink(pdf_path: Path) -> dict:
@@ -692,6 +744,7 @@ def run_preflight(pdf_path: str | Path, profile: dict,
         )
 
     pdf_info["ink"] = measure_ink(pdf_path)
+    pdf_info["images"] = measure_image_ppi(pdf_path)
 
     checks = []
     for code, check_fn in sorted(_CHECKS.items()):
@@ -920,9 +973,6 @@ def probe_pdf(pdf_path: Path) -> dict:
         "width_mm": width_mm,
         "height_mm": height_mm,
         "bleed_mm": bleed_mm,
-        # Raster resolution needs image-stream decoding, which byte scanning
-        # cannot do. Unknown, and reported as such.
-        "effective_dpi": None,
         "fonts": fonts,
         "pdf_standard": "pdfx-1a" if has_pdfx else "none",
         "interactive": _interactive_content(raw),
