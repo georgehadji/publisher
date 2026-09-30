@@ -229,17 +229,25 @@ would produce a `false` where the truth is "unknown".
 
 ### 2.2 Missing preflight checks
 
-`services/prepress/publisher_prepress/preflight.py` implements eleven checks: trim size
+`services/prepress/publisher_prepress/preflight.py` implements twelve checks: trim size
 (`:115`), bleed (`:150`), min/max pages (`:175`, `:200`), page multiple (`:225`), colour
 space (`:251`), resolution (`:268`), file size (`:296`), font embedding (`:317`), PDF
-standard (`:335`), composition (`:414`).
+standard (`:335`), interactive content, composition.
+
+**Done (2026-09-30): `interactive-content`.** It fails a print PDF that carries JavaScript,
+launch or trigger actions, form fields, or any annotation except the two PDF/X permits
+(PrinterMark, TrapNet). Stream bodies are cut before the byte scan, because compressed
+data matched `/JS` by chance in a real book. A file with compressed object streams
+(`/ObjStm`, PDF 1.5+) hides its dictionaries, so it warns "not measured" instead of
+passing. The real book's press file passes (Ghostscript PDF 1.3, where `finish-gs`
+drops link annotations); its weasyprint raw PDF would warn. The probe takes 1.5 s on
+7 MB. Preflight is now v11.
 
 Not implemented, all of which real POD vendors reject on:
 
 - **Total ink coverage** (KDP/IngramSpark cap ~240–300% TAC). Needs per-pixel CMYK sampling.
 - **Rich black / registration black** in body text — a 4-colour black at 9pt is a reprint.
 - **Transparency and live blend modes** surviving into PDF/X-1a.
-- **Annotations, form fields, embedded JS** — must be absent in a print PDF.
 - **Spine width vs. actual page count and paper stock.** `geometry.py:69` computes spine
   from a `paper_basis` default; no profile supplies a real per-vendor stock caliper.
 - **Gutter/creep** for the bound edge at high page counts.
@@ -251,8 +259,7 @@ min/max pages, page multiple, and nothing else. There is also no `maxInkCoverage
 to gate against when it is written.
 
 **Work:** ink coverage and rich black are the two that actually cause rejections; both
-need a rasterizer, which Ghostscript already provides. The annotations/JS check is nearly
-free — `probe_pdf` (`:612`) already opens the file.
+need a rasterizer, which Ghostscript already provides.
 
 ### 2.3 Eight override ops are declared but unimplementable
 

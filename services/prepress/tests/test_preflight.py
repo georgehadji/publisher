@@ -231,3 +231,46 @@ def test_page_checks_warn_rather_than_pass_on_an_unknown_count():
     assert check_min_pages(info, profile).status == "warn"
     assert check_max_pages(info, profile).status == "warn"
     assert check_page_multiple(info, profile).status == "warn"
+
+
+# --- interactive content --------------------------------------------------
+
+from publisher_prepress.preflight import _interactive_content, check_interactive_content
+
+def _page(extra: bytes = b"") -> bytes:
+    return b"%PDF-1.3\n1 0 obj<</Type/Page/MediaBox[0 0 1 1]" + extra + b">>endobj\n"
+
+
+def test_interactive_content_clean_press_file():
+    assert _interactive_content(_page()) == []
+    assert check_interactive_content({"interactive": []}, {}).status == "pass"
+
+
+def test_interactive_content_finds_what_a_printer_rejects():
+    raw = (_page(b"/Annots[2 0 R]")
+           + b"2 0 obj<</Type/Annot/Subtype/Link/A<</S/URI/URI(http://x)>>>>endobj\n"
+           + b"3 0 obj<</Type/Annot/Subtype/Widget>>endobj\n"
+           + b"4 0 obj<</Type/Catalog/AcroForm 5 0 R/OpenAction<</S/JavaScript/JS(app.alert(1))>>>>endobj\n")
+    found = _interactive_content(raw)
+    assert found == ["JavaScript", "Link annotation", "Widget annotation", "form fields"]
+    check = check_interactive_content({"interactive": found}, {})
+    assert check.status == "fail" and check.severity == "error"
+
+
+def test_interactive_content_allows_printer_marks():
+    """PDF/X permits PrinterMark and TrapNet annotations."""
+    raw = _page(b"/Annots[<</Subtype/PrinterMark>> <</Subtype/TrapNet>>]")
+    assert _interactive_content(raw) == []
+
+
+def test_interactive_content_ignores_bytes_inside_streams():
+    """Compressed stream data matched `/JS` by chance in a real book."""
+    raw = _page() + b"2 0 obj<</Length 20>>stream\n\x9c/JS /AA /Subtype/Link\nendstream endobj\n"
+    assert _interactive_content(raw) == []
+
+
+def test_interactive_content_is_unmeasured_behind_object_streams():
+    """Not clean: an /ObjStm hides the dictionaries a byte scan would read."""
+    raw = _page() + b"2 0 obj<</Type/ObjStm/N 3/First 9/Length 4>>stream\nxxxx\nendstream endobj\n"
+    assert _interactive_content(raw) is None
+    assert check_interactive_content({"interactive": None}, {}).status == "warn"

@@ -350,6 +350,33 @@ def check_pdf_standard(pdf_info: dict, profile: dict) -> PreflightCheck:
     return _pass("pdf-standard", f"PDF standard '{pdf_standard}' matches profile")
 
 
+@preflight_check("interactive-content")
+def check_interactive_content(pdf_info: dict, profile: dict) -> PreflightCheck:
+    """A print PDF carries no JavaScript, launch actions, form fields or annotations.
+
+    PDF/X permits only PrinterMark and TrapNet annotations; printers reject
+    anything else, and a form field or comment can print on the page.
+    `finish-gs` drops link annotations (`-dPreserveAnnots=false`); this is the
+    gate that proves it did, on the file actually delivered.
+    """
+    found = pdf_info.get("interactive")
+    if found is None:
+        return _warn(
+            "interactive-content",
+            "JavaScript, forms and annotations not measured: the PDF stores its "
+            "objects in compressed object streams, which byte scanning cannot read",
+            suggestedFix="Deliver the Ghostscript PDF/X output (PDF 1.3 has no object streams).",
+        )
+    if found:
+        return _fail(
+            "interactive-content",
+            f"Print PDF contains {', '.join(found)}",
+            suggestedFix="Remove them in the source, or re-run finish-gs, which drops annotations.",
+            value=found, expected=[],
+        )
+    return _pass("interactive-content", "No JavaScript, forms or annotations")
+
+
 def _skip(code: str, humanMessage: str) -> PreflightCheck:
     return PreflightCheck(code=code, status="skip", severity="info",
                           humanMessage=humanMessage)
@@ -580,6 +607,38 @@ _FONTFILE_RE = re.compile(rb"/FontFile[23]?\b")
 _CMAP_SUFFIX_RE = re.compile(r"-(?:Identity|Uni(?:JIS|GB|CNS|KS)[\w-]*?)-[HV]$")
 
 
+# Stream bodies are compressed binary: 7 MB of it matched `/JS` once by chance in
+# a real book. Dictionaries sit outside them, so they are cut before scanning.
+_STREAM_RE = re.compile(rb"(?<![\w/])stream\r?\n.*?endstream", re.DOTALL)
+_OBJSTM_RE = re.compile(rb"/Type\s*/ObjStm\b")
+# Every annotation subtype but PrinterMark and TrapNet, the two PDF/X permits.
+_ANNOT_RE = re.compile(
+    rb"/Subtype\s*/(Text|Link|FreeText|Line|Square|Circle|Polygon|PolyLine|Highlight"
+    rb"|Underline|Squiggly|StrikeOut|Stamp|Caret|Ink|Popup|FileAttachment|Sound|Movie"
+    rb"|Widget|Screen|Watermark|3D|Redact|RichMedia|Projection)\b")
+_INTERACTIVE_RE = {
+    "JavaScript": re.compile(rb"/(?:JavaScript|JS)\b"),
+    "launch action": re.compile(rb"/S\s*/Launch\b"),
+    "trigger actions (/AA)": re.compile(rb"/AA\b"),
+    "form fields": re.compile(rb"/AcroForm\b"),
+}
+
+
+def _interactive_content(raw: bytes) -> list[str] | None:
+    """What a print PDF must not carry, sorted; None when it cannot be seen.
+
+    Objects inside a compressed object stream (/ObjStm, PDF 1.5+) are invisible
+    to a byte scan, so a file that has one is unmeasured, not clean.
+    """
+    dicts = _STREAM_RE.sub(b"", raw)
+    if _OBJSTM_RE.search(dicts):
+        return None
+    found = [name for name, pattern in _INTERACTIVE_RE.items() if pattern.search(dicts)]
+    found += [f"{kind.decode()} annotation" for kind in
+              sorted({m.group(1) for m in _ANNOT_RE.finditer(dicts)})]
+    return sorted(found)
+
+
 def _count_pages(raw: bytes) -> int | None:
     """Number of pages, or None when the byte stream does not reveal it.
 
@@ -689,4 +748,5 @@ def probe_pdf(pdf_path: Path) -> dict:
         "effective_dpi": None,
         "fonts": fonts,
         "pdf_standard": "pdfx-1a" if has_pdfx else "none",
+        "interactive": _interactive_content(raw),
     }
