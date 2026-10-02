@@ -24,6 +24,7 @@ env:
     -e platform/cas/py -e platform/stages/py -e platform/cache/py
     -e platform/exec/py -e platform/sandbox/py -e platform/reproducibility
     -e platform/supply-chain
+    -e platform/orchestration/py
     -e services/prepress -e services/structure -e services/agents
     -e services/ingest -e services/cover -e services/idml
     -e services/epub -e services/onix -e services/alttext
