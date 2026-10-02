@@ -43,7 +43,7 @@ from profiles import resolve_profile
     # collapsed TrimBox onto MediaBox and produced a press file measuring 0.00mm
     # of bleed no matter what the renderer had laid down.
     # v7: proof/report declared terminal outputs (U6).
-    version=12,  # v12: press and proof are byte-reproducible -- pinned dates, content-made /ID (ghostscript._pin_identity, W10). v11: profile via resolve_profile, press + proof via ghostscript.press_and_proof (proof dpi from the profile). v10: deadline FINISH_TIMEOUT_S, covering both Ghostscript passes. v9: 3600 s deadline, cheap text check (Tj/TJ count), notes split. v8: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline.
+    version=13,  # v13: press /ID pinned whichever encoding Ghostscript picks (hex, or a literal ~1 file in 50); proof omits /ID (-dOmitID: linearized, it cannot be pinned in place). v12: press and proof are byte-reproducible -- pinned dates, content-made /ID (ghostscript._pin_identity, W10). v11: profile via resolve_profile, press + proof via ghostscript.press_and_proof (proof dpi from the profile). v10: deadline FINISH_TIMEOUT_S, covering both Ghostscript passes. v9: 3600 s deadline, cheap text check (Tj/TJ count), notes split. v8: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline.
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     inputs={"pdf_path": "raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced

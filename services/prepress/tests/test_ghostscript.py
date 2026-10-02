@@ -327,6 +327,51 @@ def test_pin_identity_makes_clock_made_ids_a_function_of_content(tmp_path: Path)
     assert re.search(rb"/ID \[<([0-9A-F]{32})><\1>\]", a.read_bytes())
 
 
+def _trailer_pdf(path: Path, file_id: bytes) -> Path:
+    """A classic-xref file whose /ID is in the final trailer, after the xref."""
+    body = b"%PDF-1.3\n1 0 obj\n<< /Type /Catalog >>\nendobj\n"
+    xref = len(body)
+    path.write_bytes(body + b"xref\n0 2\ntrailer\n<< /Size 2 /Root 1 0 R\n" + file_id
+                     + b"\n>>\nstartxref\n" + str(xref).encode() + b"\n%%EOF\n")
+    return path
+
+
+def test_pin_identity_pins_an_id_ghostscript_wrote_as_a_literal(tmp_path: Path):
+    """Ghostscript writes /ID as a literal string when its random bytes escape
+    shorter than hex -- about one file in fifty. Matching only hex left those
+    unpinned, and the nightly saw two cold builds of one book differ."""
+    from publisher_prepress.ghostscript import _pin_identity
+    hexed = _trailer_pdf(tmp_path / "hex.pdf", b"/ID [<A12F01CA6CC48ABCBB9B2999E8CC3FD1>"
+                                              b"<A12F01CA6CC48ABCBB9B2999E8CC3FD1>]")
+    literal = _trailer_pdf(tmp_path / "lit.pdf", rb"/ID [(:\274\250eQ\344\374Z1#a==e&\341)"
+                                                 rb"(:\274\250eQ\344\374Z1#a==e&\341)]")
+    _pin_identity(hexed)
+    _pin_identity(literal)
+    assert hexed.read_bytes() == literal.read_bytes()
+
+
+def test_pin_identity_leaves_an_id_ahead_of_the_objects_in_place(tmp_path: Path):
+    """A linearized file's /ID is in the first-page trailer, before the objects:
+    rewriting it at another length would move every offset after it."""
+    from publisher_prepress.ghostscript import _pin_identity
+    head = b"%PDF-1.3\ntrailer <</ID[(short)(short)]>>\n"
+    path = tmp_path / "lin.pdf"
+    path.write_bytes(head + b"1 0 obj\n<<>>\nendobj\nstartxref\n" + str(len(head)).encode() + b"\n%%EOF\n")
+    before = path.read_bytes()
+    _pin_identity(path)
+    assert path.read_bytes() == before
+
+
+def test_the_proof_carries_no_file_id(tmp_path: Path, monkeypatch):
+    """The proof is linearized, so its /ID cannot be pinned in place (above);
+    Ghostscript is told to omit it."""
+    from publisher_prepress.ghostscript import to_proof
+    calls: list[list[str]] = []
+    out = _fake_gs(tmp_path, monkeypatch, input_ops=0, press_ops=0, calls=calls)
+    to_proof(tmp_path / "in.pdf", out, dpi=150)
+    assert "-dOmitID=true" in calls[-1]
+
+
 def test_two_conversions_of_one_file_are_byte_identical(tmp_path: Path):
     """The nightly check's finding: press and proof differed run to run."""
     import time

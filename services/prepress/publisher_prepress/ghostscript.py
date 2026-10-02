@@ -340,8 +340,16 @@ def _pdf_date() -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("D:%Y%m%d%H%M%SZ")
 
 
-_FILE_ID = re.compile(rb"/ID ?\[ ?<([0-9A-Fa-f]{32})> ?<([0-9A-Fa-f]{32})> ?\]")
+# A PDF string as Ghostscript writes one: hex, or a literal (octal escapes)
+# when that is shorter -- which it picks per file from the ID's random bytes.
+_PDF_STRING = rb"(?:<[0-9A-Fa-f]*>|\((?:\\.|[^\\()])*\))"
+_FILE_ID = re.compile(rb"/ID ?\[ ?" + _PDF_STRING + rb" ?" + _PDF_STRING + rb" ?\]")
 _XMP_UUID = re.compile(rb"uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_STARTXREF = re.compile(rb"startxref\s+(\d+)")
+
+
+def _file_id(hex32: bytes) -> bytes:
+    return b"/ID [<" + hex32 + b"><" + hex32 + b">]"
 
 
 def _pin_identity(pdf: Path) -> None:
@@ -351,21 +359,40 @@ def _pin_identity(pdf: Path) -> None:
     different press files. With the dates pinned (`_pdf_date`), what still
     differs is the trailer /ID and XMP's DocumentID, both made from the clock.
     PDF/X requires them, so they are not omitted: each is rewritten from a
-    digest of the rest of the file, at the same length, so no offset moves.
+    digest of the rest of the file.
+
+    XMP uuids keep their length. The /ID is rewritten as hex whichever way
+    Ghostscript wrote it: it writes a literal string instead of hex when the
+    random bytes escape shorter, about one file in fifty, and matching only hex
+    left those files unpinned (the nightly again). That can change the /ID's
+    length, which moves no offset only in the final trailer, after every
+    object -- so an /ID anywhere else (a linearized file's first-page trailer)
+    is left as written. The proof is the linearized one, and omits its /ID.
     """
     data = pdf.read_bytes()
-    tokens = sorted({t for pair in _FILE_ID.findall(data) for t in pair} |
-                    set(_XMP_UUID.findall(data)), key=data.find)
-    if not tokens:
+    xrefs = _STARTXREF.findall(data)
+    last_xref = int(xrefs[-1]) if xrefs else 0
+    ids = [m for m in _FILE_ID.finditer(data) if m.start() > last_xref]
+    uuids = sorted(set(_XMP_UUID.findall(data)), key=data.find)
+    if not ids and not uuids:
         return
     masked = data
-    for token in tokens:
-        masked = masked.replace(token, b"0" * len(token))
-    for i, token in enumerate(tokens):
-        h = hashlib.sha256(masked + bytes([i])).hexdigest()
-        new = (f"uuid:{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}".encode()
-               if token.startswith(b"uuid:") else h[:32].upper().encode())
-        data = data.replace(token, new)
+    for uuid in uuids:
+        masked = masked.replace(uuid, b"0" * len(uuid))
+    for m in reversed(ids):
+        masked = masked[:m.start()] + _file_id(b"0" * 32) + masked[m.end():]
+
+    def digest(i: int) -> str:
+        return hashlib.sha256(masked + bytes([i])).hexdigest()
+
+    for i, uuid in enumerate(uuids):
+        h = digest(i)
+        data = data.replace(uuid, f"uuid:{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}".encode())
+    if ids:
+        pinned = _file_id(digest(len(uuids))[:32].upper().encode())
+        for m in reversed(list(_FILE_ID.finditer(data))):
+            if m.start() > last_xref:
+                data = data[:m.start()] + pinned + data[m.end():]
     pdf.write_bytes(data)
 
 
@@ -509,6 +536,11 @@ def to_proof(
         f"-dColorImageResolution={dpi}",
         f"-dGrayImageResolution={dpi}",
         "-dFastWebView=true",
+        # Linearized, the /ID sits in the first-page trailer, ahead of every
+        # object, so _pin_identity cannot rewrite it in place: Ghostscript's
+        # random choice of hex or literal for it already moves every offset.
+        # A proof is read on screen and is not encrypted; PDF needs no /ID then.
+        "-dOmitID=true",
         f"-sOutputFile={output_pdf}",
         "-c", f"[ /CreationDate ({_pdf_date()}) /ModDate ({_pdf_date()}) /DOCINFO pdfmark",
         "-f", str(input_pdf),
