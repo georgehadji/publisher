@@ -126,12 +126,9 @@ jobs:
           chmod +x "$RUNNER_TEMP/ace-xvfb"
           "$RUNNER_TEMP/ace-xvfb" --version | grep -qx 1.4.6
           echo "PUBLISHER_ACE=$RUNNER_TEMP/ace-xvfb" >> "$GITHUB_ENV"
-      - name: Node dependencies the suite drives (api via tsx, schemas codegen)
-        # The API integration tests start packages/api with its own tsx, and the
-        # codegen-sync meta-gate copies schemas/node_modules into its worktree.
-        run: |
-          npm ci --prefix packages/api
-          npm ci --prefix schemas
+      - name: Node dependencies the suite drives (api via tsx)
+        # The API integration tests start packages/api with its own tsx.
+        run: npm ci --prefix packages/api
       - name: Load schema
         # GitHub's `services:` Postgres has no init-script mount (unlike
         # docker-compose.yml's `/docker-entrypoint-initdb.d/`), so CI applies

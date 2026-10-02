@@ -56,8 +56,11 @@ class Gate:
 def mutate_schema_without_regen(root: Path) -> None:
     """Edit a schema source without regenerating -- the exact shape of L1."""
     schemas_dir = root / "schemas"
-    # node_modules is gitignored, so a fresh worktree doesn't have it.
-    shutil.copytree(REPO_ROOT / "schemas" / "node_modules", schemas_dir / "node_modules")
+    # node_modules is gitignored, so a fresh worktree doesn't have it. Copied
+    # only when present: generate.mjs needs nothing from it, and CI's own
+    # codegen step runs with none (schemas has no tracked lockfile to install).
+    if (REPO_ROOT / "schemas" / "node_modules").is_dir():
+        shutil.copytree(REPO_ROOT / "schemas" / "node_modules", schemas_dir / "node_modules")
     path = schemas_dir / "manifest" / "manifest.schema.json"
     schema = json.loads(path.read_text(encoding="utf-8"))
     schema["properties"]["metaGateProbe"] = {"type": "string", "const": "probe"}
@@ -322,7 +325,7 @@ STEP_CLASSIFICATION: dict[str, str | None] = {
     "pip install -r requirements.lock --require-hashes && pip install pytest==8.4.2": None,  # ditto
     "pip install ${{ env.PUBLISHER_PKGS }} psycopg2-binary requests import-linter": None,  # ditto
     "pandoc 3.5 and typst 0.13.1, pinned (as Dockerfile.worker)": None,  # tool install, its tests are the gate
-    "Node dependencies the suite drives (api via tsx, schemas codegen)": None,  # dependency install
+    "Node dependencies the suite drives (api via tsx)": None,  # dependency install
     "Load schema": None,  # CI setup -- no initdb mount for services: postgres
     # Tool install (W10): a digest mismatch fails it, and "Full test suite" then
     # refuses a run where the EPUBCheck test skipped for want of the jar.
