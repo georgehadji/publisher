@@ -462,6 +462,10 @@ def api_server():
             f"before this detector can even attempt to run."
         )
 
+    # /v1/health reports 503 until the CAS root exists. Only the session
+    # `cas_root` fixture created it, so on a fresh checkout a module whose
+    # tests reach api_server first never saw the server become healthy.
+    TEST_CAS_ROOT.mkdir(parents=True, exist_ok=True)
     port = _free_port()
     env = {
         **os.environ,

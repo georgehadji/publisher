@@ -104,13 +104,15 @@ def test_a_batch_lands_whole_or_not_at_all(api_server, manuscript):
     assert "ov-new-in-batch" not in _logged(manuscript)
 
 
-def test_an_op_the_build_cannot_apply_is_never_stored(api_server, manuscript):
-    """The log is append-only, so a `split` stored now would fail every later
-    build of this manuscript (resolve raises UnsupportedOverrideOp)."""
+def test_a_split_is_stored_now_that_resolve_applies_it(api_server, manuscript):
+    """This route refused `split` (422) while resolve could not apply it: the
+    log is append-only, so one stored op would have failed every later build.
+    resolve applies every op now (UNIMPLEMENTED_OPS is empty, pinned by
+    overrides.test.ts), so the refusal is gone and a split lands in the log."""
     before = _logged(manuscript)
     res = _patch(api_server, manuscript, [_op("ov-split", op="split")], "split")
-    assert res.status_code == 422, res.text
-    assert _logged(manuscript) == before
+    assert res.status_code == 201, res.text
+    assert _logged(manuscript) == [*before, "ov-split"]
 
 
 def test_the_app_role_can_append_but_never_rewrite(manuscript):
