@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import functools
 import inspect
-from dataclasses import dataclass, field
+from dataclasses import FrozenInstanceError, dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -54,9 +54,16 @@ class Diagnostic:
                    suggested_fix=d.get("suggestedFix"), source_ref=d.get("sourceRef"))
 
 
-@dataclass(frozen=True)
+@dataclass
 class StageError(Exception):
-    """Error returned by a stage."""
+    """Error returned by a stage.
+
+    Fields are read-only once set, but not via `frozen=True`: Python itself
+    assigns `__traceback__` (contextlib's `__exit__`), `__notes__` and friends
+    on an exception in flight, and a frozen dataclass refused them -- so a
+    StageError raised inside any `@contextmanager` surfaced as
+    FrozenInstanceError, its kind and message lost.
+    """
     kind: ErrorKind
     message: str
     diagnostics: list[Diagnostic] = field(default_factory=list)
@@ -67,6 +74,11 @@ class StageError(Exception):
     # this, a book preflight rejected showed its preflight as "pending" in the
     # API forever, because only a stage that SUCCEEDS had its artifacts recorded.
     artifacts: list["ArtifactRef"] = field(default_factory=list)
+
+    def __setattr__(self, name, value):
+        if name in self.__dataclass_fields__ and name in self.__dict__:
+            raise FrozenInstanceError(f"cannot assign to field {name!r}")
+        super().__setattr__(name, value)
 
     def __post_init__(self):
         # E2.2: TIMEOUT joins the retryable set deliberately (often transient

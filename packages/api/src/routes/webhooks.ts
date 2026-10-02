@@ -17,6 +17,7 @@ function isBlockedIPv4(ip: string): boolean {
   const parts = ip.split('.').map(Number);
   if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return true;
   const [a, b] = parts;
+  if (a === 0) return true; // "this network" -- 0.0.0.0 reaches localhost on Linux
   if (a === 10) return true; // RFC1918
   if (a === 127) return true; // loopback
   if (a === 169 && b === 254) return true; // link-local incl. 169.254.169.254 metadata
@@ -26,11 +27,28 @@ function isBlockedIPv4(ip: string): boolean {
   return false;
 }
 
-function isBlockedHost(hostname: string): boolean {
+/** IPv4-mapped IPv6 (`::ffff:a.b.c.d`, or `::ffff:7f00:1` as the URL parser
+ * writes it) as the IPv4 address it is, else null. Unchecked, a host whose AAAA
+ * record was `::ffff:169.254.169.254` passed as public. */
+function mappedIPv4(h: string): string | null {
+  const m = /^::ffff:(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/.exec(h);
+  if (!m) return null;
+  if (m[1]) return m[1];
+  const hi = parseInt(m[2], 16);
+  const lo = parseInt(m[3], 16);
+  return [hi >> 8, hi & 255, lo >> 8, lo & 255].join('.');
+}
+
+export function isBlockedHost(host: string): boolean {
+  // URL.hostname keeps an IPv6 literal's brackets ("[::1]"), which isIP does
+  // not recognise -- so the literal check below never ran for one.
+  const hostname = host.replace(/^\[(.*)\]$/, '$1');
   const family = isIP(hostname);
   if (family === 4) return isBlockedIPv4(hostname);
   if (family === 6) {
     const h = hostname.toLowerCase();
+    const v4 = mappedIPv4(h);
+    if (v4) return isBlockedIPv4(v4);
     if (h === '::1' || h === '::') return true; // loopback / unspecified
     if (h.startsWith('fc') || h.startsWith('fd')) return true; // ULA
     if (h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb')) return true; // link-local
@@ -78,7 +96,8 @@ export async function registerWebhooks(server: FastifyInstance): Promise<void> {
       if (parsed.protocol !== 'https:') {
         return reply.code(400).send({ error: 'webhook url must be https' });
       }
-      const hostname = parsed.hostname;
+      // Unbracketed for dns.lookup too: "[::1]" resolves on Windows, not Linux.
+      const hostname = parsed.hostname.replace(/^\[(.*)\]$/, '$1');
       if (isBlockedHost(hostname)) {
         return reply.code(400).send({ error: 'webhook url must not point at a private, loopback, or metadata address' });
       }

@@ -133,3 +133,30 @@ def test_resource_exhausted_is_not_retryable():
     import pytest
     with pytest.raises(ValueError, match="Only infra, external_limit and timeout"):
         StageError(kind=ErrorKind.RESOURCE_EXHAUSTED, message="OOM", retryable=True)
+
+
+def test_stage_error_survives_a_contextmanager():
+    # contextlib's __exit__ assigns exc.__traceback__; as a frozen dataclass,
+    # StageError refused it and surfaced as FrozenInstanceError instead,
+    # its kind and message lost (first seen on CI, a missing-pandoc INFRA).
+    import contextlib
+    import pytest
+
+    @contextlib.contextmanager
+    def scope():
+        yield
+
+    with pytest.raises(StageError) as caught:
+        with scope():
+            raise StageError(kind=ErrorKind.INFRA, message="pandoc is not installed")
+    assert caught.value.kind is ErrorKind.INFRA
+    caught.value.add_note("notes are set the same way")
+
+
+def test_stage_error_fields_stay_read_only():
+    from dataclasses import FrozenInstanceError
+    import pytest
+
+    err = StageError(kind=ErrorKind.INFRA, message="m")
+    with pytest.raises(FrozenInstanceError):
+        err.message = "rewritten"
