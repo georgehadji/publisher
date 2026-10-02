@@ -27,9 +27,9 @@ import subprocess
 import zipfile
 from pathlib import Path
 
-from publisher_ingest.docx_to_ast import IngestError, docx_to_ast
+from publisher_ingest.docx_to_ast import IngestError, docx_to_ast, drawings_dropped
 from publisher_stages import (
-    stage, StageCtx, StageResult, StageError, ErrorKind,
+    stage, StageCtx, StageResult, StageError, ErrorKind, Diagnostic,
     ArtifactRef as StageArtifactRef,
 )
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
@@ -179,7 +179,10 @@ def _check_zip_limits(source: Path) -> None:
     # whole book was one chapter), back matter keeps its Heading-styled entries,
     # notes keep their pictures, SmartArt text is kept, an EMF image is refused.
     # v7: memory budget 128 -> 512 MB (see memory_budget_mb below).
-    version=7,
+    # v8 (W9): symbol-font characters (w:sym) are kept, bold set through a style
+    # finds headings, a prose caption under a figure becomes its caption, and
+    # the shapes and objects ingest cannot keep are counted and warned about.
+    version=8,
     inputs={"docx_path": "raw-docx/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["docx_path"],
@@ -254,6 +257,7 @@ def ingest(ctx: StageCtx, docx_path: str | None = None) -> StageResult:
 
     data = json.dumps(ast, ensure_ascii=False).encode("utf-8")
     ref = cas.put(data, media_type=MediaType("application/json"))
+    dropped = drawings_dropped(source)
 
     print(f"  [ingest] {source.name} -> {ref.hash} ({ref.size} bytes, "
           f"{len(ast.get('body') or [])} chapters)")
@@ -265,5 +269,13 @@ def ingest(ctx: StageCtx, docx_path: str | None = None) -> StageResult:
             media_type="application/json",
             size=ref.size,
         )],
-        metrics={"size_bytes": ref.size, "chapters": float(len(ast.get("body") or []))},
+        metrics={"size_bytes": ref.size, "chapters": float(len(ast.get("body") or [])),
+                 **{f"{kind}_dropped": float(n) for kind, n in dropped.items()}},
+        warnings=[Diagnostic(
+            code="drawings-dropped", severity="warning",
+            human_message="Not in the book: " + ", ".join(
+                f"{n} {kind}" for kind, n in dropped.items() if n) +
+                ". Their text, if any, is kept; the drawing itself is not.",
+            suggested_fix="Replace each diagram in Word with a picture (PNG or JPEG) of it.",
+        )] if any(dropped.values()) else [],
     )

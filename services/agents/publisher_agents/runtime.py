@@ -10,12 +10,13 @@ From AGENT_DESIGN.md §0 and §1:
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional, Protocol
 
 
 # ── Core types ──────────────────────────────────────────────────
@@ -212,203 +213,165 @@ def get_tool_registry() -> ToolRegistry:
 
 # ── Agent Runtime ───────────────────────────────────────────────
 
+@dataclass
+class ToolCall:
+    """One tool call a model asked for."""
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class AgentTurn:
+    """One model reply: tool calls to run, or (with none) the final answer."""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    answer: Any = None
+    tokens: int = 0
+    cost_usd: float = 0.0
+
+
+class AgentProvider(Protocol):
+    """The model behind an agent. Injected, as InferenceGateway's provider is (E6.1):
+    production passes OpenRouterAgentProvider; tests pass a scripted one."""
+
+    def respond(self, role: AgentRole, messages: list[dict], tools: list[dict],
+                output_schema: dict) -> AgentTurn: ...
+
+
+class AgentBudgetExceeded(RuntimeError):
+    """A run reached its TaskBudget before giving a final answer."""
+
+
+class AgentAnswerInvalid(ValueError):
+    """A final answer outside the output schema the caller asked for."""
+
+
+# A tool result goes back into the conversation; an unbounded one (a whole
+# chapter's nodes) would spend the token budget on one call.
+# ponytail: plain truncation; summarise per tool if agents start needing the tail.
+MAX_TOOL_RESULT_CHARS = 20_000
+
+
 class AgentRuntime:
     """
-    Runtime for executing agent tasks.
-    
-    Manages:
-    - Task budgets (tokens, turns, subagents, cost)
-    - Tool surfaces (which tools are available per role)
-    - Context editing / compaction (clearing stale results)
-    - Subagent caps
+    Runs one agent task as a tool loop (W5, docs/WIRING_PLAN.md): the model
+    replies with tool calls, the runtime runs them through the role's
+    ToolSurface and sends the results back, until the model gives a final
+    answer -- checked against the caller's schema -- or the TaskBudget runs out.
+
+    What an agent may do is bounded twice: `tools` (offered on this call) inside
+    the role's surface (D7), and the answer schema the caller supplies. Artifacts
+    a tool reads (`bound`) are injected by the runtime, never passed by the model,
+    so a model cannot point a tool at a document it was not given.
     """
-    
-    def __init__(self, registry: Optional[ToolRegistry] = None):
+
+    def __init__(self, provider: AgentProvider, registry: Optional[ToolRegistry] = None):
+        self._provider = provider
         self._registry = registry or _GLOBAL_TOOLS
         self._budgets: dict[str, TaskBudget] = {}
-    
+
     def set_budget(self, role: AgentRole, budget: TaskBudget):
         self._budgets[role.value] = budget
-    
+
     def get_budget(self, role: AgentRole) -> TaskBudget:
         return self._budgets.get(role.value, TaskBudget())
-    
+
     def execute(
         self,
         role: AgentRole,
         agent_version: str,
         inputs: dict[str, Any],
         tools: list[str],
+        output_schema: dict,
+        *,
+        system_prompt: str = "",
+        bound: Optional[dict[str, Any]] = None,
         subagent_requests: int = 0,
     ) -> AgentResult:
-        """
-        Execute an agent task.
-
-        In production, this calls the LLM with tools.
-        In the tracer bullet, runs the rule-based fallback.
-
-        Enforces the two hard caps BUILD_PLAN.md §3.17 requires and that AGENT_DESIGN.md
-        §1.5 names but which nothing previously checked: a task budget that "paces and
-        wraps up gracefully" and an "explicit subagent cap (current Opus delegates
-        readily; an uncapped Compositor spawns one per spread)". `TaskBudget` existed as
-        a dataclass with `max_turns`/`max_subagents` fields that were recorded on
-        `AgentCall` and never compared against anything -- an agent could exceed either
-        with no error, no flag, nothing.
-        """
+        """Run the loop. Never raises: a failure is `AgentResult.failed` with
+        the reason on `call.error` (D3), so "proposed nothing" and "crashed"
+        stay distinguishable."""
         budget = self.get_budget(role)
-        call = AgentCall(
-            role=role,
-            agent_version=agent_version,
-            inputs=inputs,
-            tools_used=tools,
-        )
-
+        call = AgentCall(role=role, agent_version=agent_version, inputs=inputs)
         start = time.monotonic()
-        failed = False
-
-        if len(tools) > budget.max_turns:
-            call.error = (
-                f"AgentBudgetExceeded: {len(tools)} tool calls requested exceeds "
-                f"max_turns={budget.max_turns} for role '{role.value}'"
-            )
-            call.latency_ms = int((time.monotonic() - start) * 1000)
-            return AgentResult(role=role, call=call, output={"error": call.error, "proposals": []}, failed=True)
-
-        if subagent_requests > budget.max_subagents:
-            call.error = (
-                f"AgentBudgetExceeded: {subagent_requests} subagent(s) requested exceeds "
-                f"max_subagents={budget.max_subagents} for role '{role.value}'"
-            )
-            call.latency_ms = int((time.monotonic() - start) * 1000)
-            return AgentResult(role=role, call=call, output={"error": call.error, "proposals": []}, failed=True)
-
         try:
-            output = self._run_agent_logic(role, inputs, tools)
-            call.latency_ms = int((time.monotonic() - start) * 1000)
-            call.tokens_used = len(json.dumps(output))
+            if subagent_requests > budget.max_subagents:
+                raise AgentBudgetExceeded(
+                    f"{subagent_requests} subagent(s) requested exceeds "
+                    f"max_subagents={budget.max_subagents} for role '{role.value}'")
+            output = self._loop(role, call, budget, inputs, tools, output_schema,
+                                system_prompt, bound or {})
+            failed = False
         except Exception as e:
-            # Record the failure and FLAG it. Returning an error dict alone made a crash
-            # indistinguishable from an empty-but-successful run at every call site that
-            # reads `result.output.get("proposals", [])` — see compositor.evaluate.
             call.error = f"{type(e).__name__}: {e}"
-            call.latency_ms = int((time.monotonic() - start) * 1000)
-            output = {"error": call.error, "proposals": []}
-            failed = True
+            output, failed = {"error": call.error, "proposals": []}, True
+        call.latency_ms = int((time.monotonic() - start) * 1000)
+        return AgentResult(role=role, call=call, output=output, failed=failed)
 
-        return AgentResult(
-            role=role,
-            call=call,
-            output=output,
-            failed=failed,
-        )
-    
-    def _run_agent_logic(
-        self,
-        role: AgentRole,
-        inputs: dict[str, Any],
-        tools: list[str],
-    ) -> dict[str, Any]:
-        """Run the agent's logic.
-        
-        In the tracer bullet, this simulates agent output.
-        In production, this calls the LLM with tools and structured output.
-        """
-        if role == AgentRole.STRUCTURE_WRANGLER:
-            return self._run_structure_wrangler(inputs)
-        elif role == AgentRole.COMPOSITOR:
-            return self._run_compositor(inputs)
-        elif role == AgentRole.PREFLIGHT_EXPLAINER:
-            return self._run_preflight_explainer(inputs)
-        else:
-            return {"status": "simulated", "role": role.value}
-    
-    def _run_structure_wrangler(self, inputs: dict) -> dict:
-        """Structure Wrangler logic."""
-        low_conf_nodes = inputs.get("low_confidence_nodes", [])
-        proposals = []
-        
-        for node in low_conf_nodes:
-            alternatives = node.get("alternatives", [])
-            if alternatives:
-                proposals.append({
-                    "id": f"pr-{node.get('block_index', '?')}",
-                    "type": "reclassify",
-                    "sourceRef": {"docxId": f"node-{node.get('block_index', '?')}"},
-                    "from": node.get("suggested", "uncertain"),
-                    "to": alternatives[0],
-                    "rationale": f"Rules engine confidence {node.get('confidence', 0):.2f} is below threshold; best alternative is '{alternatives[0]}' based on context.",
-                    "confidence": 0.85,
-                    "evidence": [
-                        f"detected: {node.get('suggested', '?')}",
-                        f"alternatives: {', '.join(alternatives)}",
-                    ],
-                })
-        
-        return {
-            "schema": "agent-proposal/1",
-            "agentId": "structure-wrangler",
-            "agentVersion": inputs.get("agent_version", "1.0"),
-            "proposals": proposals,
-            "costUsd": len(proposals) * 0.003,
-        }
-    
-    def _run_compositor(self, inputs: dict) -> dict:
-        """Compositor agent logic."""
-        defects = inputs.get("defects", [])
-        proposals = []
-        
-        for defect in defects:
-            if defect.get("severity") in ("error", "warning"):
-                proposals.append({
-                    "id": f"adj-{defect.get('page_number', '?')}",
-                    "type": "adjust_layout",
-                    "sourceRef": {"docxId": f"page-{defect.get('page_number', '?')}"},
-                    "rationale": f"Detected {defect.get('defect_type', 'issue')} on page {defect.get('page_number', '?')}: {defect.get('description', '')}",
-                    "confidence": 0.7,
-                    "adjustment": {
-                        "type": "tracking",
-                        "target_page": defect.get("page_number"),
-                        "value": -0.005,
-                        "unit": "em",
-                    },
-                })
-        
-        return {
-            "schema": "agent-proposal/1",
-            "agentId": "compositor",
-            "agentVersion": inputs.get("agent_version", "1.0"),
-            "proposals": proposals,
-            "costUsd": len(proposals) * 0.01,
-        }
-    
-    def _run_preflight_explainer(self, inputs: dict) -> dict:
-        """Preflight Explainer — read-only, no proposals."""
-        checks = inputs.get("checks", [])
-        explanations = []
-        
-        for check in checks:
-            if check.get("status") == "fail":
-                explanations.append({
-                    "code": check.get("code", "?"),
-                    "explanation": check.get("humanMessage", ""),
-                    "fix": check.get("suggestedFix", ""),
-                    "severity": "blocking",
-                })
-            elif check.get("status") == "warn":
-                explanations.append({
-                    "code": check.get("code", "?"),
-                    "explanation": check.get("humanMessage", ""),
-                    "fix": check.get("suggestedFix", ""),
-                    "severity": "advisory",
-                })
-        
-        return {
-            "schema": "preflight-explanation/1",
-            "agentId": "preflight-explainer",
-            "totalFindings": len(explanations),
-            "blockingCount": sum(1 for e in explanations if e["severity"] == "blocking"),
-            "explanations": explanations,
-        }
+    def _loop(self, role, call, budget, inputs, tools, output_schema, system_prompt, bound):
+        from jsonschema import Draft202012Validator
+        from jsonschema.exceptions import best_match
+
+        surface = self._registry.surface_for(role)
+        offered = {s.name: s for s in surface.list_tools() if s.name in tools}
+        outside = sorted(set(tools) - set(offered))
+        if outside:
+            raise PermissionError(f"role '{role.value}' has no tool(s) {outside}")
+        schemas = [_tool_schema(spec, bound) for spec in offered.values()]
+        messages: list[dict] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(inputs, ensure_ascii=False, default=str)},
+        ]
+        for _ in range(budget.max_turns):
+            turn = self._provider.respond(role, messages, schemas, output_schema)
+            call.tokens_used += turn.tokens
+            call.cost_usd += turn.cost_usd
+            if call.tokens_used > budget.max_tokens:
+                raise AgentBudgetExceeded(f"{call.tokens_used} tokens exceeds max_tokens={budget.max_tokens}")
+            if call.cost_usd > budget.max_cost_usd:
+                raise AgentBudgetExceeded(f"${call.cost_usd:.4f} exceeds max_cost_usd={budget.max_cost_usd}")
+            if not turn.tool_calls:
+                error = best_match(Draft202012Validator(output_schema).iter_errors(turn.answer))
+                if error is not None:
+                    raise AgentAnswerInvalid(f"final answer breaks its schema: {error.message[:200]}")
+                return turn.answer
+            messages.append({"role": "assistant", "content": None, "tool_calls": [
+                {"id": c.id, "type": "function",
+                 "function": {"name": c.name, "arguments": json.dumps(c.arguments, ensure_ascii=False)}}
+                for c in turn.tool_calls]})
+            for c in turn.tool_calls:
+                call.tools_used.append(c.name)
+                messages.append({"role": "tool", "tool_call_id": c.id,
+                                 "content": self._dispatch(surface, offered, c, bound)})
+        raise AgentBudgetExceeded(f"no final answer within max_turns={budget.max_turns} for role '{role.value}'")
+
+    def _dispatch(self, surface: "ToolSurface", offered: dict, c: ToolCall, bound: dict) -> str:
+        """Run one call and return what the model sees. A tool the call did not
+        offer, or one that fails, comes back as an error the model can read --
+        it is never run, and it does not end the loop."""
+        if c.name not in offered:
+            return json.dumps({"error": f"no tool named {c.name!r} on this call"})
+        fn = self._registry.get(c.name)
+        accepted = inspect.signature(fn).parameters
+        # Bound artifacts win over anything the model sent under the same name.
+        kwargs = {**c.arguments, **{k: v for k, v in bound.items() if k in accepted}}
+        try:
+            result = surface.call(c.name, **kwargs)
+        except Exception as e:
+            return json.dumps({"error": f"{type(e).__name__}: {e}"})
+        text = json.dumps(result, ensure_ascii=False, default=str)
+        if len(text) > MAX_TOOL_RESULT_CHARS:
+            text = text[:MAX_TOOL_RESULT_CHARS] + f"... [truncated at {MAX_TOOL_RESULT_CHARS} chars]"
+        return text
+
+
+def _tool_schema(spec: ToolSpec, bound: dict) -> dict:
+    """The chat-tools declaration of one tool, without the parameters the
+    runtime binds: the model is not asked for what it may not choose."""
+    properties = {k: v for k, v in spec.parameters.items() if k not in bound}
+    return {"type": "function", "function": {
+        "name": spec.name, "description": spec.description,
+        "parameters": {"type": "object", "properties": properties}}}
 
 
 # ── Default tool set ────────────────────────────────────────────

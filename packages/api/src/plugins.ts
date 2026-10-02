@@ -56,6 +56,26 @@ export async function resolveTenant(token: string): Promise<string | null> {
   return null;
 }
 
+/** A reviewer's name: it becomes the op actor `user:<name>`, which
+ * overrides/1 caps at 64 characters. */
+export const REVIEWER_NAME = /^[a-z0-9][a-z0-9._-]{0,47}$/;
+
+/** Maps a bearer token to a reviewer of one tenant, from
+ * PUBLISHER_REVIEWER_TOKENS: `<argon2id hash>:<tenant>:<reviewer>` entries,
+ * `;`-separated like PUBLISHER_API_TOKENS (an argon2id PHC string has no `:`).
+ * An entry whose reviewer name is malformed is skipped, never trusted. */
+export async function resolveReviewer(
+  token: string
+): Promise<{ tenantId: string; reviewer: string } | null> {
+  const configured = process.env.PUBLISHER_REVIEWER_TOKENS ?? '';
+  for (const entry of configured.split(';')) {
+    const [hash, tenant, reviewer] = entry.split(':').map((part) => part?.trim());
+    if (!hash || !tenant || !reviewer || !REVIEWER_NAME.test(reviewer)) continue;
+    if (await verifyHash(hash, token)) return { tenantId: tenant, reviewer };
+  }
+  return null;
+}
+
 export async function registerAuthAndSecurity(server: FastifyInstance): Promise<void> {
   // ── Auth / tenancy ─────────────────────────────────────────
   server.addHook('onRequest', async (request, reply) => {
@@ -86,22 +106,33 @@ export async function registerAuthAndSecurity(server: FastifyInstance): Promise<
       // credentials). Distinguishing the two is the point of L12/T3: an
       // admin route reached with a tenant token must not look like "no
       // token was even tried".
-      if (token && (await resolveTenant(token))) {
+      if (token && ((await resolveTenant(token)) || (await resolveReviewer(token)))) {
         return reply.code(403).send({ error: 'admin token required' });
       }
       return reply.code(401).send({ error: token ? 'invalid admin token' : 'missing bearer token' });
     }
 
-    // auth === 'tenant'
+    // auth === 'tenant' | 'review'
     if (!token) {
       return reply.code(401).send({ error: 'missing bearer token' });
     }
     const tenant = await resolveTenant(token);
-    if (!tenant) {
+    if (tenant) {
+      request.tenantId = tenant;
+      request.principal = { kind: 'tenant', tenantId: tenant };
+      return;
+    }
+    const reviewer = await resolveReviewer(token);
+    if (!reviewer) {
       return reply.code(401).send({ error: 'invalid token' });
     }
-    request.tenantId = tenant;
-    request.principal = { kind: 'tenant', tenantId: tenant };
+    // A reviewer is authenticated, but only for the review zone: 403 on the
+    // rest, as an admin route answers a tenant token.
+    if (auth !== 'review') {
+      return reply.code(403).send({ error: 'a reviewer token reaches review routes only' });
+    }
+    request.tenantId = reviewer.tenantId;
+    request.principal = { kind: 'reviewer', ...reviewer };
   });
 
   // ── Idempotency-Key (U5/S3: reserve BEFORE the handler) ────
@@ -123,7 +154,7 @@ export async function registerAuthAndSecurity(server: FastifyInstance): Promise<
     // on -- a public or admin mutation (none exist today) would otherwise
     // hit a NOT NULL violation on idempotency_keys.tenant_id.
     const auth: AuthRequirement = request.routeOptions?.config?.auth ?? 'tenant';
-    if (auth !== 'tenant') return;
+    if (auth !== 'tenant' && auth !== 'review') return;
 
     const key = request.headers['idempotency-key'];
     if (typeof key !== 'string' || !key) {

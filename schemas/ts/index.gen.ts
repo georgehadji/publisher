@@ -477,6 +477,22 @@ export const FootnoteSchema = z.object({
 });
 export type Footnote = z.infer<typeof FootnoteSchema>;
 
+export const Endnote_TypeSchema: z.ZodTypeAny = z.enum(["endnote"]);
+export type Endnote_Type = z.infer<typeof Endnote_TypeSchema>;
+
+export const Endnote_AttrsSchema: z.ZodTypeAny = z.object({
+  "number": z.number().int().min(1).optional(),
+});
+export type Endnote_Attrs = z.infer<typeof Endnote_AttrsSchema>;
+
+export const EndnoteSchema = z.object({
+  "type": z.lazy(() => Endnote_TypeSchema),
+  "attrs": z.lazy(() => Endnote_AttrsSchema).optional(),
+  "content": z.array(z.lazy(() => InlineNodeSchema)).min(1),
+  "sourceRef": SourceRefLinkSchema.optional(),
+});
+export type Endnote = z.infer<typeof EndnoteSchema>;
+
 export const Epigraph_TypeSchema: z.ZodTypeAny = z.enum(["epigraph"]);
 export type Epigraph_Type = z.infer<typeof Epigraph_TypeSchema>;
 
@@ -589,7 +605,7 @@ export const PageBreakSchema = z.object({
 });
 export type PageBreak = z.infer<typeof PageBreakSchema>;
 
-export const BlockNodeSchema: z.ZodTypeAny = z.union([ParagraphSchema, HeadingSchema, BlockquoteSchema, VerseSchema, ListSchema, TableSchema, FigureSchema, FootnoteSchema, EpigraphSchema, SceneBreakSchema, DialogueSchema, SidebarSchema, CodeSchema, EquationSchema, PageBreakSchema]);
+export const BlockNodeSchema: z.ZodTypeAny = z.union([ParagraphSchema, HeadingSchema, BlockquoteSchema, VerseSchema, ListSchema, TableSchema, FigureSchema, FootnoteSchema, EndnoteSchema, EpigraphSchema, SceneBreakSchema, DialogueSchema, SidebarSchema, CodeSchema, EquationSchema, PageBreakSchema]);
 export type BlockNode = z.infer<typeof BlockNodeSchema>;
 
 export const ChapterSchema = z.object({
@@ -628,7 +644,7 @@ export const OverrideOp_SourceRefSchema: z.ZodTypeAny = z.object({
 });
 export type OverrideOp_SourceRef = z.infer<typeof OverrideOp_SourceRefSchema>;
 
-export const OverrideOp_OpSchema: z.ZodTypeAny = z.enum(["reclassify", "split", "merge", "promote", "demote", "delete", "insert", "retitle", "rename", "set_attr", "flag_ambiguity", "resolve_ambiguity"]);
+export const OverrideOp_OpSchema: z.ZodTypeAny = z.enum(["reclassify", "split", "merge", "promote", "demote", "delete", "insert", "retitle", "set_attr", "flag_ambiguity", "resolve_ambiguity"]);
 export type OverrideOp_Op = z.infer<typeof OverrideOp_OpSchema>;
 
 export const OverrideOpSchema = z.object({
@@ -1170,6 +1186,17 @@ export const OutputProfile_DeliverySpecSchema: z.ZodTypeAny = z.object({
 });
 export type OutputProfile_DeliverySpec = z.infer<typeof OutputProfile_DeliverySpecSchema>;
 
+export const OutputProfile_BindingSpec_MinInsideMarginMmItemSchema: z.ZodTypeAny = z.object({
+  "maxPages": z.number().int().min(1),
+  "mm": z.number().min(0).max(60),
+});
+export type OutputProfile_BindingSpec_MinInsideMarginMmItem = z.infer<typeof OutputProfile_BindingSpec_MinInsideMarginMmItemSchema>;
+
+export const OutputProfile_BindingSpecSchema: z.ZodTypeAny = z.object({
+  "minInsideMarginMm": z.array(z.lazy(() => OutputProfile_BindingSpec_MinInsideMarginMmItemSchema)).min(1).optional(),
+});
+export type OutputProfile_BindingSpec = z.infer<typeof OutputProfile_BindingSpecSchema>;
+
 export const OutputProfile_CompositionSchema: z.ZodTypeAny = z.object({
   "maxOrphanPages": z.number().int().min(0).optional(),
 });
@@ -1189,6 +1216,7 @@ export const OutputProfileSchema = z.object({
   "minPages": z.number().int().min(1).optional(),
   "maxPages": z.number().int().min(1).optional(),
   "pageSizeMultiple": z.number().int().min(1).optional(),
+  "bindingSpec": z.lazy(() => OutputProfile_BindingSpecSchema).optional(),
   "composition": z.lazy(() => OutputProfile_CompositionSchema).optional(),
   "validatedAt": z.string().datetime().optional(),
 });

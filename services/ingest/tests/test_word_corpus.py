@@ -144,10 +144,13 @@ def test_content_control_text_is_kept(novel):
 
 
 def test_footnotes_and_endnotes_both_become_notes(novel, technical):
-    notes = _text(_nodes(novel, "footnote") + _nodes(technical, "footnote"))
-    assert "The postmark was illegible" in notes
-    assert "Η σημείωση αυτή βρίσκεται" in notes      # an endnote
-    assert "linear wave theory of Airy" in notes      # an endnote
+    footnotes = _text(_nodes(novel, "footnote") + _nodes(technical, "footnote"))
+    endnotes = _text(_nodes(novel, "endnote") + _nodes(technical, "endnote"))
+    assert "The postmark was illegible" in footnotes
+    # Endnotes stay endnotes (W9): printed at the chapter's end, not the page foot.
+    assert "Η σημείωση αυτή βρίσκεται" in endnotes
+    assert "linear wave theory of Airy" in endnotes
+    assert "Η σημείωση αυτή βρίσκεται" not in footnotes
 
 
 def test_a_non_breaking_hyphen_is_kept_and_a_soft_hyphen_is_not_text(novel):

@@ -43,6 +43,16 @@ class Diagnostic:
     suggested_fix: Optional[str] = None
     source_ref: Optional[str] = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """The wire form: build_stages.diagnostics, the cache index, the API."""
+        return {"code": self.code, "severity": self.severity, "message": self.human_message,
+                "suggestedFix": self.suggested_fix, "sourceRef": self.source_ref}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Diagnostic":
+        return cls(code=d["code"], severity=d["severity"], human_message=d["message"],
+                   suggested_fix=d.get("suggestedFix"), source_ref=d.get("sourceRef"))
+
 
 @dataclass(frozen=True)
 class StageError(Exception):
@@ -163,6 +173,12 @@ class StageDeclaration:
     # both name that step here. Without it, two producers of one schema make the
     # derived DAG (§2.8.1) pick whichever ran first — a silent, nondeterministic edge.
     implements: Optional[str] = None
+    # W7: what a stage's output depends on beyond its declared inputs, as a
+    # function of those inputs returning a string the cache key includes --
+    # e.g. `paginate`'s fonts: the CSS names a family, the bytes come from the
+    # worker's disk, and a changed font file must not be served a cached PDF.
+    # Declared by the stage (which may import services); platform calls it blind.
+    cache_salt: Optional[Callable[[dict], str]] = field(default=None, repr=False, compare=False)
     placement: str = "on-demand"  # "arm-spot" | "on-demand" | "external" (F4.3)
     memory_budget_mb: int = 256
     # E2.2: consumed by the executor's deadline_mw as
@@ -653,6 +669,7 @@ def stage(
     terminal: bool = False,
     terminal_outputs: Optional[list[str]] = None,
     implements: Optional[str] = None,
+    cache_salt: Optional[Callable[[dict], str]] = None,
     placement: str = "on-demand",
     memory_budget_mb: int = 256,
     timeout_s: int = 300,
@@ -686,6 +703,7 @@ def stage(
             terminal=terminal,
             terminal_outputs=terminal_outputs,
             implements=implements,
+            cache_salt=cache_salt,
             placement=placement,
             memory_budget_mb=memory_budget_mb,
             timeout_s=timeout_s,

@@ -21,9 +21,8 @@ from publisher_exec import DagExecutor
 from publisher_stages import StageError, RegistryConfig, RenderEngine, build_registry
 
 
-def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9",
-                      designspec: str | None = None):
-    """Run the full tracer bullet pipeline.
+def _harness(manuscript: str | None, profile: str, designspec: str | None):
+    """The executor and root inputs for one local build.
 
     `manuscript` is a path to an `ast/1` JSON document; it defaults to the
     synthetic corpus. A `.docx` (or legacy `.doc`) path runs the real `ingest`
@@ -59,11 +58,6 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
         render_engine=engine, ingest_impl="ingest" if is_word else "acquire"))
     executor = DagExecutor(registry, allow_stub_engines=True)
 
-    print("=" * 60)
-    print("  PUBLISHER -- TRACER BULLET")
-    print("=" * 60)
-    print()
-
     # Root inputs are keyed by STAGE NAME (the executor resolves
     # initial_inputs.get(decl.name)); "finish" is a step whose selected
     # implementation is `finish-gs`, not the bare step name -- keying by
@@ -87,9 +81,23 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
         # the TrimBox by the same amount, preflight measures the result. Give two
         # of them different profiles and the third will correctly fail the build.
         design_stage: {"designspec_path": designspec, "profile_name": profile},
+        # The EPUB embeds the same design's faces (where their licence allows).
+        "epub": {"designspec_path": designspec},
         finish_stage: {"profile_name": profile},
         "preflight": {"profile_name": profile},
     }
+    return executor, initial_inputs
+
+
+def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9",
+                      designspec: str | None = None):
+    """Run the full tracer bullet pipeline (arguments: see `_harness`)."""
+    executor, initial_inputs = _harness(manuscript, profile, designspec)
+
+    print("=" * 60)
+    print("  PUBLISHER -- TRACER BULLET")
+    print("=" * 60)
+    print()
 
     try:
         results = executor.execute(
@@ -117,7 +125,58 @@ def run_tracer_bullet(manuscript: str | None = None, profile: str = "Generic 6x9
         return 1
 
 
+def run_reproducibility(manuscripts: list[str] | None = None,
+                        profile: str = "Generic 6x9") -> int:
+    """The nightly reproducibility check (W10): each manuscript is built cold,
+    cold again in a separate store, and from the first build's cache. Every
+    artifact must have the same bytes in all three, and the cached build must
+    run nothing.
+
+    A build that stops (as `finish-gs` does on Ghostscript 10.07.1) stops at the
+    same stage every run; what ran before it is still compared, and the stop is
+    reported as a warning -- a failing stage is the test suite's to catch.
+    """
+    import tempfile
+    from pathlib import Path
+    from publisher_reproducibility import ReproducibilityReport, compare_runs
+
+    corpus = manuscripts or sorted(str(p) for p in Path("corpus/manuscripts").glob("*.ast.json"))
+    results: list[dict] = []
+    for manuscript in corpus:
+        label = Path(manuscript).name
+        executor, initial_inputs = _harness(manuscript, profile, None)
+        runs: dict[str, dict] = {}
+        # ignore_cleanup_errors: on Windows the cache index (sqlite) is still open.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as first, \
+                tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as second:
+            for name, root in (("cold", first), ("cold-again", second), ("cached", first)):
+                done: dict = {}
+                try:
+                    executor.execute(
+                        build_id="reproducibility", initial_inputs=initial_inputs, cas_root=root,
+                        on_stage_complete=lambda stage, _decl, result, _ms, done=done:
+                            done.__setitem__(stage, result))
+                except StageError as e:
+                    results.append({"check": f"{label}: {name} build", "status": "warn",
+                                    "message": f"stopped: [{e.kind}] {e.message[:160]}"})
+                runs[name] = {stage: {a.kind: a.hash for a in r.artifacts}
+                              for stage, r in done.items()}
+                if name == "cached":
+                    reran = sorted(stage for stage, r in done.items() if not r.cache_hit)
+                    results.append({"check": f"{label}: cached build replays",
+                                    "status": "fail" if reran else "pass",
+                                    "message": f"re-ran {reran}" if reran
+                                    else f"{len(done)} stage(s) served from the cache"})
+        results.extend({**r, "check": f"{label}: {r['check']}"} for r in compare_runs(runs))
+
+    report = ReproducibilityReport(datetime.now(timezone.utc).isoformat(), results)
+    report.print_report()
+    return 0 if report.passed else 1
+
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--reproducibility"]:
+        sys.exit(run_reproducibility(sys.argv[2:] or None))
     sys.exit(run_tracer_bullet(
         sys.argv[1] if len(sys.argv) > 1 else None,
         sys.argv[2] if len(sys.argv) > 2 else "Generic 6x9",

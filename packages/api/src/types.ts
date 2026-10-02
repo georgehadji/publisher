@@ -8,10 +8,19 @@
  * `auth` a type-checked field of every route's options object AND of
  * `request.routeOptions.config`, everywhere, with no per-file import needed.
  */
-export type AuthRequirement = 'tenant' | 'admin' | 'public';
+export type AuthRequirement = 'tenant' | 'review' | 'admin' | 'public';
 
+/**
+ * `reviewer` (W2, docs/WIRING_PLAN.md): one person reviewing one tenant's
+ * books. A reviewer token reaches only the `review` zone -- the structure
+ * view, the override log, whoami -- never uploads, builds or webhooks, and the
+ * ops it writes are attributed to `user:<reviewer>`, never to whatever actor
+ * the request body names. A `tenant` token reaches `review` routes too: it is
+ * the service identity (agents, scripts), which names its own actor.
+ */
 export type Principal =
   | { kind: 'tenant'; tenantId: string }
+  | { kind: 'reviewer'; tenantId: string; reviewer: string }
   | { kind: 'admin' }
   | { kind: 'public' };
 

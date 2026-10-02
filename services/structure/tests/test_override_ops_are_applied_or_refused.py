@@ -1,11 +1,13 @@
 """
 An override the layer cannot apply must fail the build, not vanish.
 
-`schemas/overrides/overrides.schema.json` declares twelve ops; four have
+`schemas/overrides/overrides.schema.json` once declared twelve ops and four had
 transforms. The other eight used to hit a bare `continue` under a comment
 naming two of them, so a schema-valid, API-accepted override was discarded with
 no error, no diagnostic and no metric -- the effective document silently
-disagreed with the decision a reviewer had been told was recorded.
+disagreed with the decision a reviewer had been told was recorded. Every op the
+schema declares is implemented now (docs/WIRING_PLAN.md W1); these tests keep a
+new one from arriving without a transform or a refusal.
 """
 
 from __future__ import annotations
@@ -27,13 +29,12 @@ SCHEMA = Path(__file__).resolve().parents[3] / "schemas/overrides/overrides.sche
 # Same node shape the rest of test_overrides.py uses: the AST carries
 # `sourceRef` as {"docxId": ...}, the op carries the bare id.
 AST = {
-    "type": "chapter",
-    "content": [
+    "body": [
         {
-            "type": "heading",
+            "type": "chapter",
             "sourceRef": {"docxId": "p1"},
-            "attrs": {"title": "One"},
-            "content": [{"type": "text", "text": "One"}],
+            "attrs": {"number": 1, "id": "ch1", "title": "One"},
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": "One"}]}],
         }
     ],
 }
@@ -61,8 +62,8 @@ def test_implemented_ops_still_apply():
     out = apply_overrides(AST, [
         OverrideOp(id="ov-1", sourceRef="p1", op="retitle", actor="tester", value="Two"),
     ])
-    assert out["content"][0]["attrs"]["title"] == "Two"
-    assert AST["content"][0]["attrs"]["title"] == "One", "input AST must not be mutated"
+    assert out["body"][0]["attrs"]["title"] == "Two"
+    assert AST["body"][0]["attrs"]["title"] == "One", "input AST must not be mutated"
 
 
 def test_no_overrides_is_not_an_error():

@@ -12,7 +12,7 @@ from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 
 from publisher_prepress.preflight import PREFLIGHT_TIMEOUT_S, run_preflight
-from publisher_prepress.geometry import spine_width, cover_dimensions, TrimSize, BleedBox
+from publisher_prepress.geometry import DEFAULT_PAGE_THICKNESS_MM, spine_width, cover_dimensions, TrimSize, BleedBox
 from publisher_prepress.ghostscript import FINISH_TIMEOUT_S, GhostscriptError, find_binary, press_and_proof
 from publisher_sandbox import sandbox_for
 from profiles import resolve_profile
@@ -33,7 +33,7 @@ def _deterministic_timestamp(ctx: StageCtx) -> str:
 
 @stage(
     name="preflight",
-    version=15,  # v15: image resolution measured (pdfimages -list): warns on pages below minImageDpi. v14: transparency check (PDF/X-1a and X-3 forbid soft masks, alpha, blend modes, transparency groups). v13: requirements read from the validated, default-filled profile; one the profile does not state is skipped, not assumed. v12: ink-coverage and rich-black-text checks (two Ghostscript renders; deadline PREFLIGHT_TIMEOUT_S). v11: interactive-content check (JavaScript, forms, annotations). v10: module-level bump (finish-gs v12). v9: a failing verdict carries its report (StageError.artifacts) and warnings print. v8: module-level bump (finish-gs v10). v7: consumes pagemap/1 and gates on composition (widows/orphans/
+    version=16,  # v16: inside-margin check (bindingSpec bands, measured with pdftotext -bbox). v15: image resolution measured (pdfimages -list): warns on pages below minImageDpi. v14: transparency check (PDF/X-1a and X-3 forbid soft masks, alpha, blend modes, transparency groups). v13: requirements read from the validated, default-filled profile; one the profile does not state is skipped, not assumed. v12: ink-coverage and rich-black-text checks (two Ghostscript renders; deadline PREFLIGHT_TIMEOUT_S). v11: interactive-content check (JavaScript, forms, annotations). v10: module-level bump (finish-gs v12). v9: a failing verdict carries its report (StageError.artifacts) and warnings print. v8: module-level bump (finish-gs v10). v7: consumes pagemap/1 and gates on composition (widows/orphans/
                  # runts) -- see preflight.check_composition. v6: module-level bump --
                  # same file as cover/finish-gs (U6); v5 fixed the page count
                  # for every Ghostscript-produced file (see preflight._PAGE_RE).
@@ -146,7 +146,7 @@ def preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str = "",
 
 @stage(
     name="cover",
-    version=12,   # v12: module-level bump (preflight v15). v11: module-level bump (preflight v14). v10: module-level bump (preflight v13); trim, bleed and page thickness from the profile. v9: module-level bump (preflight v12). v8: module-level bump (preflight v11). v7: module-level bump (finish-gs v12). v6: module-level bump (preflight v9). v5: module-level bump (finish-gs v10). v4: module-level bump -- same file as preflight (U6). v3: page_count input schema "integer" -> "page-count/1"; v2 dropped the
+    version=13,   # v13: warns when the spine uses the default caliper (the profile states none). v12: module-level bump (preflight v15). v11: module-level bump (preflight v14). v10: module-level bump (preflight v13); trim, bleed and page thickness from the profile. v9: module-level bump (preflight v12). v8: module-level bump (preflight v11). v7: module-level bump (finish-gs v12). v6: module-level bump (preflight v9). v5: module-level bump (finish-gs v10). v4: module-level bump -- same file as preflight (U6). v3: page_count input schema "integer" -> "page-count/1"; v2 dropped the
                  # cover_art root input (art generation is the separate cover-brief/cover-art/
                  # cover-judge fan-out in stages/cover_stages.py -- see COVER_DESIGN.md §0/§1).
     # "profile" -> "profile_name" to match this function's actual parameter name;
@@ -176,7 +176,13 @@ def cover_stage(ctx: StageCtx, page_count: int = 0, profile_name: str = "") -> S
     profile = resolve_profile(profile_name)
     trim = TrimSize(width=profile["trimSize"]["width"], height=profile["trimSize"]["height"])
     bleed = BleedBox.uniform(profile["bleed"]["all"])
-    spine = spine_width(page_count, profile["coverSpec"]["pageThicknessMm"])
+    stated = profile["coverSpec"].get("pageThicknessMm")
+    spine = spine_width(page_count, stated or DEFAULT_PAGE_THICKNESS_MM)
+    warnings = [] if stated else [Diagnostic(
+        code="spine-caliper-default", severity="warning",
+        human_message=f"Spine width {spine} mm uses a default caliper of {DEFAULT_PAGE_THICKNESS_MM} mm "
+                      f"a page: profile {profile['name']!r} states no coverSpec.pageThicknessMm",
+        suggested_fix="Check the spine against the vendor's own spine calculator before ordering.")]
     cover_w, cover_h = cover_dimensions(trim, spine, bleed)
 
     cover_geom = {
@@ -209,12 +215,13 @@ def cover_stage(ctx: StageCtx, page_count: int = 0, profile_name: str = "") -> S
             "cover_width_mm": round(cover_w, 2),
             "cover_height_mm": round(cover_h, 2),
         },
+        warnings=warnings,
     )
 
 
 @stage(
     name="cover-preflight",
-    version=11,   # v11: module-level bump (preflight v15). v10: module-level bump (preflight v14); runs the transparency check too. v9: module-level bump (preflight v13). v8: module-level bump (preflight v12); runs the ink checks too. v7: module-level bump (preflight v11); runs interactive-content too. v6: module-level bump (finish-gs v12). v5: module-level bump (preflight v9). v4: module-level bump (finish-gs v10). v3: module-level bump -- same file as preflight (U6); v2 likewise
+    version=12,   # v12: module-level bump (preflight v16). v11: module-level bump (preflight v15). v10: module-level bump (preflight v14); runs the transparency check too. v9: module-level bump (preflight v13). v8: module-level bump (preflight v12); runs the ink checks too. v7: module-level bump (preflight v11); runs interactive-content too. v6: module-level bump (finish-gs v12). v5: module-level bump (preflight v9). v4: module-level bump (finish-gs v10). v3: module-level bump -- same file as preflight (U6); v2 likewise
     inputs={"pdf_path": "cover-raw-pdf/1", "profile_name": "profile/1"},
     root_inputs=["profile_name"],   # vendor profile is loaded from profiles/, not produced
     # Distinct output kind from `preflight`'s -- both stages emit content that
@@ -281,7 +288,7 @@ def cover_preflight_stage(ctx: StageCtx, pdf_path: str = "", profile_name: str =
 
 @stage(
     name="finish-gs",
-    version=17,  # v17: module-level bump (preflight v15). v16: module-level bump (preflight v14). v15: module-level bump (preflight v13); press + proof via ghostscript.press_and_proof. v14: module-level bump (preflight v12); v13: module-level bump (preflight v11); v12: deadline FINISH_TIMEOUT_S (two Ghostscript passes, each GS_TIMEOUT_S); v11: module-level bump (preflight v9); v10: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline; v9: module-level bump -- same file as preflight (U6); v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
+    version=18,  # v18: module-level bump (preflight v16); press and proof byte-reproducible (ghostscript._pin_identity, W10). v17: module-level bump (preflight v15). v16: module-level bump (preflight v14). v15: module-level bump (preflight v13); press + proof via ghostscript.press_and_proof. v14: module-level bump (preflight v12); v13: module-level bump (preflight v11); v12: deadline FINISH_TIMEOUT_S (two Ghostscript passes, each GS_TIMEOUT_S); v11: module-level bump (preflight v9); v10: to_pdfx refuses a press file that lost its text (rasterized pages), drops link annotations PDF/X forbids; 2400 s deadline; v9: module-level bump -- same file as preflight (U6); v8: produce proof-pdf/1 (D3 fix); v7 = report declared a terminal output (U6); v6 = TrimBox/bleed change
     implements="finish",   # alternative impl of one step; see StageDeclaration.implements
     # "pdf" -> "pdf_path", "profile" -> "profile_name": see the note on preflight
     # above for why the input dict's KEYS must exactly match this function's

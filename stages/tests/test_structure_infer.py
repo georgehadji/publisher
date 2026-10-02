@@ -1,7 +1,7 @@
 """
 `structure-infer` (E6.2, docs/ARCHITECTURE_SCORE_10_PLAN.md) -- guarded
-reachability and the stage's own plumbing (HTML -> low-confidence blocks ->
-InferenceGateway -> classification/1 CAS artifact).
+reachability and the stage's own plumbing (AST -> the chapters ingest was
+unsure of, by docxId -> InferenceGateway -> classification/1 CAS artifact).
 
 Does NOT make a real OpenRouter call: `test_structure_infer_writes_a_
 classification_artifact` monkeypatches OpenRouterProvider with a fake that
@@ -28,10 +28,31 @@ import stages.structure_infer_stage as structure_infer_stage
 from publisher_structure.inference import InferenceRequest, InferenceResult, ModelTier, RouteConfig
 
 
-SAMPLE_HTML = (
-    '<p class="paragraph">CHAPTER ONE</p>'
-    '<p class="paragraph">An ordinary sentence with nothing distinctive about it.</p>'
-)
+def _chapter(n: int, title: str, confidence=None, docx_id=None) -> dict:
+    node = {"type": "chapter", "attrs": {"number": n, "id": f"ch{n}", "title": title},
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": f"Prose of {title}."}]}]}
+    if confidence is not None:
+        node["confidence"] = confidence
+    if docx_id:
+        node["sourceRef"] = {"docxId": docx_id}
+    return node
+
+
+SAMPLE_AST = {"schema": "ast/1", "body": [
+    _chapter(1, "CHAPTER ONE", 0.95, "c1"),
+    _chapter(2, "NO!", 0.7, "c2"),                       # doubtful: sent
+    {"type": "part", "attrs": {"title": "II", "id": "p2"}, "content": [
+        _chapter(3, "WHY", 0.6, "c3")]},                  # inside a part: sent
+    _chapter(4, "Unscored"),                             # not measured: not sent
+    _chapter(5, "No id", 0.5),                           # nothing could target it
+]}
+
+
+def _write_ast(tmp_dir: Path, ast: dict = SAMPLE_AST) -> str:
+    import json
+    path = tmp_dir / "ast.json"
+    path.write_text(json.dumps(ast), encoding="utf-8")
+    return str(path)
 
 
 def _ctx(tmp_dir: Path) -> StageCtx:
@@ -101,8 +122,8 @@ def test_structure_infer_is_unreachable_without_credentials():
 
 
 def test_structure_infer_is_reachable_once_a_key_is_supplied():
-    """Supplying the root input -- and ONLY the root input; typescript-html/1
-    is produced by `extract`, itself reachable given no other roots -- is
+    """Supplying the root input -- and ONLY the root input; ast/1 is produced
+    by `ast-assemble`, itself reachable from the ingested manuscript -- is
     what flips reachability. Worker.py does this precisely when
     OPENROUTER_API_KEY is configured."""
     # `extract` needs `ingest` reachable first (raw-source/1), which needs
@@ -116,13 +137,13 @@ def test_structure_infer_is_reachable_once_a_key_is_supplied():
     # Its declared non-root input's producer must also be reachable, or this
     # assertion would be vacuous -- confirms the fixpoint pulled in the
     # dependency, not just the stage that happened to have a root input.
-    assert "extract" in reachable
+    assert "ast-assemble" in reachable
 
 
-def test_structure_infer_requires_html():
+def test_structure_infer_requires_an_ast():
     with tempfile.TemporaryDirectory() as td:
         with pytest.raises(StageError) as exc_info:
-            structure_infer(_ctx(Path(td)), html=None, api_key="sk-test-fake")
+            structure_infer(_ctx(Path(td)), ast=None, api_key="sk-test-fake")
         assert exc_info.value.kind == ErrorKind.BAD_INPUT
 
 
@@ -132,10 +153,8 @@ def test_structure_infer_rejects_empty_api_key():
     keys on presence of the dict key, not truthiness of the value."""
     with tempfile.TemporaryDirectory() as td:
         tmp_dir = Path(td)
-        html_path = tmp_dir / "extract.html"
-        html_path.write_text(SAMPLE_HTML, encoding="utf-8")
         with pytest.raises(StageError) as exc_info:
-            structure_infer(_ctx(tmp_dir), html=str(html_path), api_key="")
+            structure_infer(_ctx(tmp_dir), ast=_write_ast(tmp_dir), api_key="")
         assert exc_info.value.kind == ErrorKind.BAD_INPUT
 
 
@@ -145,10 +164,7 @@ def test_structure_infer_writes_a_classification_artifact(monkeypatch):
 
     with tempfile.TemporaryDirectory() as td:
         tmp_dir = Path(td)
-        html_path = tmp_dir / "extract.html"
-        html_path.write_text(SAMPLE_HTML, encoding="utf-8")
-
-        result = structure_infer(_ctx(tmp_dir), html=str(html_path), api_key="sk-test-fake")
+        result = structure_infer(_ctx(tmp_dir), ast=_write_ast(tmp_dir), api_key="sk-test-fake")
 
         assert len(result.artifacts) == 1
         artifact = result.artifacts[0]
@@ -158,3 +174,19 @@ def test_structure_infer_writes_a_classification_artifact(monkeypatch):
         # this test fabricated independently of the code path under test.
         assert len(fake.requests) == 1
         assert fake.requests[0].route == "structure-classify"
+        # Only what ingest was unsure of, by the id an op can target.
+        sent = fake.requests[0].inputs["nodes"]
+        assert [n["sourceRef"] for n in sent] == ["c2", "c3"]
+        assert sent[0]["text"] == "NO!" and sent[0]["context"].startswith("Prose of NO!")
+
+
+def test_nothing_doubtful_means_no_model_is_asked(monkeypatch):
+    def no_call(api_key):
+        raise AssertionError("a provider was built with nothing to classify")
+    monkeypatch.setattr(structure_infer_stage, "OpenRouterProvider", no_call)
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        tmp_dir = Path(td)
+        certain = {"schema": "ast/1", "body": [_chapter(1, "CHAPTER ONE", 0.95, "c1")]}
+        result = structure_infer(_ctx(tmp_dir), ast=_write_ast(tmp_dir, certain), api_key="sk-test-fake")
+        assert result.metrics["low_confidence_nodes"] == 0

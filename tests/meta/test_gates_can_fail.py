@@ -320,6 +320,10 @@ STEP_CLASSIFICATION: dict[str, str | None] = {
     "pip install ${{ env.PUBLISHER_PKGS }} import-linter": None,  # dependency install, not a gate
     "pip install ${{ env.PUBLISHER_PKGS }} psycopg2-binary requests": None,  # ditto
     "Load schema": None,  # CI setup -- no initdb mount for services: postgres
+    # Tool install (W10): a digest mismatch fails it, and "Full test suite" then
+    # refuses a run where the EPUBCheck test skipped for want of the jar.
+    "EPUBCheck 5.4.0, pinned (W10)": None,
+    "DAISY ACE 1.4.6, pinned (W10)": None,  # ditto: tool install, its test is the gate
     "Full test suite": None,  # pytest failing is itself the signal
     "npm ci": None,  # dependency install, not a gate
     "Type-check (tsc --noEmit)": None,  # tsc failing is itself the signal (plan §5.2: "--")
@@ -328,6 +332,7 @@ STEP_CLASSIFICATION: dict[str, str | None] = {
     # tsc above. Shown able to fail by hand (TS2339 on the panel's old read of
     # ChapterReview.id); not a Gate here -- npm ci + next build take minutes.
     "Type-check and build (next build)": None,
+    "Vitest -- review actions vs overrides/1, panel states": None,  # vitest failing is the signal
     "Lint schemas (no free-text in structure routes)": "schema-lint",
     "cargo test": None,
     "cargo clippy -- -D warnings": None,

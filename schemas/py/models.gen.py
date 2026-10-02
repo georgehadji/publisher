@@ -631,6 +631,23 @@ class Footnote(BaseModel):
     sourceRef: Optional[SourceRefLink] = Field(default=None)
 
 
+class Endnote_Type(str, Enum):
+    ENDNOTE = "endnote"
+
+
+class Endnote_Attrs(BaseModel):
+    number: Optional[int] = Field(default=None)
+
+
+class Endnote(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    type_: Endnote_Type = Field(..., alias="type")
+    attrs: Optional[Endnote_Attrs] = Field(default=None)
+    content: list[InlineNode]
+    sourceRef: Optional[SourceRefLink] = Field(default=None)
+
+
 class Epigraph_Type(str, Enum):
     EPIGRAPH = "epigraph"
 
@@ -761,7 +778,7 @@ class PageBreak(BaseModel):
     sourceRef: Optional[SourceRefLink] = Field(default=None)
 
 
-BlockNode = Union[Paragraph, Heading, Blockquote, Verse, List, Table, Figure, Footnote, Epigraph, SceneBreak, Dialogue, Sidebar, Code, Equation, PageBreak]
+BlockNode = Union[Paragraph, Heading, Blockquote, Verse, List, Table, Figure, Footnote, Endnote, Epigraph, SceneBreak, Dialogue, Sidebar, Code, Equation, PageBreak]
 
 
 class Chapter(BaseModel):
@@ -817,7 +834,6 @@ class OverrideOp_Op(str, Enum):
     DELETE = "delete"
     INSERT = "insert"
     RETITLE = "retitle"
-    RENAME = "rename"
     SET_ATTR = "set_attr"
     FLAG_AMBIGUITY = "flag_ambiguity"
     RESOLVE_AMBIGUITY = "resolve_ambiguity"
@@ -1698,6 +1714,15 @@ class OutputProfile_DeliverySpec(BaseModel):
     coverFormat: Optional[list[OutputProfile_DeliverySpec_CoverFormatItem]] = Field(default=None)
 
 
+class OutputProfile_BindingSpec_MinInsideMarginMmItem(BaseModel):
+    maxPages: int
+    mm: float
+
+
+class OutputProfile_BindingSpec(BaseModel):
+    minInsideMarginMm: Optional[list[OutputProfile_BindingSpec_MinInsideMarginMmItem]] = Field(default=None)
+
+
 class OutputProfile_Composition(BaseModel):
     maxOrphanPages: Optional[int] = Field(default=None)
 
@@ -1718,6 +1743,7 @@ class OutputProfile(BaseModel):
     minPages: Optional[int] = Field(default=None)
     maxPages: Optional[int] = Field(default=None)
     pageSizeMultiple: Optional[int] = Field(default=None)
+    bindingSpec: Optional[OutputProfile_BindingSpec] = Field(default=None)
     composition: Optional[OutputProfile_Composition] = Field(default=None)
     validatedAt: Optional[datetime] = Field(default=None)
 

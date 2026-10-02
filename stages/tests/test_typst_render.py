@@ -20,9 +20,12 @@ import pytest
 
 from publisher_stages import StageCtx
 import stages  # noqa: F401 -- registers every stage
+from publisher_prepress.fontvault import locate_font
 from stages.typst_stages import _emit_typst, paginate_typst
 
 HAVE_TOOLCHAIN = bool(shutil.which("pandoc") and shutil.which("typst"))
+# paginate-typst refuses a design face it cannot find on the machine (W8).
+HAVE_FACE = locate_font("GFS Didot") is not None
 
 DOC = {
     "schema": "doc-effective/1",
@@ -48,7 +51,7 @@ DOC = {
 SPEC = {
     "preferredEngine": "typst",
     "trimSize": {"width": 152.4, "height": 228.6, "unit": "mm"},
-    "typography": {"bodyFont": {"family": "Liberation Serif"}, "bodySize": 10.5,
+    "typography": {"bodyFont": {"family": "GFS Didot"}, "bodySize": 10.5,
                    "leading": 14.0, "paragraphIndent": 1.5,
                    "bodyAlignment": "justified"},
     "margins": {"top": 18, "bottom": 20, "inside": 15, "outside": 20},
@@ -101,7 +104,8 @@ def test_typst_selection_keeps_the_dag_clean():
     assert "design-compile-typst" in dag["paginate-typst"]
 
 
-@pytest.mark.skipif(not HAVE_TOOLCHAIN, reason="pandoc and typst are not installed")
+@pytest.mark.skipif(not (HAVE_TOOLCHAIN and HAVE_FACE),
+                    reason="pandoc, typst or the GFS Didot face is not installed")
 def test_renders_a_real_pdf_with_measured_chapter_pages():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)

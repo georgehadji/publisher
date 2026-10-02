@@ -1,0 +1,43 @@
+# Nightly reproducibility (W10): tracer_bullet.py --reproducibility builds each
+# synthetic manuscript cold, cold again in a separate store, and from the cache,
+# and fails if any artifact's bytes differ. Scheduled rather than on push: what
+# it catches is drift from OUTSIDE the repo -- a library, a font, a base image
+# -- which a push of unchanged code never triggers.
+name: nightly
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+env:
+  # Same list as ci.yml's PUBLISHER_PKGS.
+  PUBLISHER_PKGS: >-
+    -e platform/cas/py -e platform/stages/py -e platform/cache/py
+    -e platform/exec/py -e platform/sandbox/py -e platform/reproducibility
+    -e platform/supply-chain
+    -e services/prepress -e services/structure -e services/agents
+    -e services/ingest -e services/cover -e services/idml
+    -e services/epub -e services/onix -e services/alttext
+
+jobs:
+  reproducibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Render toolchain
+        # The real engines, so it is their output that is compared: weasyprint's
+        # Pango stack, Ghostscript, and the house face (paginate refuses to set a
+        # book in a face it cannot find).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangoft2-1.0-0 ghostscript poppler-utils fonts-gfs-didot
+      - name: Python dependencies (the lock, by hash)
+        run: |
+          pip install -r requirements.lock --require-hashes
+          pip install --no-deps ${{ env.PUBLISHER_PKGS }}
+      - name: Cold, cold again, cached -- byte for byte
+        run: python tracer_bullet.py --reproducibility

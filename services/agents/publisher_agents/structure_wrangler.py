@@ -1,127 +1,73 @@
 """
-Structure Wrangler agent — pre-populates the review UI with proposals.
+Structure Wrangler agent -- reviews structure-propose's proposals (W5).
 
 From AGENT_DESIGN.md §1.3:
 Trigger: rules confidence low across the doc
-Tools: query_nodes, sample_text, preview_structure, propose_override
-Action space: OverrideSet ops
-Gate: Human review UI (proposals pre-populate it)
+Tools: query_nodes (read-only)
+Action space: which proposals to show, and in what order -- never a new one
+Gate: Human review UI (a proposal reaches the override log only when accepted)
+
+`structure-propose` makes proposals deterministically from `classification/1`.
+The Wrangler may drop or re-rank them after reading the AST; its answer schema
+lists only the ids it was given, so it cannot add a proposal or change one.
 """
 
 from __future__ import annotations
 
-from .runtime import AgentRuntime, AgentRole, AgentCall, AgentResult, TaskBudget
+from typing import Optional
+
+from .runtime import AgentResult, AgentRole, AgentRuntime, TaskBudget
+
+PROMPT_VERSION = "1.0"
+SYSTEM_PROMPT = """\
+You review proposed structural edits to a book manuscript before a human editor
+sees them. Each proposal names a chapter (by docxId), the edit (merge it into the
+chapter before, make it a section of that chapter, or flag it), and why a
+classifier suggested it. Use query_nodes to read the chapters involved. Answer
+with `keep`: the ids of the proposals worth the editor's time, most useful first.
+Leave out a proposal the text clearly contradicts. You cannot add or change one."""
+
+
+def keep_schema(proposal_ids: list[str]) -> dict:
+    """The answer: a reordered subset of `proposal_ids`, nothing else."""
+    return {
+        "type": "object",
+        "properties": {"keep": {"type": "array", "items": {"type": "string", "enum": proposal_ids},
+                                "uniqueItems": True}},
+        "required": ["keep"],
+        "additionalProperties": False,
+    }
 
 
 class StructureWrangler:
-    """
-    Structure Wrangler agent.
-    
-    Analyzes low-confidence nodes from the rules engine and proposes
-    classifications. Proposals pre-populate the review UI so the human
-    just clicks "accept" instead of making every decision from scratch.
-    
-    Target: ≥ 70% of proposals accepted unedited (BUILD_PLAN.md P4 gate).
-    """
-    
     def __init__(self, runtime: AgentRuntime):
         self._runtime = runtime
         runtime.set_budget(AgentRole.STRUCTURE_WRANGLER, TaskBudget(
             max_tokens=15000,
             max_turns=30,
-            max_subagents=1,
+            max_subagents=0,
             max_cost_usd=0.03,
             effort="medium",
         ))
-    
-    def analyze(
-        self,
-        low_confidence_nodes: list[dict],
-        corpus_context: dict | None = None,
-        agent_version: str = "1.0",
-    ) -> AgentResult:
-        """
-        Analyze low-confidence nodes and propose classifications.
-        
-        Args:
-            low_confidence_nodes: Nodes from rules engine with confidence < 0.8
-            corpus_context: Optional corpus statistics for context
-            agent_version: Agent version string
-            
-        Returns:
-            AgentResult with proposals
-        """
-        return self._runtime.execute(
+
+    def review(self, proposals: list[dict], ast: dict,
+               agent_version: str = PROMPT_VERSION) -> tuple[list[dict], Optional[AgentResult]]:
+        """The proposals to keep, in the Wrangler's order, and the run (None
+        when there was nothing to review). A failed run keeps every proposal
+        unchanged: the review is advisory, and the human gate still sees each one."""
+        if not proposals:
+            return [], None
+        by_id = {p["id"]: p for p in proposals}
+        result = self._runtime.execute(
             role=AgentRole.STRUCTURE_WRANGLER,
             agent_version=agent_version,
-            inputs={
-                "low_confidence_nodes": low_confidence_nodes,
-                "corpus_context": corpus_context or {},
-                "agent_version": agent_version,
-            },
-            tools=["query_nodes", "propose_override"],
+            inputs={"proposals": [{"id": p["id"], "type": p["type"], "docxId": p["sourceRef"]["docxId"],
+                                   "rationale": p["rationale"]} for p in proposals]},
+            tools=["query_nodes"],
+            output_schema=keep_schema(list(by_id)),
+            system_prompt=SYSTEM_PROMPT,
+            bound={"ast": ast},
         )
-    
-    def acceptance_rate(self, results: list[AgentResult]) -> float:
-        """Compute acceptance rate across results."""
-        if not results:
-            return 0.0
-        accepted = sum(1 for r in results if r.accepted)
-        return accepted / len(results)
-
-
-# ── Evaluation helpers ──────────────────────────────────────────
-
-def evaluate_structure_wrangler(
-    wrangler: StructureWrangler,
-    test_cases: list[dict],
-    golden_labels: list[list[str]],
-) -> dict:
-    """
-    Evaluate the Structure Wrangler against labeled test cases.
-    
-    Returns precision, recall, and acceptance-rate metrics.
-    """
-    from publisher_structure.rules import parse_html, classify_blocks, find_low_confidence
-    
-    total_proposals = 0
-    correct_proposals = 0
-    total_accepted = 0
-    
-    for i, case in enumerate(test_cases):
-        html = case.get("html", "")
-        blocks = parse_html(html)
-        low_conf_indices = find_low_confidence(blocks)
-        
-        low_conf_nodes = [
-            {
-                "block_index": idx,
-                "text": blocks[idx].text[:100] if idx < len(blocks) else "",
-                "suggested": "unknown",
-                "confidence": 0.0,
-                "alternatives": ["paragraph", "heading"],
-            }
-            for idx in low_conf_indices
-        ]
-        
-        result = wrangler.analyze(low_conf_nodes)
-        proposals = result.output.get("proposals", [])
-        total_proposals += len(proposals)
-        
-        # Compare against golden labels
-        if i < len(golden_labels):
-            expected = golden_labels[i]
-            for prop in proposals:
-                if prop.get("to") in expected:
-                    correct_proposals += 1
-    
-    precision = correct_proposals / total_proposals if total_proposals > 0 else 0.0
-    recall = correct_proposals / max(len(golden_labels), 1) if golden_labels else 0.0
-    
-    return {
-        "precision": precision,
-        "recall": recall,
-        "total_proposals": total_proposals,
-        "correct_proposals": correct_proposals,
-        "acceptance_rate": 0.0,  # Requires human eval
-    }
+        if result.failed:
+            return proposals, result
+        return [by_id[i] for i in result.output["keep"]], result

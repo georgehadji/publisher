@@ -7,7 +7,8 @@
  * and "not measured" (null) stays distinct from "measured, nothing low" ([]).
  */
 import { describe, expect, it } from 'vitest';
-import { LOW_CONFIDENCE_BELOW, orphanedOps, structureView } from './manuscripts.js';
+import { LOW_CONFIDENCE_BELOW, orphanedOps, pendingProposals, structureView } from './manuscripts.js';
+import { BLOCK_EXCERPT_CHARS } from '../contract.js';
 import type { OverrideOp } from '../contract.js';
 
 const para = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text }] });
@@ -88,6 +89,30 @@ describe('structureView', () => {
     const { lowConfidenceNodes } = structureView({ body: [chapter(1, 'CHAPTER ONE', 0.95)] });
     expect(lowConfidenceNodes).toEqual([]);
   });
+
+  it('lists the chapters inside a part, naming the part', () => {
+    // Only the body's own children were listed, so a book in parts showed none.
+    const { chapters } = structureView({ body: [
+      { type: 'part', attrs: { title: 'Part I', id: 'pt1' }, content: [chapter(1, 'One')] },
+      chapter(2, 'Two'),
+    ] });
+    expect(chapters.map((c) => [c.title, c.part])).toEqual([['One', 'Part I'], ['Two', null]]);
+  });
+
+  it("lists each chapter's blocks: what a split, promote or insert aims at", () => {
+    const heading = { type: 'heading', attrs: { level: 2 }, sourceRef: { docxId: 'h1' },
+                      content: [{ type: 'text', text: 'A  section' }] };
+    const flagged = { ...para('x'.repeat(200)), sourceRef: { docxId: 'p1' },
+                      _flags: [{ id: 'ov-f', message: 'unclear', actor: 'u' }] };
+    const ast = { body: [{ ...chapter(1, 'One'), content: [heading, flagged] }] };
+    const [{ blocks }] = structureView(ast).chapters;
+    expect(blocks).toEqual([
+      { docxId: 'h1', type: 'heading', level: 2, excerpt: 'A section', flags: [] },
+      { docxId: 'p1', type: 'paragraph', level: null, excerpt: 'x'.repeat(BLOCK_EXCERPT_CHARS),
+        flags: ['ov-f'] },
+    ]);
+    expect(orphanedOps(ast, blocks.map((b, i) => op(`ov-${i}`, b.docxId!)))).toEqual([]);
+  });
 });
 
 // ── orphanedOps: decisions that would have no effect ──────────────────────
@@ -116,6 +141,14 @@ describe('orphanedOps', () => {
     expect(orphanedOps(ast, ops)).toEqual([]);
   });
 
+  it('a node only the effective document has (an inserted break) is no orphan', () => {
+    const effective = { body: [{ ...ast.body[0], content: [
+      ...ast.body[0].content, { type: 'sceneBreak', sourceRef: { docxId: 'ins-1' } }] }] };
+    const deleteBreak = op('ov-del', 'ins-1');
+    expect(orphanedOps(ast, [deleteBreak])).toHaveLength(1);
+    expect(orphanedOps([ast, effective], [deleteBreak])).toEqual([]);
+  });
+
   it('reports an op whose target is in no node, as overrides/1 names it', () => {
     const lost = op('ov-lost', 'paragraph:gone');
     expect(orphanedOps(ast, [op('ov-ok', 'chapter:one'), lost]))
@@ -133,5 +166,29 @@ describe('orphanedOps', () => {
   it('keeps log order', () => {
     const ops = [op('ov-b', 'nope-b'), op('ov-a', 'nope-a')];
     expect(orphanedOps(ast, ops).map((o: any) => o.op.id)).toEqual(['ov-b', 'ov-a']);
+  });
+});
+
+describe('pendingProposals', () => {
+  const document = {
+    schema: 'agent-proposal/1',
+    agentId: 'structure-propose',
+    proposals: [
+      { id: 'pr-a', type: 'merge_chapters', sourceRef: { docxId: 'c2' }, rationale: 'prose', confidence: 0.8 },
+      { id: 'pr-b', type: 'flag_ambiguity', sourceRef: { docxId: 'c5' }, rationale: 'odd' },
+      { id: 'pr-c', type: 'suggest_title', sourceRef: { docxId: 'c6' }, rationale: 'no op for it' },
+    ],
+  };
+
+  it('lists each proposal with the op accepting it would log', () => {
+    expect(pendingProposals(document, [])).toEqual([
+      { id: 'pr-a', type: 'merge_chapters', op: 'merge', docxId: 'c2', rationale: 'prose', confidence: 0.8 },
+      { id: 'pr-b', type: 'flag_ambiguity', op: 'flag_ambiguity', docxId: 'c5', rationale: 'odd', confidence: null },
+    ]);
+  });
+
+  it('drops a proposal once its op is in the log', () => {
+    const accepted = op('ov-pr-a', 'c2');
+    expect(pendingProposals(document, [accepted]).map((p) => p.id)).toEqual(['pr-b']);
   });
 });

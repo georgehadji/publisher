@@ -20,6 +20,7 @@ Never one compromise file serving both.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -28,6 +29,7 @@ import sys
 import tempfile
 import threading
 import zlib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -64,6 +66,7 @@ PDFX_DEF_TEMPLATE = """%!
 /ICCProfile ({icc_profile}) def
 
 [ /Title ({title})
+  /CreationDate ({date}) /ModDate ({date})
   /DOCINFO pdfmark
 
 [/_objdef {{icc_PDFX}} /type /stream /OBJ pdfmark
@@ -329,6 +332,43 @@ def _assert_text_kept(input_pdf: Path, output_pdf: Path) -> None:
         )
 
 
+def _pdf_date() -> str:
+    """The Info dates a converted file carries: SOURCE_DATE_EPOCH, or 0 -- the
+    fixed clock the Typst render and the EPUB already use. Left to itself,
+    Ghostscript stamps the wall clock into Info and XMP."""
+    epoch = int(os.environ.get("SOURCE_DATE_EPOCH") or 0)
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("D:%Y%m%d%H%M%SZ")
+
+
+_FILE_ID = re.compile(rb"/ID ?\[ ?<([0-9A-Fa-f]{32})> ?<([0-9A-Fa-f]{32})> ?\]")
+_XMP_UUID = re.compile(rb"uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _pin_identity(pdf: Path) -> None:
+    """Make the file's identity a function of its content (W10).
+
+    The nightly reproducibility check found two builds of one book giving
+    different press files. With the dates pinned (`_pdf_date`), what still
+    differs is the trailer /ID and XMP's DocumentID, both made from the clock.
+    PDF/X requires them, so they are not omitted: each is rewritten from a
+    digest of the rest of the file, at the same length, so no offset moves.
+    """
+    data = pdf.read_bytes()
+    tokens = sorted({t for pair in _FILE_ID.findall(data) for t in pair} |
+                    set(_XMP_UUID.findall(data)), key=data.find)
+    if not tokens:
+        return
+    masked = data
+    for token in tokens:
+        masked = masked.replace(token, b"0" * len(token))
+    for i, token in enumerate(tokens):
+        h = hashlib.sha256(masked + bytes([i])).hexdigest()
+        new = (f"uuid:{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}".encode()
+               if token.startswith(b"uuid:") else h[:32].upper().encode())
+        data = data.replace(token, new)
+    pdf.write_bytes(data)
+
+
 def to_pdfx(
     input_pdf: Path,
     output_pdf: Path,
@@ -390,6 +430,7 @@ def to_pdfx(
             trim_offset=" ".join([f"{bleed_pt:g}"] * 4),
             bleed_offset=" ".join([f"{bleed_pt:g}"] * 4),
             title=_ps_escape(title),
+            date=_pdf_date(),
             output_condition=_ps_escape(output_condition),
             condition_id=_ps_escape(condition_id),
         ),
@@ -433,6 +474,7 @@ def to_pdfx(
         str(pdfx_def),
         str(input_pdf),
     ], sandbox=sandbox, work_dir=work_dir)
+    _pin_identity(output_pdf)
     _assert_no_pdfx_downgrade(gs_output)
     _assert_pdf(output_pdf, "press")
     _assert_pdfx(output_pdf)
@@ -468,8 +510,10 @@ def to_proof(
         f"-dGrayImageResolution={dpi}",
         "-dFastWebView=true",
         f"-sOutputFile={output_pdf}",
-        str(input_pdf),
+        "-c", f"[ /CreationDate ({_pdf_date()}) /ModDate ({_pdf_date()}) /DOCINFO pdfmark",
+        "-f", str(input_pdf),
     ], sandbox=sandbox, work_dir=output_pdf.parent)
+    _pin_identity(output_pdf)
     _assert_pdf(output_pdf, "proof")
 
 

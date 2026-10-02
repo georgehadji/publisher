@@ -47,12 +47,27 @@ def ast_text(ast: dict) -> str:
     between brackets) failed the gate at offset 262 with no text lost at all.
     """
     texts: list[str] = []
+    # Endnotes are printed where their chapter (or front/back-matter section)
+    # ends, not where they are cited (rendering._EndnoteQueue), so their text is
+    # read there too.
+    deferred: list[dict] = []
+
+    def _flush():
+        notes = deferred[:]
+        deferred.clear()
+        for note in notes:
+            texts.append(" ")
+            _walk(note.get("content") or [])
+            texts.append(" ")
 
     def _walk(node):
         if isinstance(node, dict):
             kind = node.get("type")
             if kind == "text":
                 texts.append(node.get("text", ""))
+                return
+            if kind == "endnote":
+                deferred.append(node)
                 return
             block = kind not in INLINE_TYPES
             if block:
@@ -71,6 +86,13 @@ def ast_text(ast: dict) -> str:
                 if isinstance(val, list):
                     for item in val:
                         _walk(item)
+                        if key != "content":   # a chapter or section just ended
+                            _flush()
+                elif isinstance(val, str) and kind == "code":
+                    # A code block's text is a string (ast.schema.json `code`),
+                    # which ast_to_html prints in its <pre>. Skipped here, any
+                    # book with a code block failed the gate with nothing lost.
+                    texts.append(val)
                 elif isinstance(val, dict):
                     _walk(val)
             if kind == "epigraph" and attrs.get("source"):

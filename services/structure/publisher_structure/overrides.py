@@ -9,12 +9,18 @@ On re-ingest, rebase by exact sourceRef → content-hash match → fuzzy text ma
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .rules import normalize_text
+from .override_ops import (  # noqa: F401 -- re-exported: tests and callers import them from here
+    UNIMPLEMENTED_OPS,
+    InapplicableOverride,
+    _TRANSFORMS,
+    _find_by_source_ref,
+    _public,
+)
 
 # BUILD_PLAN.md §3.7: "fuzzy (token Jaccard >= 0.9)".
 FUZZY_CUTOFF = 0.9
@@ -25,7 +31,7 @@ class OverrideOp:
     """A single override operation."""
     id: str
     sourceRef: str  # "docx:body/p[412]#h3a91c"
-    op: str  # "reclassify", "retitle", "split", "merge", "delete", "flag_ambiguity"
+    op: str  # one of overrides/1's `op` enum; _TRANSFORMS applies each
     actor: str
     sourceContentHash: Optional[str] = None  # sha256 of the original text
     sourceFallbackText: Optional[str] = None  # fallback for fuzzy matching
@@ -272,105 +278,6 @@ def _fuzzy_match(text: str, source_map: dict, cutoff: float = FUZZY_CUTOFF) -> l
     return sorted(matches, key=lambda m: -m["similarity"])
 
 
-def _matches(node: dict, source_ref: str) -> bool:
-    src = node.get("sourceRef") or node.get("sourceRefLink") or {}
-    if isinstance(src, dict):
-        return src.get("docxId") == source_ref
-    return src == source_ref
-
-
-_CHILD_KEYS = ("content", "frontMatter", "backMatter", "body")
-
-
-def _rewrite(node: Any, source_ref: str, transform) -> Any:
-    """
-    Return `node` with the descendant matching `source_ref` replaced by
-    `transform(match)`. Subtrees that contain no match are returned BY IDENTITY, so
-    they are shared with the input rather than copied.
-
-    This is the structural sharing ARCHITECTURE.md §3.6 and BUILD_PLAN.md §3.7
-    specify: "200 overrides on a 5000-node AST allocates ~200 paths, not a copy" —
-    O(depth) per override instead of O(n). Only the nodes along the path from the root
-    to the changed node are shallow-copied.
-    """
-    if isinstance(node, list):
-        out, changed = [], False
-        for item in node:
-            new_item = _rewrite(item, source_ref, transform)
-            changed = changed or new_item is not item
-            out.append(new_item)
-        return out if changed else node
-
-    if not isinstance(node, dict):
-        return node
-
-    if _matches(node, source_ref):
-        return transform(node)
-
-    for key in _CHILD_KEYS:
-        val = node.get(key)
-        if val is None:
-            continue
-        new_val = _rewrite(val, source_ref, transform)
-        if new_val is not val:
-            # Shallow-copy only this node, re-pointing the one child that changed.
-            copied = dict(node)
-            copied[key] = new_val
-            return copied
-
-    return node
-
-
-def _t_reclassify(op: OverrideOp):
-    def t(node: dict) -> dict:
-        return {**node, "type": op.to_value, "_override": op.id}
-    return t
-
-
-def _t_retitle(op: OverrideOp):
-    def t(node: dict) -> dict:
-        attrs = node.get("attrs")
-        if not isinstance(attrs, dict) or "title" not in attrs:
-            return node
-        return {**node, "attrs": {**attrs, "title": op.value}, "_override": op.id}
-    return t
-
-
-def _t_delete(op: OverrideOp):
-    def t(node: dict) -> dict:
-        return {**node, "_deleted": True}
-    return t
-
-
-def _t_flag_ambiguity(op: OverrideOp):
-    def t(node: dict) -> dict:
-        flags = list(node.get("_flags", []))
-        flags.append({
-            "id": op.id,
-            "message": op.rationale or "Flagged for review",
-            "actor": op.actor,
-        })
-        return {**node, "_flags": flags}
-    return t
-
-
-_TRANSFORMS = {
-    "reclassify": _t_reclassify,
-    "retitle": _t_retitle,
-    "delete": _t_delete,
-    "flag_ambiguity": _t_flag_ambiguity,
-}
-
-# Ops `schemas/overrides/overrides.schema.json` accepts that no transform above
-# implements. Kept as an explicit list rather than derived from the schema at
-# runtime: the point is that adding a transform REQUIRES deleting its name from
-# here, so the two cannot drift apart silently the way they already did once.
-UNIMPLEMENTED_OPS = frozenset({
-    "split", "merge", "promote", "demote",
-    "insert", "rename", "set_attr", "resolve_ambiguity",
-})
-
-
 class UnsupportedOverrideOp(ValueError):
     """An override the schema accepts but this layer cannot apply.
 
@@ -403,7 +310,10 @@ _SOURCE_REF_FIELDS = {
 _REQUIRED = ("id", "sourceRef", "op", "actor", "at")
 # The schema's allOf/if/then: fields an op is meaningless without. A reclassify
 # with no `to` would set the node's type to None.
-_OP_REQUIRES = {"reclassify": ("from", "to"), "retitle": ("value",), "flag_ambiguity": ("rationale",)}
+_OP_REQUIRES = {
+    "reclassify": ("from", "to"), "retitle": ("value",), "flag_ambiguity": ("rationale",),
+    "set_attr": ("path",), "insert": ("value",),
+}
 
 
 class MalformedOverrideOp(ValueError):
@@ -450,7 +360,9 @@ def parse_overrides(document: Any) -> list[OverrideOp]:
     return [parse_override_op(op) for op in ops]
 
 
-def apply_overrides(ast: dict, ops: list[OverrideOp]) -> dict:
+def apply_overrides(ast: dict, ops: list[OverrideOp],
+                    inapplicable: Optional[list] = None,
+                    orphaned: Optional[list] = None) -> dict:
     """
     Apply override operations to an AST.
 
@@ -462,11 +374,20 @@ def apply_overrides(ast: dict, ops: list[OverrideOp]) -> dict:
     whole document, then in-place mutation of the copy. That is O(n) per call and
     conflicts with D4 (a function taking a whole document into memory needs a
     justification) and with §3.7's structural-sharing requirement.
+
+    An op that does not fit the document (`InapplicableOverride`) is skipped
+    and appended to `inapplicable` as `(op, reason)` when the caller passes a
+    list to report it in; with no list, it raises.
+
+    An op whose target matches no node -- at the point it applies, so an op may
+    aim at a node an earlier op created -- changes nothing and is appended to
+    `orphaned`. Every transform builds a new node for the one it changes, so
+    "the document came back as the same object" is exactly "nothing matched".
     """
     effective = ast
     for op in ops:
-        make_transform = _TRANSFORMS.get(op.op)
-        if make_transform is None:
+        apply = _TRANSFORMS.get(op.op)
+        if apply is None:
             raise UnsupportedOverrideOp(
                 f"override {op.id!r} uses op {op.op!r}, which this layer cannot apply "
                 + (
@@ -476,28 +397,14 @@ def apply_overrides(ast: dict, ops: list[OverrideOp]) -> dict:
                 )
                 + f". Implemented: {', '.join(sorted(_TRANSFORMS))}."
             )
-        effective = _rewrite(effective, op.sourceRef, make_transform(op))
+        try:
+            applied = apply(effective, op)
+        except InapplicableOverride as reason:
+            if inapplicable is None:
+                raise
+            inapplicable.append((op, str(reason)))
+            continue
+        if applied is effective and orphaned is not None:
+            orphaned.append(op)
+        effective = applied
     return effective
-
-
-def _find_by_source_ref(ast: dict, source_ref: str) -> Optional[dict]:
-    """Find an AST node by its sourceRef."""
-    def _search(node):
-        if not isinstance(node, dict):
-            return None
-        src = node.get("sourceRef") or node.get("sourceRefLink") or {}
-        if isinstance(src, dict) and src.get("docxId") == source_ref:
-            return node
-        if isinstance(src, str) and src == source_ref:
-            return node
-        for key in ("content", "frontMatter", "backMatter", "body"):
-            val = node.get(key)
-            if isinstance(val, list):
-                for item in val:
-                    result = _search(item)
-                    if result:
-                        return result
-        return None
-    return _search(ast)
-
-

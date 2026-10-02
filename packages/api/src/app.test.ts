@@ -33,12 +33,13 @@ import { assertEveryRouteDeclaresAuth } from './app.js';
 const TENANT_TOKEN = 'e04-tenant-token';
 const OTHER_TENANT_TOKEN = 'e04-other-tenant-token';
 const ADMIN_TOKEN = 'e04-admin-token';
+const REVIEWER_TOKEN = 'w2-reviewer-token';
 
 let app: FastifyInstance;
 
 beforeAll(async () => {
-  const [tenantHash, otherTenantHash, adminHash] = await Promise.all(
-    [TENANT_TOKEN, OTHER_TENANT_TOKEN, ADMIN_TOKEN].map((t) => argon2.hash(t))
+  const [tenantHash, otherTenantHash, adminHash, reviewerHash] = await Promise.all(
+    [TENANT_TOKEN, OTHER_TENANT_TOKEN, ADMIN_TOKEN, REVIEWER_TOKEN].map((t) => argon2.hash(t))
   );
   // Must be set before db.ts's module-level `pool` and `CAS_ROOT` are
   // constructed, hence the dynamic import (a static import is hoisted above
@@ -50,6 +51,7 @@ beforeAll(async () => {
   // "m=65536,t=3,p=4", a literal comma, so ',' can't be the list delimiter.
   process.env.PUBLISHER_API_TOKENS = `${tenantHash}:tenant-a;${otherTenantHash}:tenant-b`;
   process.env.PUBLISHER_ADMIN_TOKENS = adminHash;
+  process.env.PUBLISHER_REVIEWER_TOKENS = `${reviewerHash}:tenant-a:ada`;
   const { createApp } = await import('./app.js');
   app = await createApp();
 });
@@ -58,7 +60,7 @@ afterAll(async () => {
   await app.close();
 });
 
-type Bucket = 'public' | 'admin' | 'tenant';
+type Bucket = 'public' | 'admin' | 'tenant' | 'review';
 
 // Every route this app registers, and which auth zone it belongs to --
 // also the expected value of that route's `config.auth` declaration.
@@ -70,9 +72,12 @@ const ROUTE_AUTH: Record<string, Bucket> = {
   'HEAD /v1/titles/:id': 'tenant',
   'POST /v1/titles/:id/manuscripts': 'tenant',
   'PUT /v1/manuscripts/:id/upload': 'tenant',
-  'GET /v1/manuscripts/:id/structure': 'tenant',
-  'HEAD /v1/manuscripts/:id/structure': 'tenant',
-  'PATCH /v1/documents/:id/overrides': 'tenant',
+  'GET /v1/manuscripts/:id/structure': 'review',
+  'HEAD /v1/manuscripts/:id/structure': 'review',
+  'PATCH /v1/documents/:id/overrides': 'review',
+  'POST /v1/manuscripts/:id/proposals/:pid/accept': 'review',
+  'GET /v1/whoami': 'review',
+  'HEAD /v1/whoami': 'review',
   'POST /v1/builds': 'tenant',
   'GET /v1/builds/:id': 'tenant',
   'HEAD /v1/builds/:id': 'tenant',
@@ -194,6 +199,43 @@ describe('auth matrix -- tenant routes', () => {
     // one without gets a 500 from a failed query -- either way, not a 401.
     expect(res.statusCode).not.toBe(401);
   });
+
+  it.each(routes)('%s: a REVIEWER token is authenticated but not enough -> 403', async (key) => {
+    // W2: a reviewer reaches the review zone only -- no uploads, builds, webhooks.
+    const res = await inject(key, { authorization: `Bearer ${REVIEWER_TOKEN}` });
+    expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('auth matrix -- review routes', () => {
+  const routes = routesIn('review');
+
+  it.each(routes)('%s: no token -> 401', async (key) => {
+    expect((await inject(key)).statusCode).toBe(401);
+  });
+
+  it.each(routes)('%s: unrecognized token -> 401', async (key) => {
+    expect((await inject(key, { authorization: 'Bearer not-a-real-token' })).statusCode).toBe(401);
+  });
+
+  it.each(routes)('%s: a reviewer token passes the auth boundary', async (key) => {
+    const res = await inject(key, { authorization: `Bearer ${REVIEWER_TOKEN}` });
+    expect([401, 403]).not.toContain(res.statusCode);
+  });
+
+  it.each(routes)('%s: a tenant (service) token passes too', async (key) => {
+    const res = await inject(key, { authorization: `Bearer ${TENANT_TOKEN}` });
+    expect([401, 403]).not.toContain(res.statusCode);
+  });
+});
+
+describe('a reviewer is who their token says', () => {
+  it('whoami names the reviewer and their tenant', async () => {
+    const res = await app.inject({
+      method: 'GET', url: '/v1/whoami', headers: { authorization: `Bearer ${REVIEWER_TOKEN}` },
+    });
+    expect(res.json()).toEqual({ kind: 'reviewer', tenantId: 'tenant-a', reviewer: 'ada' });
+  });
 });
 
 describe('auth matrix -- admin routes', () => {
@@ -202,6 +244,11 @@ describe('auth matrix -- admin routes', () => {
   it.each(routes)('%s: no token -> 401', async (key) => {
     const res = await inject(key);
     expect(res.statusCode).toBe(401);
+  });
+
+  it.each(routes)('%s: a reviewer token is authenticated but not admin -> 403', async (key) => {
+    const res = await inject(key, { authorization: `Bearer ${REVIEWER_TOKEN}` });
+    expect(res.statusCode).toBe(403);
   });
 
   it.each(routes)('%s: a valid TENANT token is authenticated but not admin -> 403', async (key) => {

@@ -17,6 +17,7 @@ import { registerBuilds } from './routes/builds.js';
 import { registerArtifacts } from './routes/artifacts.js';
 import { registerWebhooks } from './routes/webhooks.js';
 import { registerAdmin } from './routes/admin.js';
+import { registerSession } from './routes/session.js';
 
 // E5.1 -- registered by @fastify/cors as a catch-all preflight responder,
 // not an application route; it carries no `config` of its own to declare an
@@ -94,6 +95,7 @@ export async function createApp() {
   await registerArtifacts(server);
   await registerWebhooks(server);
   await registerAdmin(server);
+  await registerSession(server);
 
   assertEveryRouteDeclaresAuth(server.publisherRoutes);
 

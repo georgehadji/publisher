@@ -20,6 +20,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional, Protocol
 
+from .classify_contract import classification_document, response_format, system_prompt
+
 
 # ── Routing types ───────────────────────────────────────────────
 
@@ -83,6 +85,12 @@ class RouteConfig:
     timeout_s: int = 30
     cost_per_call: float = 0.0
     cache_ttl_hours: int = 168  # 7 days
+    # OpenRouter's `provider` preferences and `reasoning` object, verbatim from
+    # the route in platform/routing/policy.yaml: which providers may serve the
+    # call (pinned, no fallbacks -- a silent failover answers from a different
+    # model under an unchanged cache key) and how much the model may reason.
+    provider: dict = field(default_factory=dict)
+    reasoning: Optional[dict] = None
 
 
 @dataclass
@@ -124,9 +132,10 @@ class PromptCacheManager:
         return prefix
     
     def _build_prefix(self, route: str, prompt_version: str) -> str:
-        """Build the shared prompt prefix (system instructions + schema)."""
-        # In production, loads from prompt templates directory
-        return f"Route: {route} v{prompt_version}\nSchema: classification/1\n"
+        """The shared prompt prefix: the route's system instructions, the same
+        text OpenRouterProvider sends (classify_contract.system_prompt). It
+        used to be a one-line placeholder, so prompt caching cached nothing."""
+        return system_prompt(route, prompt_version)
     
     @property
     def cache_read_ratio(self) -> float:
@@ -226,6 +235,8 @@ def load_routes_from_policy(
             model_id=model_id,
             tier=_TIER_BY_NAME.get(str(spec.get("tier", "fast")).lower(), ModelTier.FAST),
             cost_per_call=float(spec.get("cost_per_call", 0.0)),
+            provider=dict(spec.get("provider") or {}),
+            reasoning=dict(spec["reasoning"]) if isinstance(spec.get("reasoning"), dict) else None,
         )
     return routes
 
@@ -265,13 +276,22 @@ class OpenRouterProvider:
     OpenRouterImageGenAdapter for consistency between the two OpenRouter
     call sites in this repo.
 
-    Deliberately NOT yet doing: `response_format` structured-output
-    enforcement, reasoning-effort/provider-pinning per platform/routing/
-    policy.yaml's fuller schema, or prompt-template loading (PromptCacheManager
-    still returns a placeholder prefix). Those are what E6.2's "wire it as a
-    stage" work puts on an executing, testable path -- inventing that contract
-    here, before anything calls this provider for real, would be guessing at
-    a schema nothing has validated yet.
+    Each request (W3, docs/WIRING_PLAN.md) carries:
+    - `response_format`: strict JSON schema with classification/1's closed
+      label set, so a reply in prose or with an invented label is refused by
+      the provider instead of failing the parse here;
+    - the route's `provider` preferences and `reasoning` setting from
+      policy.yaml (pinned providers, no fallbacks, `require_parameters`, so a
+      provider that cannot honour the schema is never chosen);
+    - the route's real system prompt (classify_contract.system_prompt).
+    The reply is still checked (classify_contract.classification_document):
+    a schema-valid reply can name nodes that were never sent. A route that
+    pins `reasoning: {effort: none}` and comes back having reasoned anyway
+    fails (policy.yaml's `reasoning_guard`): those tokens are billed and are
+    not in the cache key.
+
+    Not verified against the live API from this repo: no call has been made
+    with a real key.
     """
 
     _ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
@@ -284,35 +304,61 @@ class OpenRouterProvider:
 
     def complete(self, request: InferenceRequest, route: RouteConfig, tier: ModelTier) -> InferenceResult:
         start = time.monotonic()
-        body = {
-            "model": route.model_id,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": f"Route: {route.route} v{route.prompt_version}\nSchema: {route.schema_version}",
-                },
-                {"role": "user", "content": json.dumps(request.inputs)},
-            ],
-        }
-        payload = self._call(body)
+        message, usage = self.chat(self.request_body(request, route), route)
         latency_ms = int((time.monotonic() - start) * 1000)
-
-        content = payload["choices"][0]["message"]["content"]
-        output = json.loads(content) if isinstance(content, str) else content
-        usage = payload.get("usage") or {}
+        content = message["content"]
+        reply = json.loads(content) if isinstance(content, str) else content
+        cost = float(usage.get("cost", route.cost_per_call))
+        output = classification_document(
+            reply, [n["sourceRef"] for n in request.inputs.get("nodes", [])],
+            model_id=route.model_id, prompt_version=route.prompt_version, cost_usd=cost)
+        scores = [n["confidence"] for n in output["nodes"]]
 
         return InferenceResult(
             request_id=request.request_id,
             route=request.route,
             tier_used=tier,
             output=output,
-            confidence=float(output.get("confidence", 1.0)) if isinstance(output, dict) else 1.0,
+            # The weakest node's: one doubtful answer is what review must see.
+            confidence=min(scores) if scores else 1.0,
             model_id=route.model_id,
             prompt_version=route.prompt_version,
             cache_hit=False,
-            cost_usd=float(usage.get("cost", route.cost_per_call)),
+            cost_usd=cost,
             latency_ms=latency_ms,
         )
+
+    def chat(self, body: dict[str, Any], route: RouteConfig) -> tuple[dict, dict]:
+        """POST one chat/completions body; the reply's message and usage, once
+        it is neither a refusal nor a breach of the route's reasoning pin. Shared
+        with publisher_agents' OpenRouterAgentProvider, so both enforce the same guard."""
+        payload = self._call(body)
+        choice = payload["choices"][0]
+        if choice.get("finish_reason") == "refusal" or choice["message"].get("refusal"):
+            raise RuntimeError(f"route {route.route!r}: the model refused the request")
+        usage = payload.get("usage") or {}
+        reasoned = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
+        if (route.reasoning or {}).get("effort") == "none" and reasoned:
+            raise RuntimeError(f"route {route.route!r} pins reasoning effort none, "
+                               f"and the reply used {reasoned} reasoning tokens")
+        return choice["message"], usage
+
+    @staticmethod
+    def request_body(request: InferenceRequest, route: RouteConfig) -> dict[str, Any]:
+        """The chat/completions body for one classification call."""
+        body: dict[str, Any] = {
+            "model": route.model_id,
+            "messages": [
+                {"role": "system", "content": system_prompt(route.route, route.prompt_version)},
+                {"role": "user", "content": json.dumps(request.inputs, ensure_ascii=False)},
+            ],
+            "response_format": response_format(),
+        }
+        if route.provider:
+            body["provider"] = route.provider
+        if route.reasoning is not None:
+            body["reasoning"] = route.reasoning
+        return body
 
     def _call(self, body: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(body).encode("utf-8")
@@ -395,6 +441,14 @@ class InferenceGateway:
         ).items():
             self._config.routes.setdefault(route_name, route_config)
     
+    def route(self, name: str) -> RouteConfig:
+        """A route this gateway serves -- callers read its prompt and schema
+        version from here rather than restating them."""
+        try:
+            return self._config.routes[name]
+        except KeyError:
+            raise KeyError(f"no inference route {name!r} in platform/routing/policy.yaml") from None
+
     def classify(self, request: InferenceRequest) -> InferenceResult:
         """
         Run a classification request through the inference cascade.

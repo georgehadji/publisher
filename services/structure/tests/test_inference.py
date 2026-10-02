@@ -153,11 +153,11 @@ def test_cost_ceiling():
 
 def test_prompt_cache():
     manager = PromptCacheManager()
-    prefix = manager.get_prefix("structure-classify", "1.0")
-    assert "structure-classify" in prefix
+    prefix = manager.get_prefix("structure-classify", "1.1")
+    assert prefix.startswith("You classify the structure")
     
     # Second call should be a hit
-    prefix2 = manager.get_prefix("structure-classify", "1.0")
+    prefix2 = manager.get_prefix("structure-classify", "1.1")
     assert prefix == prefix2
     assert manager.cache_read_ratio > 0
 

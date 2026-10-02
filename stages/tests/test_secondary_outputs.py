@@ -9,6 +9,7 @@ are what proves that -- not just that the stage functions exist.
 
 from __future__ import annotations
 import json
+import re
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -261,6 +262,23 @@ def test_link_targets_with_characters_urls_forbid_are_encoded():
     assert 'href="https://έ.gr/Σ"' in html
 
 
+def test_the_package_declares_what_ace_checks_first(tmp_path):
+    """The three findings ACE made on every corpus book, pinned where no ACE runs."""
+    import zipfile
+
+    ctx = _ctx(tmp_path)
+    _, digest = _png(tmp_path)
+    doc = tmp_path / "rich.json"
+    doc.write_text(json.dumps(_rich_doc(digest)), encoding="utf-8")
+    art = epub(ctx, doc_path=str(doc)).artifacts[0]
+    with zipfile.ZipFile(Path(ctx.cas_root) / art.hash[:2] / art.hash[2:4] / art.hash) as zf:
+        opf = next(zf.read(n).decode() for n in zf.namelist() if n.endswith(".opf"))
+        nav = next(zf.read(n).decode() for n in zf.namelist() if n.endswith("nav.xhtml"))
+    assert re.search(r'<package [^>]*xml:lang="[^"]+"', opf)
+    assert 'property="schema:accessibilitySummary">' in opf
+    assert '<nav epub:type="toc" role="doc-toc"' in nav
+
+
 def test_epubcheck_accepts_the_epub(tmp_path):
     """BUILD_PLAN.md §3.12's gate. EPUBCheck is Java and not on the worker
     toolchain, so this runs where PUBLISHER_EPUBCHECK_JAR names its jar
@@ -281,3 +299,35 @@ def test_epubcheck_accepts_the_epub(tmp_path):
     book.write_bytes((Path(ctx.cas_root) / art.hash[:2] / art.hash[2:4] / art.hash).read_bytes())
     run = subprocess.run(["java", "-jar", jar, str(book)], capture_output=True, text=True, timeout=300)
     assert run.returncode == 0, run.stdout + run.stderr
+
+
+def test_ace_finds_no_serious_violation(tmp_path):
+    """BUILD_PLAN.md §3.12's other gate: DAISY ACE, the accessibility checker
+    retailers and libraries run. Node, not on the worker toolchain, so this runs
+    where PUBLISHER_ACE names the `ace` command (CI pins @daisy/ace 1.4.6). Its
+    first run on the corpus found a serious violation (no xml:lang on the OPF
+    package) in every book; moderate and minor findings are advice, not a gate."""
+    import os
+    import shutil
+    import subprocess
+
+    ace = shutil.which(os.environ.get("PUBLISHER_ACE") or "")
+    if not ace:
+        pytest.skip("set PUBLISHER_ACE to the DAISY ace command (npm i -g @daisy/ace) to run")
+    ctx = _ctx(tmp_path)
+    _, digest = _png(tmp_path)
+    doc = tmp_path / "rich.json"
+    doc.write_text(json.dumps(_rich_doc(digest)), encoding="utf-8")
+    art = epub(ctx, doc_path=str(doc)).artifacts[0]
+    book = tmp_path / "book.epub"
+    book.write_bytes((Path(ctx.cas_root) / art.hash[:2] / art.hash[2:4] / art.hash).read_bytes())
+    report_dir = tmp_path / "ace"
+    run = subprocess.run([ace, "-f", "-s", "-o", str(report_dir), str(book)],
+                         capture_output=True, text=True, timeout=600)
+    assert (report_dir / "report.json").is_file(), run.stdout + run.stderr
+    report = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    blocking = sorted({(t["earl:test"]["earl:impact"], t["earl:test"]["dct:title"])
+                       for subject in report["assertions"] for t in subject["assertions"]
+                       if t["earl:result"]["earl:outcome"] == "fail"
+                       and t["earl:test"]["earl:impact"] in ("serious", "critical")})
+    assert not blocking, blocking

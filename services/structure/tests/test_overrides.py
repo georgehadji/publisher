@@ -45,13 +45,14 @@ def test_apply_reclassify():
         ],
     }
     op = OverrideOp(id="ov-001", sourceRef="p1", op="reclassify",
-                    from_value="paragraph", to_value="chapter-title",
+                    from_value="paragraph", to_value="heading",
                     actor="user:1")
     effective = apply_overrides(ast, [op])
     # Find the reclassified node
     for node in effective["content"]:
         if node.get("_override") == "ov-001":
-            assert node["type"] == "chapter-title"
+            assert node["type"] == "heading"
+            assert node["attrs"] == {"level": 1}, "a heading needs a level; it gets the top one"
             break
     else:
         assert False, "Override not applied"
@@ -173,7 +174,7 @@ def test_fuzzy_match():
 
 def _big_ast(n: int = 200) -> dict:
     return {"body": [{"type": "chapter", "sourceRef": {"docxId": "ch1"}, "content": [
-        {"type": "p", "sourceRef": {"docxId": f"p{i}"},
+        {"type": "paragraph", "sourceRef": {"docxId": f"p{i}"},
          "content": [{"type": "text", "text": f"para {i}"}]} for i in range(n)]}]}
 
 
@@ -181,7 +182,7 @@ def test_apply_overrides_does_not_mutate_the_input():
     ast = _big_ast(5)
     before = json.dumps(ast, sort_keys=True)
     apply_overrides(ast, [OverrideOp(id="o1", sourceRef="p3", op="reclassify",
-                                     to_value="chapter-title", actor="user:1")])
+                                     to_value="heading", actor="user:1")])
     assert json.dumps(ast, sort_keys=True) == before, "input AST was mutated"
 
 
@@ -193,12 +194,12 @@ def test_apply_overrides_shares_untouched_subtrees():
     """
     ast = _big_ast(200)
     out = apply_overrides(ast, [OverrideOp(id="o1", sourceRef="p7", op="reclassify",
-                                           to_value="chapter-title", actor="user:1")])
+                                           to_value="heading", actor="user:1")])
     src = ast["body"][0]["content"]
     dst = out["body"][0]["content"]
     shared = sum(1 for a, b in zip(src, dst) if a is b)
     assert shared == len(src) - 1, f"only {shared}/{len(src)-1} untouched nodes shared"
-    assert dst[7] is not src[7] and dst[7]["type"] == "chapter-title"
+    assert dst[7] is not src[7] and dst[7]["type"] == "heading"
 
 
 def test_apply_overrides_applies_every_op_type():
@@ -211,6 +212,7 @@ def test_apply_overrides_applies_every_op_type():
     out = apply_overrides(ast, ops)
     content = out["body"][0]["content"]
     assert content[0]["type"] == "epigraph" and content[0]["_override"] == "o1"
-    assert content[1]["_deleted"] is True
-    assert content[2]["_flags"][0]["message"] == "unclear"
-    assert "_flags" not in content[3]
+    assert content[0]["content"][0]["content"][0]["text"] == "para 0", "the paragraph, wrapped"
+    assert [n["sourceRef"]["docxId"] for n in content] == ["p0", "p2", "p3"], "p1 is gone"
+    assert content[1]["_flags"][0]["message"] == "unclear"
+    assert "_flags" not in content[2]

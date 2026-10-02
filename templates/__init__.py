@@ -80,7 +80,7 @@ def complete_designspec(spec: dict | None) -> dict:
                             "height": trim["height"] * _MM_PER_IN, "unit": "mm"}
     return done
 
-# ── Literary Novel (5.5x8.5, EB Garamond) ───────────────────────────
+# ── Literary Novel (5.5x8.5, EB Garamond 12) ───────────────────────────
 
 LITERARY = {
     "schema": "designspec/1",
@@ -91,8 +91,8 @@ LITERARY = {
     "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 139.7, "height": 215.9, "unit": "mm"},
     "typography": {
-        "bodyFont": {"family": "EB Garamond"},
-        "headingFont": {"family": "EB Garamond"},
+        "bodyFont": {"family": "EB Garamond 12"},
+        "headingFont": {"family": "EB Garamond 12"},
         "bodySize": 10.5,
         "leading": DEFAULT_LEADING_PT,
         "scaleRatio": 1.25,
@@ -122,14 +122,14 @@ LITERARY = {
         "firstParagraphStyle": "no-indent",
     },
     "fonts": [
-        {"family": "EB Garamond", "style": "regular", "source": "bundled_ofl"},
-        {"family": "EB Garamond", "style": "italic", "source": "bundled_ofl"},
-        {"family": "EB Garamond", "style": "bold", "source": "bundled_ofl"},
+        {"family": "EB Garamond 12", "style": "regular", "source": "bundled_ofl"},
+        {"family": "EB Garamond 12", "style": "italic", "source": "bundled_ofl"},
+        {"family": "EB Garamond 12", "style": "bold", "source": "bundled_ofl"},
     ],
     "colors": {"text": "#000000", "paper": "#FFFFFF"},
 }
 
-# ── Thriller (6x9, Source Serif Pro, tighter margins) ───────────
+# ── Thriller (6x9, Noto Serif, tighter margins) ───────────
 
 THRILLER = {
     "schema": "designspec/1",
@@ -140,8 +140,8 @@ THRILLER = {
     "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 152.4, "height": 228.6, "unit": "mm"},
     "typography": {
-        "bodyFont": {"family": "Source Serif Pro"},
-        "headingFont": {"family": "Source Sans Pro"},
+        "bodyFont": {"family": "Noto Serif"},
+        "headingFont": {"family": "Source Sans 3"},
         "bodySize": 11.0,
         "leading": DEFAULT_LEADING_PT,
         "scaleRatio": 1.2,
@@ -170,9 +170,9 @@ THRILLER = {
         "firstParagraphStyle": "small-caps",
     },
     "fonts": [
-        {"family": "Source Serif Pro", "style": "regular", "source": "bundled_ofl"},
-        {"family": "Source Serif Pro", "style": "bold", "source": "bundled_ofl"},
-        {"family": "Source Sans Pro", "style": "regular", "source": "bundled_ofl"},
+        {"family": "Noto Serif", "style": "regular", "source": "bundled_ofl"},
+        {"family": "Noto Serif", "style": "bold", "source": "bundled_ofl"},
+        {"family": "Source Sans 3", "style": "regular", "source": "bundled_ofl"},
     ],
     "colors": {"text": "#1a1a1a", "paper": "#FFFFFF"},
 }
@@ -188,8 +188,8 @@ MEMOIR = {
     "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 139.7, "height": 215.9, "unit": "mm"},
     "typography": {
-        "bodyFont": {"family": "Libertinus Serif"},
-        "headingFont": {"family": "Libertinus Serif"},
+        "bodyFont": {"family": "Linux Libertine O"},
+        "headingFont": {"family": "Linux Libertine O"},
         "bodySize": 10.0,
         "leading": DEFAULT_LEADING_PT,
         "scaleRatio": 1.3,
@@ -224,8 +224,8 @@ MEMOIR = {
         "chapterOrnament": "❧",
     },
     "fonts": [
-        {"family": "Libertinus Serif", "style": "regular", "source": "bundled_ofl"},
-        {"family": "Libertinus Serif", "style": "italic", "source": "bundled_ofl"},
+        {"family": "Linux Libertine O", "style": "regular", "source": "bundled_ofl"},
+        {"family": "Linux Libertine O", "style": "italic", "source": "bundled_ofl"},
     ],
     "colors": {"text": "#000000", "paper": "#FAF8F5"},
 }
@@ -273,7 +273,7 @@ ACADEMIC = {
         {"family": "Noto Serif", "style": "regular", "source": "bundled_ofl"},
         {"family": "Noto Serif", "style": "italic", "source": "bundled_ofl"},
         {"family": "Noto Sans", "style": "regular", "source": "bundled_ofl"},
-        {"family": "Fira Mono", "style": "regular", "source": "bundled_ofl"},
+        {"family": "Noto Sans Mono", "style": "regular", "source": "bundled_ofl"},
     ],
     "colors": {"text": "#000000", "paper": "#FFFFFF"},
 }
@@ -289,8 +289,8 @@ POETRY = {
     "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 139.7, "height": 215.9, "unit": "mm"},
     "typography": {
-        "bodyFont": {"family": "EB Garamond"},
-        "headingFont": {"family": "EB Garamond"},
+        "bodyFont": {"family": "EB Garamond 12"},
+        "headingFont": {"family": "EB Garamond 12"},
         "bodySize": 11.0,
         "leading": DEFAULT_LEADING_PT,
         "scaleRatio": 1.2,
@@ -318,8 +318,8 @@ POETRY = {
         "firstParagraphStyle": "normal",
     },
     "fonts": [
-        {"family": "EB Garamond", "style": "regular", "source": "bundled_ofl"},
-        {"family": "EB Garamond", "style": "italic", "source": "bundled_ofl"},
+        {"family": "EB Garamond 12", "style": "regular", "source": "bundled_ofl"},
+        {"family": "EB Garamond 12", "style": "italic", "source": "bundled_ofl"},
     ],
     "colors": {"text": "#000000", "paper": "#FFFFFF"},
 }
@@ -335,8 +335,8 @@ SCIFI = {
     "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 152.4, "height": 228.6, "unit": "mm"},
     "typography": {
-        "bodyFont": {"family": "Merriweather"},
-        "headingFont": {"family": "Merriweather"},
+        "bodyFont": {"family": "Noto Serif"},
+        "headingFont": {"family": "Noto Serif"},
         "bodySize": 10.5,
         "leading": DEFAULT_LEADING_PT,
         "scaleRatio": 1.3,
@@ -365,9 +365,9 @@ SCIFI = {
         "firstParagraphStyle": "no-indent",
     },
     "fonts": [
-        {"family": "Merriweather", "style": "regular", "source": "bundled_ofl"},
-        {"family": "Merriweather", "style": "italic", "source": "bundled_ofl"},
-        {"family": "Merriweather", "style": "bold", "source": "bundled_ofl"},
+        {"family": "Noto Serif", "style": "regular", "source": "bundled_ofl"},
+        {"family": "Noto Serif", "style": "italic", "source": "bundled_ofl"},
+        {"family": "Noto Serif", "style": "bold", "source": "bundled_ofl"},
     ],
     "colors": {"text": "#000000", "paper": "#FFFFFF"},
 }
@@ -383,8 +383,8 @@ CHILDRENS = {
     "preferredEngine": "chrome-pagedjs",
     "trimSize": {"width": 177.8, "height": 254.0, "unit": "mm"},
     "typography": {
-        "bodyFont": {"family": "Source Serif Pro"},
-        "headingFont": {"family": "Source Sans Pro"},
+        "bodyFont": {"family": "Noto Serif"},
+        "headingFont": {"family": "Source Sans 3"},
         "bodySize": 13.0,
         "leading": DEFAULT_LEADING_PT,
         "scaleRatio": 1.2,
@@ -414,9 +414,9 @@ CHILDRENS = {
         "firstParagraphStyle": "no-indent",
     },
     "fonts": [
-        {"family": "Source Serif Pro", "style": "regular", "source": "bundled_ofl"},
-        {"family": "Source Sans Pro", "style": "regular", "source": "bundled_ofl"},
-        {"family": "Source Sans Pro", "style": "bold", "source": "bundled_ofl"},
+        {"family": "Noto Serif", "style": "regular", "source": "bundled_ofl"},
+        {"family": "Source Sans 3", "style": "regular", "source": "bundled_ofl"},
+        {"family": "Source Sans 3", "style": "bold", "source": "bundled_ofl"},
     ],
     "colors": {"text": "#000000", "paper": "#FFFFFF"},
 }
@@ -464,7 +464,7 @@ REFERENCE = {
         {"family": "Noto Serif", "style": "regular", "source": "bundled_ofl"},
         {"family": "Noto Sans", "style": "regular", "source": "bundled_ofl"},
         {"family": "Noto Sans", "style": "bold", "source": "bundled_ofl"},
-        {"family": "Fira Mono", "style": "regular", "source": "bundled_ofl"},
+        {"family": "Noto Sans Mono", "style": "regular", "source": "bundled_ofl"},
     ],
     "colors": {"text": "#000000", "paper": "#FFFFFF"},
 }

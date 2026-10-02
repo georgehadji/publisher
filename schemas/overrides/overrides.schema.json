@@ -48,6 +48,7 @@
         },
         "op": {
           "type": "string",
+          "$comment": "`rename` was dropped: it meant nothing `retitle` does not, and the API refused it (422) from the day the log existed, so no stored log holds one.",
           "enum": [
             "reclassify",
             "split",
@@ -57,7 +58,6 @@
             "delete",
             "insert",
             "retitle",
-            "rename",
             "set_attr",
             "flag_ambiguity",
             "resolve_ambiguity"
@@ -85,6 +85,14 @@
         {
           "if": { "properties": { "op": { "const": "flag_ambiguity" } } },
           "then": { "required": ["rationale"] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "set_attr" } } },
+          "then": { "required": ["path"] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "insert" } } },
+          "then": { "required": ["value"] }
         }
       ]
     }

@@ -61,7 +61,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from publisher_stages import (
     StageRegistry, StageDeclaration, StageCtx, StageResult, StageError,
-    ErrorKind, get_registry,
+    ErrorKind, Diagnostic, get_registry,
 )
 from publisher_stages import ArtifactRef as StageArtifactRef
 from publisher_cas import ContentAddressedStore, CasConfig, Sha256, ArtifactRef, MediaType
@@ -187,9 +187,12 @@ def _cache_key_for(stage_name: str, decl, stage_inputs: dict) -> str:
         image_digests={}, fontset_hash="", icc_hashes={},
         hyphen_dict_versions={}, engine_semvers={},
     )
+    # What the stage itself declares its output depends on beyond its inputs
+    # (StageDeclaration.cache_salt): the one toolchain fact that is tracked.
+    params = {"salt": decl.cache_salt(stage_inputs)} if decl.cache_salt else {}
     return compute_cache_key(
         stage=stage_name, version=decl.version, inputs=input_hashes,
-        params={}, toolchain=toolchain,
+        params=params, toolchain=toolchain,
     )
 
 
@@ -404,12 +407,17 @@ def _make_cache_mw(
         cache_key = invocation.ctx.deterministic_seed
         cached = cache_store.get(cache_key)
         if cached is not None:
+            # The stage's own report comes back with its artifacts: same inputs,
+            # same warnings. Dropping them made a cached rebuild read clean.
+            diagnostics = cached.get("diagnostics") or {}
             result = StageResult(
                 artifacts=[
                     StageArtifactRef(kind=kind, hash=ref["sha256"],
                                       media_type=ref["media_type"], size=ref["size"])
                     for kind, ref in cached["output_refs"].items()
                 ],
+                metrics=dict(diagnostics.get("metrics") or {}),
+                warnings=[Diagnostic.from_dict(w) for w in diagnostics.get("warnings") or []],
                 cache_hit=True,
             )
             _register_artifacts(decl, invocation.stage_name, result, cas, cas_root_path, artifact_paths)
@@ -421,6 +429,7 @@ def _make_cache_mw(
             cache_key, invocation.stage_name, decl.version,
             {art.kind: {"sha256": art.hash, "media_type": art.media_type, "size": art.size}
              for art in result.artifacts},
+            {"metrics": dict(result.metrics), "warnings": [w.to_dict() for w in result.warnings]},
         )
         return result
 
@@ -570,6 +579,8 @@ def run(
                     n_artifacts = len(result.artifacts)
                     metrics_str = ", ".join(f"{k}={v}" for k, v in result.metrics.items())
                     print(f"  OK {stage_name} done in {elapsed:.2f}s -> {n_artifacts} artifacts, {metrics_str}")
+                for w in result.warnings:
+                    print(f"     {w.severity}: [{w.code}] {w.human_message}")
 
             except StageError as e:
                 elapsed = time.monotonic() - start

@@ -100,3 +100,12 @@ def test_house_designspec_restates_no_schema_default():
 def test_every_profile_validates_against_its_schema():
     from profiles import list_profiles
     assert list_profiles()   # loading validates each one; an invalid file raises
+
+
+def test_proposal_ops_are_one_mapping_in_two_languages():
+    """The API builds the op a proposal becomes; the stage decides which
+    proposals exist. A type one knows and the other does not is a proposal
+    nobody can accept, or an accept that logs the wrong op."""
+    from stages.propose_stage import PROPOSAL_OPS
+    body = _read("packages/api/src/contract.ts").split("export const PROPOSAL_OPS = {", 1)[1].split("}", 1)[0]
+    assert dict(re.findall(r'(\w+): "(\w+)"', body)) == PROPOSAL_OPS

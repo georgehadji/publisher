@@ -170,7 +170,7 @@ class TestReproducibility:
 
 # ── Supply chain / SBOM tests ───────────────────────────────────
 from publisher_supply_chain import (
-    SBOM, Dependency, CveGate, generate_sbom,
+    SBOM, Dependency, generate_sbom,
 )
 
 
@@ -195,27 +195,6 @@ class TestSBOM:
         assert "ingest" in d["images"]
 
 
-class TestCveGate:
-    def test_scan_clean(self):
-        sbom = SBOM("test-004")
-        sbom.add_python("flask", "3.0.0")
-        gate = CveGate()
-        result = gate.scan(sbom)
-        assert result.passed
-        assert result.critical_count == 0
-
-    def test_scan_with_critical(self):
-        sbom = SBOM("test-005")
-        sbom.add_python("bad-package", "1.0.0")
-        gate = CveGate()
-        gate._known_cves["bad-package"] = [
-            {"id": "CVE-2025-0001", "severity": "critical"},
-        ]
-        result = gate.scan(sbom)
-        assert not result.passed
-        assert result.critical_count == 1
-
-
 class TestGenerateSBOM:
     """Skip removed: the stated precondition ("requires full project dependency files")
     holds in this repo — generate_sbom resolves 70+ dependencies from the committed
@@ -235,3 +214,17 @@ class TestGenerateSBOM:
             # which is the only reason the SBOM exists.
             assert c.get("name"), f"component missing name: {c}"
             assert c.get("purl", "").startswith("pkg:"), f"component missing purl: {c}"
+
+
+def test_compare_runs_passes_identical_builds_and_names_what_differs():
+    from publisher_reproducibility import compare_runs
+
+    same = {"extract": {"html": "a" * 64}}
+    assert [r["status"] for r in compare_runs({"cold": same, "cold-again": same, "cached": same})] == ["pass"]
+
+    drifted = compare_runs({"cold": same, "cold-again": {"extract": {"html": "b" * 64}}})
+    assert drifted[0]["status"] == "fail"
+    assert "cold-again=bbbbbbbbbbbb" in drifted[0]["message"]
+
+    missing = compare_runs({"cold": same, "cached": {}})
+    assert missing[0]["status"] == "fail" and "cached=missing" in missing[0]["message"]

@@ -98,7 +98,7 @@ if (!existsSync(pyOut)) {
     // stays linear (ast.schema.json bodyNode's $comment). Codegen must still see a union
     // there, not the allOf's intersection: checked on the executed module, not the text.
     'import typing',
-    'for name, arity in (("BodyNode", 2), ("BlockNode", 15), ("InlineNode", 11)):',
+    'for name, arity in (("BodyNode", 2), ("BlockNode", 16), ("InlineNode", 11)):',
     '    t = getattr(mod, name)',
     '    if typing.get_origin(t) is not typing.Union or len(typing.get_args(t)) != arity:',
     '        raise SystemExit(f"{name} is {t!r}, not a {arity}-way Union")',

@@ -172,7 +172,7 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak"] }
+        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "endnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak"] }
       },
       "allOf": [
         { "if": { "properties": { "type": { "const": "paragraph" } } }, "then": { "$ref": "#/$defs/paragraph" } },
@@ -183,6 +183,7 @@
         { "if": { "properties": { "type": { "const": "table" } } }, "then": { "$ref": "#/$defs/table" } },
         { "if": { "properties": { "type": { "const": "figure" } } }, "then": { "$ref": "#/$defs/figure" } },
         { "if": { "properties": { "type": { "const": "footnote" } } }, "then": { "$ref": "#/$defs/footnote" } },
+        { "if": { "properties": { "type": { "const": "endnote" } } }, "then": { "$ref": "#/$defs/endnote" } },
         { "if": { "properties": { "type": { "const": "epigraph" } } }, "then": { "$ref": "#/$defs/epigraph" } },
         { "if": { "properties": { "type": { "const": "sceneBreak" } } }, "then": { "$ref": "#/$defs/sceneBreak" } },
         { "if": { "properties": { "type": { "const": "dialogue" } } }, "then": { "$ref": "#/$defs/dialogue" } },
@@ -438,6 +439,28 @@
         "originalName": { "type": "string", "maxLength": 256 }
       },
       "required": ["hash", "mediaType"],
+      "additionalProperties": false
+    },
+    "endnote": {
+      "$comment": "A note printed at the end of its chapter or section, not at the page foot (Word's endnotes). Placed like a footnote, after the paragraph that cites it; renderers collect it to the section's end.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["endnote"] },
+        "attrs": {
+          "type": "object",
+          "properties": {
+            "number": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/inlineNode" },
+          "minItems": 1
+        },
+        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+      },
+      "required": ["type", "content"],
       "additionalProperties": false
     },
     "footnote": {
@@ -798,10 +821,10 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak", "halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue"] }
+        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "endnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak", "halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue"] }
       },
       "allOf": [
-        { "if": { "properties": { "type": { "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak"] } } }, "then": { "$ref": "#/$defs/blockNode" } },
+        { "if": { "properties": { "type": { "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "endnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak"] } } }, "then": { "$ref": "#/$defs/blockNode" } },
         { "if": { "properties": { "type": { "enum": ["halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue"] } } }, "then": {
           "type": "object",
           "properties": {
@@ -823,10 +846,10 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak", "epilogue", "afterword", "appendix", "notes", "bibliography", "index", "aboutTheAuthor", "alsoBy", "colophon"] }
+        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "endnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak", "epilogue", "afterword", "appendix", "notes", "bibliography", "index", "aboutTheAuthor", "alsoBy", "colophon"] }
       },
       "allOf": [
-        { "if": { "properties": { "type": { "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak"] } } }, "then": { "$ref": "#/$defs/blockNode" } },
+        { "if": { "properties": { "type": { "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "endnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak"] } } }, "then": { "$ref": "#/$defs/blockNode" } },
         { "if": { "properties": { "type": { "enum": ["epilogue", "afterword", "appendix", "notes", "bibliography", "index", "aboutTheAuthor", "alsoBy", "colophon"] } } }, "then": {
           "type": "object",
           "properties": {

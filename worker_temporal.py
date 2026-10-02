@@ -78,7 +78,7 @@ for sub in ("platform/stages/py", "platform/cas/py", "platform/cache/py",
 import stages  # noqa: F401 -- registration side effect
 import worker  # reuse claim/lease/record/fail helpers -- see module docstring
 from publisher_exec import plan
-from publisher_stages import ErrorKind, StageError, build_registry
+from publisher_stages import Diagnostic, ErrorKind, StageError, build_registry
 from publisher_orchestration import discover_queues, ORCHESTRATOR_TASK_QUEUE
 from publisher_orchestration.temporal_runtime import BuildWorkflow, BuildWorkflowInput, run_workers
 from temporalio.client import Client
@@ -171,6 +171,7 @@ async def _run_build_via_temporal(conn, build: dict, client: Client) -> None:
         worker._record_stage(
             conn, build_id, tenant_id, stage_name, decl.version,
             "completed", output.cache_hit, 0, output.metrics,
+            [Diagnostic.from_dict(w) for w in output.warnings],
         )
         for art in output.artifacts:
             worker._record_artifact(

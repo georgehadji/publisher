@@ -165,3 +165,21 @@ def test_captions_and_epigraph_sources_are_part_of_the_text():
         assert _gate(Path(td), ast, html).metrics["integrity_ok"] == 1.0
         with pytest.raises(StageError):
             _gate(Path(td), ast, html.replace("Plate one.", ""))
+
+
+def test_a_code_block_is_read_by_both_sides_of_the_gate():
+    """`code.content` is a string, not a list of nodes; the HTML prints it and
+    the source side skipped it, so the synthetic technical book and stress test
+    failed this gate with no text lost."""
+    from publisher_structure.rules import extract_text_from_html, normalize_text
+    from stages.text_stream import ast_text
+
+    ast = {"schema": "ast/1", "metadata": {"title": "T"}, "frontMatter": [], "backMatter": [],
+           "body": [{"type": "chapter", "attrs": {"id": "ch1", "number": 1, "title": "One"},
+                     "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Before."}]},
+                                 {"type": "code", "content": "def hello():\n    print('hi')"},
+                                 {"type": "paragraph", "content": [{"type": "text", "text": "After."}]}]}]}
+
+    html_side = normalize_text(extract_text_from_html(ast_to_html(ast)))
+    assert html_side == normalize_text(ast_text(ast))
+    assert "print('hi')" in html_side

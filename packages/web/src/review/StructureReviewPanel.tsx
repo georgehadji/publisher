@@ -1,14 +1,16 @@
 "use client";
 
 import React, { useActionState, useState } from "react";
-import { submitOverride } from "./actions";
+import { acceptProposalAction, signOut, submitOverride } from "./actions";
 import { LOW_CONFIDENCE_BELOW } from "../types";
 import type {
   StructureReview,
   ChapterReview,
+  BlockReview,
   LowConfidenceNode,
   OrphanedOp,
   OverrideOp,
+  ProposalReview,
 } from "../types";
 
 /**
@@ -20,8 +22,11 @@ import type {
  * - Each node's override target id, and the logged ops aimed at it
  * - Logged ops that target nothing in this build
  *
- * A chapter with a target id can be retitled or flagged; the op is appended to
- * the log and takes effect on the next build. Local-dev only -- see ./actions.ts.
+ * A chapter with a target id can be retitled, flagged, merged into the one
+ * before or demoted to a section of it. Each of its blocks can open a new
+ * chapter (split), a heading can move a level, and a scene break can go after
+ * any block. Ops are appended to the log and take effect on the next build.
+ * Local-dev only -- see ./actions.ts.
  *
  * From ARCHITECTURE.md §1.1 (Human gate #1):
  * "chapter map, front/back matter, flagged ambiguities"
@@ -40,6 +45,9 @@ export function StructureReviewPanel({ review }: { review: StructureReview }) {
   return (
     <div className="structure-review" style={styles.container}>
       <div style={styles.sidebar}>
+        <form action={signOut} style={styles.form}>
+          <button type="submit">Sign out</button>
+        </form>
         <h2 style={styles.title}>Chapters</h2>
         <div style={styles.chapterList}>
           {review.chapters.map((ch, i) => (
@@ -53,6 +61,11 @@ export function StructureReviewPanel({ review }: { review: StructureReview }) {
         </div>
       </div>
       <div style={styles.main}>
+        <p style={styles.chapterMeta}>
+          {review.shows === "effective"
+            ? "Shows the latest build, with the override log as that build applied it."
+            : "Shows the latest build before overrides: it stopped before applying them."}
+        </p>
         {active !== null && review.chapters[active] ? (
           <ChapterDetail
             key={active}
@@ -71,6 +84,9 @@ export function StructureReviewPanel({ review }: { review: StructureReview }) {
           </p>
         ) : review.lowConfidenceNodes.length > 0 && (
           <LowConfidenceSection nodes={review.lowConfidenceNodes} />
+        )}
+        {review.proposals !== null && review.proposals.length > 0 && (
+          <ProposalSection manuscriptId={review.manuscriptId} proposals={review.proposals} />
         )}
         {review.orphanedOps !== null && review.orphanedOps.length > 0 && (
           <OrphanedSection orphans={review.orphanedOps} />
@@ -135,7 +151,11 @@ function ChapterDetail({
       <h3>
         Ch. {chapter.number ?? "?"}: {chapter.title}
       </h3>
+      {chapter.part !== null && <p style={styles.chapterMeta}>In {chapter.part}</p>}
       <p>Target id: <TargetId docxId={chapter.docxId} /></p>
+      {chapter.docxId !== null && chapter.flags.map((flag) => (
+        <FlagLine key={flag} manuscriptId={manuscriptId} docxId={chapter.docxId!} flag={flag} />
+      ))}
       {aimed.length > 0 && (
         <>
           <h4>Logged overrides ({aimed.length})</h4>
@@ -145,7 +165,81 @@ function ChapterDetail({
       {chapter.docxId !== null && (
         <OverrideForm manuscriptId={manuscriptId} docxId={chapter.docxId} />
       )}
+      <h4>Blocks ({chapter.blocks.length})</h4>
+      <ol style={styles.blockList}>
+        {chapter.blocks.map((block, i) => (
+          <BlockRow key={block.docxId ?? `index-${i}`} manuscriptId={manuscriptId}
+                    block={block} opensChapter={i === 0} />
+        ))}
+      </ol>
     </div>
+  );
+}
+
+/**
+ * One block and what can be done to it. A block with no target id is listed
+ * but offers nothing: no op can reach it.
+ */
+function BlockRow({ manuscriptId, block, opensChapter }: {
+  manuscriptId: string; block: BlockReview; opensChapter: boolean;
+}) {
+  const label = block.type === "heading" ? `H${block.level ?? "?"}` : block.type;
+  const id = block.docxId;
+  return (
+    <li style={styles.blockRow}>
+      <span style={styles.chapterMeta}>{label}</span>{" "}
+      <span>{block.excerpt || <em>(no text)</em>}</span>
+      {id !== null && (
+        <span style={styles.blockActions}>
+          {!opensChapter && block.excerpt && (
+            <OpButton manuscriptId={manuscriptId} docxId={id} op="split" label="Start a chapter here" />
+          )}
+          {block.type === "heading" && (
+            <>
+              <OpButton manuscriptId={manuscriptId} docxId={id} op="promote" label="Promote" />
+              <OpButton manuscriptId={manuscriptId} docxId={id} op="demote" label="Demote" />
+            </>
+          )}
+          <OpButton manuscriptId={manuscriptId} docxId={id} op="insert" label="Scene break after" />
+          {id.startsWith("ins-") && (
+            <OpButton manuscriptId={manuscriptId} docxId={id} op="delete" label="Remove break" />
+          )}
+          {block.flags.map((flag) => (
+            <FlagLine key={flag} manuscriptId={manuscriptId} docxId={id} flag={flag} />
+          ))}
+        </span>
+      )}
+    </li>
+  );
+}
+
+/** A flag standing on a node, and the button that resolves it. */
+function FlagLine({ manuscriptId, docxId, flag }: { manuscriptId: string; docxId: string; flag: string }) {
+  return (
+    <span style={styles.flag}>
+      ⚑ flagged ({flag}){" "}
+      <OpButton manuscriptId={manuscriptId} docxId={docxId} op="resolve_ambiguity" label="Resolve" flag={flag} />
+    </span>
+  );
+}
+
+/** One op that takes no text, as a single button. */
+function OpButton({ manuscriptId, docxId, op, label, flag }: {
+  manuscriptId: string; docxId: string; op: string; label: string; flag?: string;
+}) {
+  const [state, action, pending] = useActionState(
+    submitOverride.bind(null, manuscriptId, docxId),
+    null
+  );
+  return (
+    <form action={action} style={styles.inlineForm}>
+      <input type="hidden" name="op" value={op} />
+      {flag && <input type="hidden" name="flag" value={flag} />}
+      <button type="submit" disabled={pending} title={state?.message}>
+        {pending ? "…" : state?.ok ? `${label} ✓` : label}
+      </button>
+      {state && !state.ok && <span role="status" style={{ color: "#c62828" }}>{state.message}</span>}
+    </form>
   );
 }
 
@@ -159,8 +253,11 @@ function OverrideForm({ manuscriptId, docxId }: { manuscriptId: string; docxId: 
       <select name="op" defaultValue="retitle" aria-label="Operation">
         <option value="retitle">Retitle</option>
         <option value="flag_ambiguity">Flag for review</option>
+        <option value="merge">Merge into previous chapter</option>
+        <option value="demote">Make it a section of the previous chapter</option>
       </select>
-      <input name="text" aria-label="New title or reason" required maxLength={4096} style={{ flex: 1 }} />
+      {/* Not `required`: merge and demote need no text. The action checks the rest. */}
+      <input name="text" aria-label="New title or reason" maxLength={4096} style={{ flex: 1 }} />
       <button type="submit" disabled={pending}>{pending ? "Saving…" : "Log override"}</button>
       {state && (
         <p role="status" style={{ ...styles.chapterMeta, color: state.ok ? "#2e7d32" : "#c62828", width: "100%" }}>
@@ -196,6 +293,42 @@ function LowConfidenceSection({ nodes }: { nodes: LowConfidenceNode[] }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/** The model's proposals. Each becomes an op only when a reviewer accepts it. */
+function ProposalSection({ manuscriptId, proposals }: { manuscriptId: string; proposals: ProposalReview[] }) {
+  return (
+    <div style={styles.lowConfSection}>
+      <h3>Model proposals ({proposals.length})</h3>
+      <p style={styles.chapterMeta}>
+        Advice only: none of these reaches a build unless you accept it.
+      </p>
+      {proposals.map((p) => (
+        <div key={p.id} style={styles.lowConfCard}>
+          <p style={styles.contextText}>{p.rationale}</p>
+          <p style={styles.chapterMeta}>
+            Accepting logs <strong>{p.op}</strong> on <TargetId docxId={p.docxId} />
+          </p>
+          <AcceptButton manuscriptId={manuscriptId} proposalId={p.id} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AcceptButton({ manuscriptId, proposalId }: { manuscriptId: string; proposalId: string }) {
+  const [state, action, pending] = useActionState(
+    acceptProposalAction.bind(null, manuscriptId, proposalId),
+    null
+  );
+  return (
+    <form action={action} style={styles.inlineForm}>
+      <button type="submit" disabled={pending || state?.ok}>
+        {pending ? "…" : state?.ok ? "Accepted ✓" : "Accept"}
+      </button>
+      {state && !state.ok && <span role="status" style={{ color: "#c62828" }}>{state.message}</span>}
+    </form>
   );
 }
 
@@ -290,6 +423,26 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: "wrap",
     gap: 8,
     marginTop: 16,
+  },
+  blockList: {
+    paddingLeft: 20,
+    fontSize: 13,
+  },
+  blockRow: {
+    marginBottom: 6,
+  },
+  blockActions: {
+    display: "inline-flex",
+    flexWrap: "wrap",
+    gap: 4,
+    marginLeft: 8,
+  },
+  inlineForm: {
+    display: "inline",
+  },
+  flag: {
+    color: "#b26a00",
+    marginLeft: 4,
   },
   targetId: {
     fontSize: 12,

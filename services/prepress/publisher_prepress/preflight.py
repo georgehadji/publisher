@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional
 
 from publisher_prepress.geometry import PT_PER_MM
 from publisher_prepress.ghostscript import INK_TIMEOUT_S, GhostscriptError, find_binary, page_colours
+from publisher_prepress.margins import PDFTOTEXT_TIMEOUT_S, measure_inside_margins, required_inside_margin
 
 # pdfimages lists image placements without decoding them: seconds, even for a
 # large book. The deadline is for a hung process, not a slow one.
@@ -29,7 +30,7 @@ PDFIMAGES_TIMEOUT_S = 120
 
 # run_preflight renders the pages twice (measure_ink) and lists the images once
 # (measure_image_ppi); the rest is byte scanning.
-PREFLIGHT_TIMEOUT_S = 2 * INK_TIMEOUT_S + PDFIMAGES_TIMEOUT_S + 300
+PREFLIGHT_TIMEOUT_S = 2 * INK_TIMEOUT_S + PDFIMAGES_TIMEOUT_S + PDFTOTEXT_TIMEOUT_S + 300
 
 
 @dataclass
@@ -340,6 +341,44 @@ def check_resolution(pdf_info: dict, profile: dict) -> PreflightCheck:
         c.sourceRef = f"pdf#page={low[0]}"
         return c
     return _pass("resolution", f"{len(placements)} image placement(s), lowest {lowest:g} ppi")
+
+
+@preflight_check("inside-margin")
+def check_inside_margin(pdf_info: dict, profile: dict) -> PreflightCheck:
+    """No page prints closer to the spine than the vendor's minimum for the
+    book's page count. Measured from the press file's word boxes (margins.py),
+    so it is what prints, whatever the design said."""
+    bands = _requirement(profile, "bindingSpec", "minInsideMarginMm")
+    if not bands:
+        return _unstated("inside-margin", "minimum inside margin")
+    page_count = pdf_info.get("page_count")
+    if not page_count:
+        return _warn("inside-margin", "Inside margin not checked: the page count is unknown")
+    required = required_inside_margin(bands, page_count)
+    measured = pdf_info.get("margins") or {}
+    if "margins" not in measured:
+        return _warn(
+            "inside-margin",
+            f"Inside margin not measured: {measured.get('unmeasured', 'no word boxes')}",
+            suggestedFix="Run preflight where poppler-utils (pdftotext) is installed (the worker image).",
+            expected=required,
+        )
+    margins = measured["margins"]
+    if not margins:
+        return _pass("inside-margin", "No page carries text")
+    narrowest = min(margins.values())
+    tight = sorted(page for page, mm in margins.items() if mm < required)
+    if tight:
+        c = _fail(
+            "inside-margin",
+            f"Text comes within {narrowest:g} mm of the spine on {_pages_phrase(tight)}; "
+            f"a {page_count}-page book needs {required:g} mm",
+            suggestedFix="Widen the design's inside margin (or its gutter) to the vendor minimum.",
+            value=narrowest, expected=required,
+        )
+        c.sourceRef = f"pdf#page={tight[0]}"
+        return c
+    return _pass("inside-margin", f"Narrowest inside margin {narrowest:g} mm (needs {required:g} mm)")
 
 
 @preflight_check("file-size")
@@ -745,6 +784,7 @@ def run_preflight(pdf_path: str | Path, profile: dict,
 
     pdf_info["ink"] = measure_ink(pdf_path)
     pdf_info["images"] = measure_image_ppi(pdf_path)
+    pdf_info["margins"] = measure_inside_margins(pdf_path, pdf_info["media_box"], pdf_info["trim_box"])
 
     checks = []
     for code, check_fn in sorted(_CHECKS.items()):
@@ -973,6 +1013,8 @@ def probe_pdf(pdf_path: Path) -> dict:
         "width_mm": width_mm,
         "height_mm": height_mm,
         "bleed_mm": bleed_mm,
+        "media_box": media,
+        "trim_box": trim,
         "fonts": fonts,
         "pdf_standard": "pdfx-1a" if has_pdfx else "none",
         "interactive": _interactive_content(raw),

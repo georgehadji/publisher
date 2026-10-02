@@ -175,6 +175,10 @@ def test_build_request_produces_a_real_artifact(api_server, make_docx, worker_pr
         "paginate/finish engine gate with status='failed'; that engine absence "
         "is not the defect this detector targets.)"
     )
+    # W0: every stage row carries what the stage reported. A list, possibly
+    # empty -- null would mean the worker never stored them.
+    assert all(isinstance(s.get("diagnostics"), list) for s in status["stages"]), status["stages"]
+    assert all(isinstance(s.get("metrics"), dict) for s in status["stages"]), status["stages"]
 
     artifact = requests.get(
         f"{api_server}/v1/builds/{build_id}/artifacts/pdf", headers=_headers("a1")

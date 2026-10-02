@@ -161,6 +161,30 @@ class ReproducibilityChecker:
         })
 
 
+def compare_runs(runs: dict[str, dict[str, dict[str, str]]]) -> list[dict]:
+    """Results for several runs of ONE build (W10).
+
+    `runs` maps a run's name ("cold", "cold-again", "cached") to what it
+    produced, {stage: {artifact kind: sha256}}. Each artifact passes when every
+    run produced it with the same bytes, and fails when the bytes differ or a
+    run lacks it. Two cold builds in separate stores test determinism; a build
+    served from the cache tests that the cache returns what a build would make.
+    """
+    results: list[dict] = []
+    artifacts = sorted({(stage, kind) for produced in runs.values()
+                        for stage, kinds in produced.items() for kind in kinds})
+    for stage, kind in artifacts:
+        hashes = {name: produced.get(stage, {}).get(kind) for name, produced in runs.items()}
+        same = None not in hashes.values() and len(set(hashes.values())) == 1
+        results.append({
+            "check": f"{stage}/{kind}",
+            "status": "pass" if same else "fail",
+            "message": "identical in every run" if same else "differs: " + ", ".join(
+                f"{name}={(digest or 'missing')[:12]}" for name, digest in hashes.items()),
+        })
+    return results
+
+
 class ReproducibilityReport:
     """Report from a reproducibility check run."""
     

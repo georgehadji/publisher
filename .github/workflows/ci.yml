@@ -58,6 +58,35 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ${{ env.PUBLISHER_PKGS }} psycopg2-binary requests
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: EPUBCheck 5.4.0, pinned (W10)
+        # So test_epubcheck_accepts_the_epub runs instead of skipping: the EPUB
+        # is checked by the validator retailers use, not only by our own text
+        # comparison. Pinned by digest -- the jar and the lib/ tree it loads.
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/epubcheck.zip" \
+            https://github.com/w3c/epubcheck/releases/download/v5.4.0/epubcheck-5.4.0.zip
+          unzip -q "$RUNNER_TEMP/epubcheck.zip" -d "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/epubcheck-5.4.0"
+          echo "2146665a124998dc6c908010ffe0d09dc4f4c8014f2c8fd6a1aa11f64c40ac93  epubcheck.jar" | sha256sum -c -
+          test "$(cd lib && LC_ALL=C sha256sum *.jar | sha256sum | cut -d' ' -f1)" = \
+            547d8494b76396683c7ce2e8bc1fd124a8db5a72c93f4ed64d34cd51e6d3328d
+          echo "PUBLISHER_EPUBCHECK_JAR=$PWD/epubcheck.jar" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: DAISY ACE 1.4.6, pinned (W10)
+        # So test_ace_finds_no_serious_violation runs instead of skipping. ACE
+        # drives a headless Chromium; Ubuntu 24.04's AppArmor forbids the
+        # unprivileged user namespaces its sandbox needs, so allow them here.
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          npm install -g @daisy/ace@1.4.6
+          ace --version | grep -qx 1.4.6
+          echo "PUBLISHER_ACE=ace" >> "$GITHUB_ENV"
       - name: Load schema
         # GitHub's `services:` Postgres has no init-script mount (unlike
         # docker-compose.yml's `/docker-entrypoint-initdb.d/`), so CI applies
@@ -85,6 +114,8 @@ jobs:
         run: |
           python -m pytest --tb=short -rs | tee pytest-output.txt
           ! grep -q "Postgres is not listening" pytest-output.txt
+          ! grep -q "set PUBLISHER_EPUBCHECK_JAR" pytest-output.txt
+          ! grep -q "set PUBLISHER_ACE" pytest-output.txt
       - name: Lint schemas (no free-text in structure routes)
         run: python tools/lint_schemas.py
 
@@ -129,6 +160,10 @@ jobs:
       - run: npm ci
       - name: Type-check and build (next build)
         run: npm run build
+      - name: Vitest -- review actions vs overrides/1, panel states
+        # Every refusal path of the Server Actions (public POST endpoints), and
+        # every op a form builds validated against overrides/1 itself.
+        run: npm test
 
   rust:
     runs-on: ubuntu-latest
@@ -178,9 +213,7 @@ jobs:
 
   supply-chain:
     # E3.5 -- pip-audit and npm audit are gates (non-zero exit fails the job);
-    # the SBOM is an artifact, not a gate, because there is no CVE-count
-    # threshold defined yet to fail it against (platform/supply-chain's
-    # CveGate is a placeholder -- see that module's own docstring).
+    # the SBOM is an artifact, not a gate: these two audits are the CVE gates.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

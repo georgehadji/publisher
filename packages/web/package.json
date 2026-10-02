@@ -6,16 +6,20 @@
   "scripts": {
     "dev": "next dev -H 127.0.0.1",
     "build": "next build",
-    "start": "next start -H 127.0.0.1"
+    "start": "next start -H 127.0.0.1",
+    "test": "vitest run"
   },
   "dependencies": {
-    "next": "^16.3.5",
+    "next": "^16.3.8",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
-    "typescript": "^5.7.0"
+    "@types/react-dom": "^19.3.0",
+    "ajv": "^8.20.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.7"
   }
 }

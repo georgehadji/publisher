@@ -10,9 +10,15 @@
 //!     into the pagemap (the one definition; this crate reads its flags):
 //!     widow = a paragraph's LAST line alone at the top of a page, orphan = its
 //!     FIRST line alone at the bottom of one, runt = a short last line.
-//!   - Rivers (vertical alignment of spaces — approximated)
-//!   - Hyphen stacks (three or more consecutive hyphenated lines)
 //!   - Short chapter ends (last page of a chapter has very little text)
+//!
+//! Rivers and hyphen stacks need glyph positions from a rendered page, which a
+//! pagemap does not carry. They are not detected, and every `ScanResult` says
+//! so in `unmeasured`: a scan must not read as clean for what it cannot see.
+//!
+//! Reads `pagemap/1` as the schema spells it (camelCase). The scan of widows,
+//! orphans and runts must agree with `publisher_prepress.preflight.
+//! scan_composition`; `fixtures/agreement.json` is checked by both.
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 /// A single page's metadata from the pagination stage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PageEntry {
     pub page_number: u32,
     pub folio: u32,
@@ -36,6 +43,7 @@ pub struct PageEntry {
 
 /// A paragraph's presence on a page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ParaRange {
     pub para_index: u32,
     pub lines_on_page: u32,    // how many lines of this paragraph appear on this page
@@ -43,6 +51,7 @@ pub struct ParaRange {
 
 /// A chapter's span across pages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChapterEntry {
     pub chapter_id: String,
     pub number: u32,
@@ -98,8 +107,16 @@ pub struct ScanResult {
     pub total_score: f64,           // weighted sum
     pub pages_scanned: u32,
     pub chapters_scanned: u32,
-    pub is_clean: bool,             // true if zero error-level defects
+    pub is_clean: bool,             // true if zero error-level defects among those measured
+    /// Defect classes this scan cannot see, with why. Never empty today.
+    pub unmeasured: Vec<String>,
 }
+
+/// What a pagemap cannot show (see the module doc).
+pub const UNMEASURED: [&str; 2] = [
+    "river: needs glyph positions from a rendered page",
+    "hyphen-stack: needs line breaks from a rendered page",
+];
 
 // ── Scanning logic ─────────────────────────────────────────────
 
@@ -127,13 +144,11 @@ fn defect_weight(defect_type: &DefectType) -> f64 {
 pub fn scan(pagemap: &PageMap) -> ScanResult {
     let mut defects: Vec<Defect> = Vec::new();
 
-    // Scan each page for widows, orphans, runts, rivers, hyphen stacks
+    // Scan each page for widows, orphans and runts
     for page in &pagemap.pages {
         detect_widows(page, &mut defects);
         detect_orphans(page, &mut defects);
         detect_runts(page, &mut defects);
-        detect_rivers(page, &mut defects);
-        detect_hyphen_stacks(page, &mut defects);
     }
 
     // Scan chapters for short ends
@@ -160,6 +175,7 @@ pub fn scan(pagemap: &PageMap) -> ScanResult {
         pages_scanned,
         chapters_scanned,
         is_clean,
+        unmeasured: UNMEASURED.iter().map(|s| s.to_string()).collect(),
     }
 }
 
@@ -217,22 +233,6 @@ fn detect_runts(page: &PageEntry, defects: &mut Vec<Defect>) {
             evidence: vec!["pre-computed: has_runts=true".to_string()],
         });
     }
-}
-
-/// Detect rivers: vertical alignment of inter-word spaces across lines.
-///
-/// Full river detection requires glyph-position analysis from the rendered PDF.
-/// This stub scores based on pagemap hints. The full impl uses the raster scan.
-fn detect_rivers(page: &PageEntry, _defects: &mut Vec<Defect>) {
-    // Rivers are detected from page rasters, not pagemap alone.
-    // Placeholder: the fixpoint optimizer will eventually scan raster data.
-    let _ = page; // suppress unused warning
-}
-
-/// Detect hyphen stacks: three or more consecutive hyphenated lines.
-fn detect_hyphen_stacks(page: &PageEntry, _defects: &mut Vec<Defect>) {
-    // Hyphenation data comes from the renderer. Stub for now.
-    let _ = page;
 }
 
 /// Detect short chapter ends: the last page of a chapter has very little text.
@@ -395,7 +395,9 @@ pub fn fixpoint_iteration(
     }
 }
 
-// ── Python FFI exports ─────────────────────────────────────────
+// ── JSON entry points ──────────────────────────────────────────
+// Not callable from Python: no binding is built (a PyO3 binding is in
+// docs/ARCHITECTURE_ROADMAP.md). These are the shape one would call.
 
 /// Run a full scan. Returns JSON bytes for cross-language consumption.
 pub fn scan_json(pagemap_json: &str) -> Result<String, ScanError> {
@@ -419,13 +421,31 @@ pub enum ScanError {
     Json(String),
 }
 
-// ── Python bindings via PyO3 ───────────────────────────────────
-// The #[pyfunction] and #[pymodule] exports are in a separate file
-// (lib_py.rs) compiled with pyo3 feature. The core logic stays pure.
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pagemap in fixtures/agreement.json gives the same widows, orphans
+    /// and runts here as in publisher_prepress.preflight.scan_composition
+    /// (tests/test_cross_implementation.py reads the same file).
+    #[test]
+    fn agrees_with_the_python_scan_on_the_shared_fixture() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../fixtures/agreement.json")).unwrap();
+        let pagemap: PageMap = serde_json::from_value(fixture["pagemap"].clone()).unwrap();
+        let result = scan(&pagemap);
+        let pages = |kind: DefectType| -> Vec<u64> {
+            result.defects.iter().filter(|d| d.defect_type == kind)
+                .map(|d| u64::from(d.page_number)).collect()
+        };
+        let expected = |key: &str| -> Vec<u64> {
+            fixture["expected"][key].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect()
+        };
+        assert_eq!(pages(DefectType::Orphan), expected("orphans"));
+        assert_eq!(pages(DefectType::Widow), expected("widows"));
+        assert_eq!(pages(DefectType::Runt), expected("runts"));
+        assert_eq!(result.unmeasured.len(), 2);
+    }
 
     fn make_test_pagemap() -> PageMap {
         PageMap {

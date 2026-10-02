@@ -14,7 +14,7 @@ carries the invariants that folder enforces and the mistakes that have already b
 
 | Folder | Skill | What lives there |
 |---|---|---|
-| `stages/` | **publisher-stages** | The 24 `@stage(...)` declarations (mechanically checked against `tools/lint_docs_claims.py`, not hand-counted — see E7.3). **Not one module per stage** — `prepress_stages.py` holds `preflight`/`cover`/`cover-preflight`/`finish-gs`, `cover_stages.py` holds the four `cover-brief/art/judge/compose`, `ast-assemble` lives in `structure_stage.py`, and `secondary_output_stages.py` holds `epub`/`onix`. The DAG is derived from these. |
+| `stages/` | **publisher-stages** | The 25 `@stage(...)` declarations (mechanically checked against `tools/lint_docs_claims.py`, not hand-counted — see E7.3). **Not one module per stage** — `prepress_stages.py` holds `preflight`/`cover`/`cover-preflight`/`finish-gs`, `cover_stages.py` holds the four `cover-brief/art/judge/compose`, `ast-assemble` lives in `structure_stage.py`, and `secondary_output_stages.py` holds `epub`/`onix`. The DAG is derived from these. |
 | `platform/` | **publisher-platform** | The substrate: CAS, build cache, the stage registry + DAG integrity checker, sandbox, `db/migrations/`, `routing/policy.yaml`, the Rust crates (cas, pagescan), reproducibility, supply-chain. |
 | `services/` | **publisher-services** | The domain logic stages call into: ingest (DOCX→AST), structure (rules/inference/overrides), prepress (geometry, fontvault, ghostscript, preflight), cover, epub, idml, onix, alttext, agents. epub/onix/alttext are wired (E7.2) — no longer built-but-unreachable. |
 | `schemas/` | **publisher-schemas** | JSON Schema source of truth + the Pydantic/Zod codegen. A schema ID is an API. |

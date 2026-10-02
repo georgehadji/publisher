@@ -446,9 +446,27 @@ def _family_name(font) -> str:
     family = getattr(font, "family", "") or ""
     return family.decode("utf-8", "replace") if isinstance(family, bytes) else str(family)
 
+def _stylesheet(css_path: str | None) -> str:
+    """The CSS a render uses: design-compile's, or the house design's."""
+    if css_path and Path(css_path).exists():
+        return Path(css_path).read_text()
+    from templates import house_designspec
+    from stages.rendering import emit_css
+    return emit_css(house_designspec())
+
+
+def _font_files_salt(inputs: dict) -> str:
+    """Cache-key salt (W7): the bytes of every font file this render would
+    embed. The CSS only names families; which files those resolve to is the
+    worker's disk, so without this a changed or newly installed font was
+    served the PDF rendered with the old one."""
+    from publisher_prepress.fontvault import fontset_hash
+    return fontset_hash(requested_font_families(_stylesheet(inputs.get("css_path"))))
+
+
 @stage(
     name="paginate",
-    version=18,  # v18: fallback CSS from house_designspec (see design-compile v11); <html> takes the book's lang; paraRanges cap read from the pagemap schema. v17: fallback CSS: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
+    version=19,  # v19: the cache key includes the font files' bytes (cache_salt). v18: fallback CSS from house_designspec (see design-compile v11); <html> takes the book's lang; paraRanges cap read from the pagemap schema. v17: fallback CSS: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
                  # v15: keep span: a paragraph's last two words (and its note calls) never split in print; a runt is a one-word last line under RUNT_MAX_FILL of the measure.
                  # v14: weasyprint 70 (URLFetcher subclass; footnote-policy keeps notes on their call page; 2400 s deadline).
                  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
@@ -483,6 +501,7 @@ def _family_name(font) -> str:
     # Alternative impl of one step: `paginate-typst` renders the same
     # doc-effective/1 through pandoc + Typst. stages/__init__.py selects one.
     implements="paginate",
+    cache_salt=_font_files_salt,
     toolchain=["render-engine"],
     fixtures="fixtures/paginate/v1",
     # weasyprint's layout grows with the page count: the first real book
@@ -514,13 +533,7 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
     from stages.rendering import ast_to_html
     html_body = ast_to_html(doc)
 
-    css = ""
-    if css_path and Path(css_path).exists():
-        css = Path(css_path).read_text()
-    else:
-        from templates import house_designspec
-        from stages.rendering import emit_css
-        css = emit_css(house_designspec())
+    css = _stylesheet(css_path)
 
     full_html = PAGE_TEMPLATE.format(css=css, html=html_body)
     families = requested_font_families(css)

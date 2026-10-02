@@ -10,7 +10,26 @@ Gate: None needed (read-only)
 
 from __future__ import annotations
 
-from .runtime import AgentRuntime, AgentRole, TaskBudget
+from .runtime import AgentResult, AgentRuntime, AgentRole, TaskBudget
+
+# The explainer's answer: one explanation per finding it explains. Text only;
+# nothing here can change a build.
+EXPLANATION_SCHEMA = {
+    "type": "object",
+    "properties": {"explanations": {"type": "array", "items": {
+        "type": "object",
+        "properties": {
+            "code": {"type": "string"},
+            "explanation": {"type": "string", "maxLength": 2000},
+            "fix": {"type": "string", "maxLength": 2000},
+            "severity": {"type": "string", "enum": ["blocking", "advisory"]},
+        },
+        "required": ["code", "explanation", "fix", "severity"],
+        "additionalProperties": False,
+    }}},
+    "required": ["explanations"],
+    "additionalProperties": False,
+}
 
 
 class PreflightExplainer:
@@ -36,23 +55,17 @@ class PreflightExplainer:
         preflight_report: dict,
         pagemap: dict | None = None,
         agent_version: str = "1.0",
-    ) -> dict:
-        """
-        Generate natural-language explanations for preflight findings.
-        """
-        result = self._runtime.execute(
+    ) -> AgentResult:
+        """Natural-language explanations of the report's findings. The report
+        is bound to `read_preflight`, so the model reads it through the tool."""
+        return self._runtime.execute(
             role=AgentRole.PREFLIGHT_EXPLAINER,
             agent_version=agent_version,
-            inputs={
-                "checks": preflight_report.get("checks", []),
-                "profile": preflight_report.get("profileId", "unknown"),
-                "pagemap": pagemap or {},
-                "agent_version": agent_version,
-            },
+            inputs={"profile": preflight_report.get("profileId", "unknown")},
             tools=["read_preflight"],
+            output_schema=EXPLANATION_SCHEMA,
+            bound={"report": preflight_report},
         )
-        
-        return result
 
 
 # ── Evaluation helpers ──────────────────────────────────────────

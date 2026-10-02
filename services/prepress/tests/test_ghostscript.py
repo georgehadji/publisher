@@ -240,7 +240,7 @@ def test_bleed_offset_matches_the_trim_offset():
         icc_profile="/tmp/x.icc",
         trim_offset="8.50394 8.50394 8.50394 8.50394",
         bleed_offset="8.50394 8.50394 8.50394 8.50394",
-        title="t", output_condition="c", condition_id="i",
+        title="t", date="D:19700101000000Z", output_condition="c", condition_id="i",
     )
     trim = re.search(r"/PDFXTrimBoxToMediaBoxOffset \[([^\]]+)\]", prologue)
     bleed = re.search(r"/PDFXBleedBoxToTrimBoxOffset \[([^\]]+)\]", prologue)
@@ -303,3 +303,50 @@ def test_the_press_file_drops_link_annotations(tmp_path: Path, monkeypatch):
     to_pdfx(tmp_path / "in.pdf", out, tmp_path)
     press = next(cmd for cmd in calls if "-dPDFX" in cmd)
     assert "-dPreserveAnnots=false" in press
+
+
+# --- reproducible output (W10) -------------------------------------------
+
+def test_pin_identity_makes_clock_made_ids_a_function_of_content(tmp_path: Path):
+    from publisher_prepress.ghostscript import _pin_identity
+
+    def pdf(id_hex: str, uuid: str) -> Path:
+        path = tmp_path / f"{id_hex[:4]}.pdf"
+        path.write_bytes(f"%PDF-1.3\n<x:DocumentID>uuid:{uuid}</x:DocumentID>\n"
+                         f"trailer <</ID [<{id_hex}><{id_hex}>]>>\n%%EOF".encode())
+        return path
+
+    a = pdf("A" * 32, "11111111-2222-3333-4444-555555555555")
+    b = pdf("B" * 32, "66666666-7777-8888-9999-000000000000")
+    size = a.stat().st_size
+    _pin_identity(a)
+    _pin_identity(b)
+
+    assert a.read_bytes() == b.read_bytes()
+    assert a.stat().st_size == size            # same length: no offset moves
+    assert re.search(rb"/ID \[<([0-9A-F]{32})><\1>\]", a.read_bytes())
+
+
+def test_two_conversions_of_one_file_are_byte_identical(tmp_path: Path):
+    """The nightly check's finding: press and proof differed run to run."""
+    import time
+    from publisher_prepress.ghostscript import find_binary, find_cmyk_icc, to_proof
+    gs = find_binary()
+    if gs is None or find_cmyk_icc() is None:
+        pytest.skip("needs ghostscript and a CMYK ICC profile")
+    source = tmp_path / "in.pdf"
+    subprocess.run([gs, "-q", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pdfwrite",
+                    f"-sOutputFile={source}", "-c",
+                    "/Times-Roman findfont 12 scalefont setfont 72 720 moveto (Hello) show showpage"],
+                   check=True, capture_output=True)
+
+    outputs = []
+    for run in (1, 2):
+        press, proof = tmp_path / f"press{run}.pdf", tmp_path / f"proof{run}.pdf"
+        to_pdfx(source, press, tmp_path / f"work{run}")
+        to_proof(source, proof, dpi=150)
+        outputs.append((press.read_bytes(), proof.read_bytes()))
+        time.sleep(1.1)   # a clock-made value would differ across this
+
+    assert outputs[0][0] == outputs[1][0]
+    assert outputs[0][1] == outputs[1][1]

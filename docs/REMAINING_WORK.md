@@ -72,9 +72,18 @@ unchanged, and `_rewrite` has no notion of "found nothing". So every stored op r
 
 Making an unmatched op fatal, as `dc6a6f3` did, has a trap here: the log is append-only
 with no undo, so one op aimed at a node that doesn't exist would leave that manuscript
-unbuildable for good. And a non-fatal report has nowhere to go: `StageResult.warnings` is
-read by nothing (not the executor, the worker or the API), and the API doesn't return
+unbuildable for good. And a non-fatal report had nowhere to go: `StageResult.warnings` was
+read by nothing (not the executor, the worker or the API), and the API didn't return
 per-stage `metrics`.
+
+**Stage warnings reach the reviewer — done (2026-10-02, `WIRING_PLAN.md` W0).**
+- **Stored:** the worker stores each stage's warnings, and a failed stage's diagnostics, in
+  `build_stages.diagnostics` (migration `007`).
+- **Returned:** `GET /v1/builds/:id` returns them with each stage's `metrics`. The Temporal
+  path carries them too.
+- **Kept on a cache hit:** a hit used to return a stage's artifacts alone, so a warning
+  showed on the first build and was gone from every cached rebuild. The cache index now
+  keeps metrics and warnings with the artifacts.
 
 **Ingest ids — done.** `docx_to_ast` now tags every chapter and block node with a
 `sourceRef.docxId`, which is exactly the set of types the schema allows it on (pinned by a
@@ -93,9 +102,12 @@ mirrors `overrides._matches`/`_CHILD_KEYS` exactly, so an op is reported exactly
 `resolve` would skip it. `resolve` itself still skips orphans silently inside the build;
 the report lives where the reviewer looks, not in the build log.
 
-**Still silent:** an op that matches a node but can't act on it. A `retitle` aimed at a
-node with no `attrs.title` (a paragraph) is returned unchanged by `_t_retitle`, and nothing
-reports that either.
+**No longer silent (W1).** An op that matches a node but can't act on it used to come back
+unchanged with no report: a `retitle` aimed at a paragraph, or a `reclassify` whose `from`
+no longer matched. Both are now resolve warnings (`override-op-inapplicable`). An op that
+matches no node at the point it applies is a warning too (`override-op-orphaned`), beside
+the API's `orphanedOps`. The API now checks orphans against the effective document as
+well, so an op aimed at a break an earlier op inserted isn't reported as orphaned.
 
 **Node ids — done.** `GET /v1/manuscripts/:id/structure` gives every chapter and every
 `lowConfidenceNodes` entry a `docxId`: the id an op must carry to target it, or `null` when
@@ -113,8 +125,11 @@ so it would have thrown on first render. `OverrideOp` is now `overrides/1`'s sha
 shows each node's target id, the logged ops aimed at a chapter, and the orphaned ops, and
 says so when a manuscript has no build yet.
 
-**Writing ops — done, unauthenticated by decision.** A chapter with a target id gets a form
-that logs a `retitle` or `flag_ambiguity` through a Server Action (`src/review/actions.ts`).
+**Writing ops — done.** A chapter with a target id gets a form that logs a `retitle`,
+`flag_ambiguity`, `merge` or `demote` through a Server Action (`src/review/actions.ts`).
+Each chapter lists its blocks (W1). A block can open a chapter (`split`), a heading can be
+promoted or demoted, a scene break can go after any block, and an inserted break can be
+removed. A flag can be resolved.
 The action builds the whole op (id, actor, timestamp, shape) from a target id and a text
 field. The browser asserts none of it, so an off-schema op can't be sent. It PATCHes with the
 server-side token and the op id as `Idempotency-Key`, then `refresh()`es the page. An API
@@ -124,12 +139,22 @@ against a recording stub validated the ops it sent against `overrides/1` and thr
 have worked, is gone. `delete` and `reclassify` are left off the form: one is irreversible
 in an undo-less log, the other needs a node-type picker.
 
-**No reviewer authentication (decided: local dev only).** A Server Action is a public POST
-endpoint, and this one writes as the tenant. `npm run dev`/`start` bind `127.0.0.1`,
-verified unreachable on the LAN address. That is the only protection: a standalone
-deployment (`node .next/standalone/server.js`) ignores `-H` and binds per `HOSTNAME`. Every
-op is attributed to one actor, `user:local-reviewer`. Before the UI goes anywhere but
-localhost it needs sign-in, and with sign-in per-reviewer actors.
+**Reviewers sign in — done (2026-10-02, W2).**
+- **Tokens.** Each reviewer has an argon2id token in `PUBLISHER_REVIEWER_TOKENS`
+  (`<hash>:<tenant>:<reviewer>`, `;`-separated, hashed with `npm run hash-token`).
+- **What a reviewer token reaches.** Only the new `review` auth zone: the structure view,
+  the override log and `GET /v1/whoami`. It gets a 403 everywhere else (uploads, builds,
+  webhooks, admin).
+- **Attribution.** A reviewer's op must carry the actor `user:<reviewer>`; the API refuses
+  any other actor with a 403. A tenant token still names its own actor, as agents do.
+- **Sign-in in the web UI.**
+  - `/sign-in` checks the token against `whoami` and keeps it in an httpOnly,
+    SameSite=Strict cookie, Secure in production.
+  - Pages and Server Actions call the API with that token, not a shared one.
+  - `src/proxy.ts` sends a visitor without a session to `/sign-in`.
+  - The shared `PUBLISHER_API_TOKEN` is used only when `PUBLISHER_REVIEW_LOCAL_DEV=1`, and
+    then writes as `user:local-reviewer`.
+- **Still:** single sign-on (OIDC) is a product decision; see `WIRING_PLAN.md` W11.
 
 Also: the log has no undo. Ops are immutable and the schema has no revert op, so a
 reviewer's mistake can only be superseded by a later op, never removed.
@@ -146,9 +171,27 @@ make them reachable. Separately, **no stage constructs any agent class** — gre
 `StructureWrangler|Compositor|PreflightExplainer|AgentRuntime` across `stages/` returns
 nothing. The agents package is dead from both ends.
 
-**Work:** turn `_run_agent_logic` into a real tool-dispatch loop (the docstring at `:311`
-says this is where the LLM call belongs), and decide whether an `agent-propose` stage
-exists at all. Large. Do not start it as a wiring task — it is a design task.
+**Done (W5, docs/WIRING_PLAN.md):** `AgentRuntime` takes an injected `AgentProvider`
+and `execute` is a real loop: the model's tool calls run through the role's `ToolSurface`,
+results go back as `tool` messages, and the final answer is checked against the schema the
+caller passes. Turns, tokens and cost are enforced per turn, not guessed from a tool list.
+Artifacts a tool reads (`bound`) are injected by the runtime and left out of the tool
+declaration, so a model cannot aim a tool at a document it was not given. A tool the call
+did not offer, or one that raises, comes back to the model as an error; it never runs.
+The role-switch simulation is gone; tests use `services/agents/tests/scripted_provider.py`.
+`OpenRouterAgentProvider` (`publisher_agents/openrouter.py`) shares `OpenRouterProvider.chat`,
+so the refusal and reasoning-pin guards are one implementation.
+
+**Wired:** `structure-propose`, given the `api_key` root input, has the Structure Wrangler
+(route `structure-wrangle`, policy v5) review its proposals with `query_nodes`. Its answer
+schema enumerates the ids it was given, so it can drop or reorder, never add or change. A
+failed review keeps every proposal and emits `proposal-review-failed`.
+`evaluate_structure_wrangler` was deleted: it scored the simulation's labels. Acceptance is
+now readable from the log (`ov-pr-*` ids).
+
+**Still open:** the Compositor runs but nothing calls it (W11: `crop`/`render_range` need
+rendered pages). The Preflight Explainer is a library call. No agent call has been made
+with a real key.
 
 ### 1.3 LLM classification is computed and thrown away
 
@@ -183,10 +226,23 @@ stage bumped to v3. `query_nodes` now filters only types that can carry a score.
 not `[]` — when the AST carries no scores or no build has run. The web contract
 (`packages/web/src/types.ts`) and panel were brought in line.
 
+**Consumed (W3/W4, docs/WIRING_PLAN.md):** `structure-infer` now reads `ast/1` and sends
+only the chapters ingest scored below 0.8, keyed by `sourceRef.docxId` -- the id an op
+targets. `structure-propose` (`classification/1 + ast/1 -> agent-proposal/1`, no model call)
+turns each verdict into a proposal: prose -> `merge`, a section heading -> `demote`,
+anything else -> `flag_ambiguity`. The structure view lists the ones not yet accepted;
+`POST /v1/manuscripts/:id/proposals/:pid/accept` builds the op server-side as
+`ov-<proposal id>`, and the panel has an Accept button. Nothing reaches `resolve` unless
+a person accepts it (D9). Not `resolve` consuming it directly, as first guessed: that would
+let model output change a build on its own.
+
 **Still open:**
 - The six `corpus/manuscripts/*.ast.json` predate this and carry no scores. They're valid
   (the field is optional), but they exercise only the unscored path.
-- Nothing consumes `classification/1` (probably `resolve` should, as proposed overrides).
+- Only chapters are sent. Front/back-matter wrappers carry no `sourceRef`, so no op could
+  act on a verdict about them.
+- `split_chapter`, `reclassify` and promote proposals are not produced: a chapter-level
+  verdict has no block to split at, and a chapter is already the top level.
 
 ### 1.4 Both Rust crates are unreachable from Python
 
@@ -203,10 +259,17 @@ no cross-implementation agreement test.
 CI does run `cargo test` and `cargo clippy -- -D warnings` (`ci.yml:119-120`), so the Rust
 is correct — it is just not on any path.
 
-**Work:** either build the PyO3 binding and delete the duplicated logic, or delete the
-unreachable crates and the comment that promises a file that was never written. The second
-is smaller and more honest. If the crates stay, a cross-implementation test (same input,
-same digest / same defects) is the minimum.
+**Done (W7): kept, and pinned to the Python.** The `lib_py.rs` comment is gone; the JSON
+entry points say no binding is built (a PyO3 binding stays in `ARCHITECTURE_ROADMAP.md`).
+Two shared fixtures are each checked by every implementation:
+- `platform/cas/fixtures/agreement.json`: digest and shard path, checked by `cargo test`,
+  `tests/test_cross_implementation.py` (the store the worker writes with) and
+  `packages/api/src/db.test.ts` (the API's `casPath`, the TypeScript reader that is used).
+- `platform/pagescan/fixtures/agreement.json`: widows, orphans and runts of one valid
+  `pagemap/1`, checked by `cargo test` and against `preflight.scan_composition`.
+Writing the second one found that **pagescan could not parse a real pagemap**: its structs
+read snake_case, and `pagemap/1` is camelCase. It reads the schema's names now.
+`platform/cas/ts` was deleted: nothing imported it and nothing tested it.
 
 ---
 
@@ -227,9 +290,13 @@ per 1.4, nothing calls `scan()` from Python at all.
 heuristic river detector that fires on layout metadata is worse than none, because it
 would produce a `false` where the truth is "unknown".
 
+**Done (W7): the "unknown" is said.** The two stub detectors are gone, and every
+`ScanResult` carries `unmeasured: ["river: …", "hyphen-stack: …"]`, so a scan no longer
+reads as clean for a defect class it cannot see.
+
 ### 2.2 Missing preflight checks
 
-`services/prepress/publisher_prepress/preflight.py` implements fourteen checks: trim size
+`services/prepress/publisher_prepress/preflight.py` implements fifteen checks (inside margin added in W6): trim size
 (`:115`), bleed (`:150`), min/max pages (`:175`, `:200`), page multiple (`:225`), colour
 space (`:251`), resolution (`:268`), file size (`:296`), font embedding (`:317`), PDF
 standard (`:335`), interactive content, transparency, ink coverage, rich black text,
@@ -279,30 +346,73 @@ still warns "not measured". Checked end to end: 600 pixels placed at 2 in and 4 
 300 and 150 ppi from both weasyprint's raw PDF and the Ghostscript press file. The real
 book has no images, so it passes. Preflight is v15.
 
-Not implemented, both of which real POD vendors reject on:
+**Done (W6, 2026-10-02): spine caliper and `inside-margin`.**
+- `coverSpec.pageThicknessMm` has no schema default any more. The KDP profiles state KDP's
+  white-paper caliper, 0.0572 mm a page (0.002252 in). A profile that states none still
+  gets a spine, from `geometry.DEFAULT_PAGE_THICKNESS_MM` (0.06), and the `cover` stage
+  warns `spine-caliper-default`, so a guess is no longer presented as a measurement.
+- `bindingSpec.minInsideMarginMm` is a page-count band table. KDP's is stated: 0.375 in up
+  to 150 pages, rising to 0.875 in up to 828. Preflight's `inside-margin` check measures
+  each page's inside margin **from the press PDF** (`publisher_prepress/margins.py`,
+  poppler `pdftotext -bbox`: the word nearest the spine, against the trim box; odd pages
+  bind left). It fails a page below the band for the book's page count. Without
+  `pdftotext` it warns "not measured"; a profile with no table skips. The real book measures
+  26.9 mm at its narrowest. Preflight is v16, cover v13.
 
-- **Spine width vs. actual paper stock.** The `cover` stage reads the profile's
-  `coverSpec.pageThicknessMm`, but no profile states one, so every book gets the schema's
-  0.06 mm default rather than the vendor's real stock caliper.
-- **Gutter/creep** for the bound edge at high page counts.
+Not implemented: **creep** (shingling) is a saddle-stitch problem, and no profile here
+is saddle-stitched.
 
 Profile limits come from the profile schema's defaults when a profile file omits them
 (`profiles.load_profile`): `composition.maxOrphanPages` 0, `pdfSpec.maxInkCoverage` 300%.
-No profile file states either, so every vendor gets the default.
+No vendor publishes either, so they stay schema defaults. That is written down, not guessed.
 
-### 2.3 Eight override ops are declared but unimplementable
+### 2.3 Every override op is implemented
 
-`services/structure/publisher_structure/overrides.py:357` — `_TRANSFORMS` implements four
-ops (reclassify, retitle, delete, flag_ambiguity). `:368` — `UNIMPLEMENTED_OPS` names the
-other eight the schema accepts: `split`, `merge`, `promote`, `demote`, `insert`, `rename`,
-`set_attr`, `resolve_ambiguity`.
+**Done (2026-10-02, `WIRING_PLAN.md` W1).** `services/structure/publisher_structure/override_ops.py`
+(split out of `overrides.py`) implements every op `overrides/1` declares, and
+`UNIMPLEMENTED_OPS` is empty. So the API's 422 refusal list is gone; a test pins it empty.
 
-Since `dc6a6f3` these fail the build loudly instead of vanishing, and a test asserts the
-two sets partition the schema's enum. So this is *safe*, not silent — but a user editing a
-book still cannot split a run-on chapter, which is the single most common real fix.
+| Op | What it does |
+|---|---|
+| `promote` | Raises a heading one level. A level-1 heading becomes a chapter titled with its text, as `split`. |
+| `demote` | Lowers a heading one level. A chapter becomes a level-1 heading of the one before. The inverse of `promote`. |
+| `insert` | Adds a scene or page break after a block. It never adds text: words inserted after the integrity gate would reach the book unchecked. The break gets an id derived from the op, so a `delete` can take it out. |
+| `set_attr` | Sets or removes one attribute the node's type declares (`path` is `/attrs/<name>`). It refuses `title` (retitle's), `level` (promote/demote's), and the derived `id` and `number`. |
+| `resolve_ambiguity` | Clears a node's flags, or only the one named in `value`. |
+| `rename` | **Dropped from the schema.** It meant nothing `retitle` does not, and the API always refused it, so no stored log holds one. |
 
-**Work:** `split` and `merge` are the two worth writing. `set_attr` is nearly free and
-subsumes `rename`/`retitle`.
+Two fixes to existing ops:
+- **`delete` was a silent no-op.** It set a `_deleted` mark that no renderer reads, so a
+  "deleted" paragraph still printed. It now removes the node.
+- **`reclassify` and `retitle` are checked against `ast.schema.json`.** A result the schema
+  rejects is reported as inapplicable instead of reaching the renderers. A reclassify
+  between a paragraph and a blockquote, epigraph, dialogue or sidebar wraps or unwraps the
+  paragraph, so the two reclassifies undo each other.
+
+`resolve` is at v5.
+
+The earlier work on this section, kept for its detail:
+
+**Done (2026-09-30): `split` and `merge`,** the fix for a chapter boundary ingest got wrong.
+- **`split`** targets a block directly inside a chapter, usually the heading ingest missed.
+  It starts a new chapter there, titled with that block's text. The new chapter takes the
+  block's sourceRef, so it can be retitled, or merged back.
+- **`merge`** targets a chapter and joins it to the one before. Its title becomes the
+  first paragraph of what it joins, so no author text is lost.
+- The two are exact inverses. Chapters after the change are renumbered. Existing chapter
+  ids are kept, since cross-references use them, and a new chapter's id is derived from
+  the op, so the same log always builds the same book.
+- An op that does not fit the document is skipped and reported as a resolve warning
+  (`override-op-inapplicable`), not failed: a split at a chapter's first or last block, a
+  merge of the first chapter in its part, a block that is not directly in a chapter. The
+  log is append-only, so a fatal op would leave the manuscript unbuildable for good.
+- The review UI offers "Merge into previous chapter" on each chapter. `split` goes
+  through `PATCH /v1/documents/:id/overrides` for now: the panel lists chapters and
+  sections, not the paragraphs a split targets.
+
+The paragraph picker this section asked for is the review panel's per-chapter block list
+(W1). The panel also no longer misses chapters inside a part, and it shows the latest
+effective document, with overrides applied, rather than the AST from before them.
 
 ---
 
@@ -472,11 +582,26 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
     for ʼ ― ∙ and a few combining accents.
   - **Result.** The book renders in GFS Didot: 813 pages, 165 s.
   - **Still:**
-    - The other templates (Literary, Thriller, Memoir, …) still name faces nobody installs
-      (EB Garamond, Source Serif, Libertinus, Noto, Merriweather). They now fail loudly
-      instead of substituting.
-    - The Typst path doesn't use the vault's files yet.
-    - The font manifest's hashes are still identity hashes, not file hashes.
+    - ~~The other templates name faces the worker image doesn't install.~~ **Done (W8):**
+      they now name faces Debian 13 ships, under the family names those packages index as
+      (EB Garamond 12, Linux Libertine O, Noto Serif, Source Sans 3, Noto Sans Mono), and
+      the image installs them. Debian has no Libertinus, Source Serif, Merriweather or Fira
+      Mono, so those templates changed face. A face gate in `Dockerfile.worker` fails the
+      image build if any template face can't be located; all 16 are.
+    - ~~The Typst path doesn't use the vault's files yet.~~ **Done (W8):** `paginate-typst`
+      copies the vault-resolved files of the faces its preamble names into its scratch dir
+      and runs typst with `--font-path` there and `--ignore-system-fonts`. It refuses a
+      missing design face as `paginate` does, and its cache key includes the files' bytes.
+      Before, Typst never searched `PUBLISHER_FONT_DIRS`, so the licensed faces were
+      invisible to it. Typst subsets the faces it embeds, and there's no switch to stop it;
+      whether that's within PN Katsoulidis's no-subsetting fsType is unchecked, so use the
+      CSS path for that face.
+    - ~~The font manifest's hashes are still identity hashes.~~ **Done (W7):**
+      `build_font_manifest` records each face's file hash when the file is on the machine.
+      More to the point, `paginate`'s cache key now includes the bytes of every font file
+      it would embed (`fontvault.fontset_hash`, via the new `@stage(cache_salt=...)`). The
+      executor passed `fontset_hash=""` to every key, so a changed or newly installed font
+      was served the PDF rendered with the old one.
 - **Footnote calls — fixed.** A note's `<span class="footnote">` used to render after its
   paragraph's `</p>`, so weasyprint set the call number alone on a line of its own. That hit
   every note, all 477 in this book. Notes now render inside the paragraph that cites them
@@ -514,20 +639,43 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
     `test_epubcheck_accepts_the_epub` runs EPUBCheck when `PUBLISHER_EPUBCHECK_JAR` names a
     jar, and skips otherwise.
   - **Still:**
-    - ACE by DAISY (the other §3.12 gate) hasn't been run.
-    - Fonts aren't embedded: GFS Didot could be (OFL), but the commercial faces can't.
-    - EPUBCheck isn't in CI.
+    - ~~ACE by DAISY hasn't been run.~~ **Done (W10):** ACE 1.4.6 runs in CI and fails on
+      serious or critical violations. Its first run found a serious one in every book (no
+      `xml:lang` on the OPF package) and two moderate ones; all fixed, and the corpus books
+      now pass with no findings.
+    - ~~Fonts aren't embedded.~~ **Done (W8):** the `epub` stage takes an optional
+      `designspec/1` (the house design when absent) and embeds every face of the design
+      that is on the worker and licensed `EPUB_EMBED`, with `@font-face` rules for body
+      and chapter titles. A face that isn't, which includes both commercial faces, is
+      left to the reading system and reported (`epub-font-not-embedded`). The house design's
+      EPUB carries GFS Didot's four faces and passes EPUBCheck 5.4.0.
+    - ~~EPUBCheck isn't in CI.~~ **Done (W10):** the `python` job installs EPUBCheck 5.4.0,
+      checks the jar's sha256 and a digest of its `lib/` tree, and the suite step fails if
+      `test_epubcheck_accepts_the_epub` skipped. ACE likewise (above).
 - Its diagrams drawn from VML lines and arrows (58 `w:pict` shapes) keep their text, but the
-  lines and arrows are dropped.
-- Captions typed as prose ("Εικόνα 6: …") aren't attached to their figures.
-- Bold inherited only through a style isn't seen by the bold-heading rule; this book sets it
-  directly.
+  lines and arrows are dropped. **Now counted (W9):** `ingest` reports `shapes_dropped`,
+  `pictures_dropped` (old VML pictures) and `objects_dropped` (OLE) and warns
+  `drawings-dropped`, so a book that lost its arrows says so. The drawings themselves are
+  still not kept; a VML picture could be read into a figure when a book needs it.
+- ~~Captions typed as prose ("Εικόνα 6: …") aren't attached to their figures.~~ **Done (W9):**
+  a paragraph directly after a figure that opens "Εικόνα/Σχήμα/Πίνακας/Figure/Table N"
+  becomes the figure's `caption` and is removed from the text (moved, not copied); the
+  no-loss check counts captions. The caption is a plain string, so its marks are dropped.
+- ~~Bold inherited only through a style isn't seen by the bold-heading rule.~~ **Done
+  (W9):** bold resolves through the run, its character style and its paragraph style, each
+  up its `basedOn` chain. Bold's toggle (XOR) semantics aren't modelled; the nearer setting wins.
 - Validating the book's AST takes about 22 s. It's linear now, but Python `jsonschema` is slow
   per node.
 - Equations need an OMML → MathML path and a renderer case before a STEM book can build.
-- Endnotes become footnotes (the AST has no endnote node), so their text survives but they
-  print at the page foot.
-- `w:sym` (Symbol/Wingdings characters) is still unread and still unchecked.
+- ~~Endnotes become footnotes.~~ **Done (W9):** `ast/1` has an `endnote` node. Ingest emits
+  it where Word has one, placed like a footnote; print, EPUB (`epub:type="endnotes"`) and
+  Typst set them at the end of their chapter or section, numbered through the book; and
+  `ast_text` reads them there, so both integrity checks hold. IDML (from the same HTML)
+  carries the notes but not their numbers, which are CSS-generated.
+- ~~`w:sym` is still unread and still unchecked.~~ **Done (W9):** read through Symbol (Adobe's
+  encoding) and Wingdings (its arrows only) tables, and counted by the no-loss oracle; an
+  unmapped symbol fails ingest by font and code. The 140 KB Pontic manuscript had 23
+  Wingdings arrows (Word's AutoCorrect for "-->") that were dropped with every check green.
 - **`ast.schema.json` validation — fixed, now linear.** The five AST unions (`bodyNode`,
   `blockNode`, `inlineNode`, `frontMatterNode`, `backMatterNode`) were `oneOf`, which
   `jsonschema` evaluates in full, every branch at every depth. That was exponential in
@@ -555,10 +703,10 @@ This is **honestly disclosed** at `ci.yml:160-162` ("CveGate is a placeholder"),
 real gates in that job are `pip-audit --require-hashes` and `npm audit --audit-level=high`,
 both of which do fail. So the risk is documentation, not security.
 
-**Work:** either populate it from Trivy/Grype as the docstring says, or delete it and let
-pip-audit/npm audit be the whole story. Deleting is smaller.
+**Done (W7): deleted**, with its test and the CI comment. `pip-audit` and `npm audit`
+are the CVE gates.
 
-### 3.3 `packages/web` in CI — built and type-checked; still no tests
+### 3.3 `packages/web` in CI — built, type-checked and tested
 
 **Done.** CI has a `web` job: `npm ci` then `npm run build`. `next build` runs TypeScript over
 the whole app and compiles every route, and it needs no environment (the review page is
@@ -567,8 +715,10 @@ only on tracked files (`next-env.d.ts` and `.next/` are gitignored). Reintroduci
 panel's old read of `ChapterReview.id` fails it with `TS2339`. The step is classified in
 `tests/meta/test_gates_can_fail.py` like the API's `tsc`.
 
-**Still:** `packages/web` has zero test files. `actions.ts`'s input checks and the panel's
-rendering were verified only by a manual stub-API smoke run.
+**Done (W10):** vitest, 40 tests. `actions.test.ts` drives every refusal path of the
+Server Actions and validates each op a form builds against `overrides/1` itself;
+`StructureReviewPanel.test.tsx` renders the states that must not read as all-clear. The
+`web` job runs them.
 
 ### 3.4 No scheduled CI
 
@@ -580,20 +730,47 @@ runs periodically — and byte-reproducibility is precisely the property that de
 
 **Work:** a nightly `schedule:` running the reproducibility checker. Small.
 
-### 3.5 Inference is wired but incomplete
+**Done (W10), and it found four defects on its first run.** The checker compared nothing:
+it hashed whatever files sat in a directory. `tracer_bullet.py --reproducibility` now builds
+each synthetic manuscript cold, cold again in a separate store, and from the first build's
+cache, and `publisher_reproducibility.compare_runs` fails any artifact whose bytes differ
+or that a run lacks; the cached build must also run nothing. `.github/workflows/nightly.yml`
+runs it (`schedule:` + `workflow_dispatch:`) with the real engines. First run:
+- **The press file and the proof differed every build.** Ghostscript stamps the wall clock
+  into Info and XMP and makes `/ID` and XMP's DocumentID from it; `SOURCE_DATE_EPOCH`
+  doesn't reach it. Dates are now pinned (a `/DOCINFO` pdfmark from `SOURCE_DATE_EPOCH`,
+  default 0, as Typst and the EPUB already were), and `/ID` and the uuid are rewritten at
+  equal length from a digest of the rest of the file (`ghostscript._pin_identity`). PDF/X
+  requires both, so they aren't omitted. `finish` v12.
+- **Every build manifest differed:** `startedAt`/`completedAt` were the wall clock at
+  package time (not even the build's start). Optional in `manifest/1` and read by nothing;
+  dropped. `package` v4.
+- **Two of the six synthetic books never passed the text-integrity gate**, identically at
+  HEAD: `code.content` is a string, `ast_to_html` prints it, `ast_text` skipped it. Any book
+  with a code block failed with nothing lost. Fixed; `ast-assemble` v6.
+- After the fixes, all six books: 0 failed.
 
-`services/structure/publisher_structure/inference.py:257` — `OpenRouterProvider` is a real
-network client (auth, retry on 429/5xx, response parsing). Its own docstring (`:268-273`)
-names what it deliberately does not do:
+Also found: CI on master has been red. `contracts` failed on `ModuleNotFoundError:
+jsonschema` (`profiles/` and `publisher_structure` import it, nothing declared it); now
+declared by `publisher-structure` and `publisher-agents`. `supply-chain` failed on a critical
+Next.js advisory (GHSA-vcvr-r3jv-pc5j); `next` is now 16.3.8, and `npm audit
+--audit-level=high` is clean (two moderate advisories remain in vitest's dev-only tree).
 
-- no `response_format` structured-output enforcement — the model can return prose and the
-  parse will fail at runtime rather than being prevented;
-- no reasoning-effort or provider-pinning, though `platform/routing/policy.yaml` has a
-  schema for both;
-- `PromptCacheManager` still returns a placeholder prefix, so prompt caching saves nothing.
+### 3.5 Inference is wired; not yet run against the live API
 
-**Work:** `response_format` first — it is the one that converts a class of runtime failures
-into impossible states.
+**Done (W3):** `OpenRouterProvider` sends strict `response_format` built from
+`classification.schema.json`'s closed label set (`publisher_structure/classify_contract.py`),
+the route's `provider` and `reasoning` settings from `policy.yaml` verbatim (pinned, no
+fallbacks, `require_parameters`), and a real system prompt (route prompt version 1.1, policy
+version 4). The reply is still checked: schema, and only sourceRefs that were sent. A reply
+that reasoned on an `effort: none` route fails, and so does a refusal.
+`PromptCacheManager` returns that same prompt as its prefix.
+
+**Still open:**
+- No call has been made with a real key from this repo; the request shape is pinned by
+  tests (`services/structure/tests/test_classify_contract.py`), not by a live response.
+- `InferenceGateway`'s own cache (`_check_cache`/`_write_to_cache`) is still a stub. The
+  stage cache covers a repeat build of the same AST.
 
 ---
 

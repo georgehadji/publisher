@@ -33,7 +33,15 @@ from publisher_structure.overrides import (
 
 @stage(
     name="resolve",
-    version=3,   # v2: an override op with no transform now fails the build instead of
+    version=5,   # v5: every overrides/1 op applies (promote, demote, insert,
+                 # set_attr, resolve_ambiguity; delete REMOVES the node, where it
+                 # used to set a mark nothing read). A matched op that cannot act
+                 # (a retitle of a paragraph, a stale reclassify) and an op that
+                 # matches no node are both reported as warnings.
+                 # v4: split and merge apply; an op that does not fit the document
+                 # (split at a chapter's first block, merge of the first chapter)
+                 # is skipped and reported as a warning, not fatal -- the log is
+                 # append-only. v2: an override op with no transform now fails the build instead of
                  # being skipped -- see publisher_structure.overrides.UnsupportedOverrideOp.
                  # v3: reads the overrides/1 shape (`from`/`to`/`at`, object sourceRef)
                  # via parse_overrides; v2's OverrideOp(**op) raised TypeError on it.
@@ -79,8 +87,10 @@ def resolve(ctx: StageCtx, ast: str | None = None, overrides_path: str | None = 
                 )],
             ) from exc
 
+    inapplicable: list = []
+    orphaned: list = []
     try:
-        effective = apply_overrides(ast_doc, ops)
+        effective = apply_overrides(ast_doc, ops, inapplicable, orphaned)
     except UnsupportedOverrideOp as exc:
         # BAD_INPUT, not an internal error: the override log is a valid `overrides/1`
         # document asking for something this layer cannot do. Surfaced as a diagnostic
@@ -93,8 +103,8 @@ def resolve(ctx: StageCtx, ast: str | None = None, overrides_path: str | None = 
                 code="override-op-unsupported",
                 severity="error",
                 human_message=str(exc),
-                suggested_fix="Remove the override, or express the same intent with an "
-                              "implemented op (reclassify, retitle, delete, flag_ambiguity).",
+                suggested_fix="Supersede it with a later op this layer implements; "
+                              "an op outside overrides/1 never passes the API's validation.",
             )],
         ) from exc
 
@@ -103,7 +113,31 @@ def resolve(ctx: StageCtx, ast: str | None = None, overrides_path: str | None = 
     doc_bytes = json.dumps(effective, indent=2).encode("utf-8")
     ref = cas.put(doc_bytes, media_type=MediaType("application/json"))
 
-    print(f"  [resolve] Applied {len(ops)} override(s) -> {ref.hash}")
+    # Not fatal (the log is append-only: failing would leave the manuscript
+    # unbuildable for good) and not silent: the reviewer is told it did not take.
+    warnings = [
+        Diagnostic(
+            code="override-op-inapplicable",
+            severity="warning",
+            human_message=f"override {op.id!r} ({op.op}) was not applied: {reason}",
+            suggested_fix="Aim the op at a different block, or supersede it with a later op.",
+            source_ref=op.sourceRef,
+        )
+        for op, reason in inapplicable
+    ] + [
+        Diagnostic(
+            code="override-op-orphaned",
+            severity="warning",
+            human_message=f"override {op.id!r} ({op.op}) was not applied: "
+                          f"no node has the id {op.sourceRef!r}",
+            suggested_fix="The text it aimed at changed on re-ingest; aim a new op at the "
+                          "node as it is now.",
+            source_ref=op.sourceRef,
+        )
+        for op in orphaned
+    ]
+    applied = len(ops) - len(inapplicable) - len(orphaned)
+    print(f"  [resolve] Applied {applied} of {len(ops)} override(s) -> {ref.hash}")
 
     return StageResult(
         artifacts=[
@@ -114,5 +148,8 @@ def resolve(ctx: StageCtx, ast: str | None = None, overrides_path: str | None = 
                 size=len(doc_bytes),
             ),
         ],
-        metrics={"overrides_applied": len(ops)},
+        metrics={"overrides_applied": applied,
+                 "overrides_inapplicable": len(inapplicable),
+                 "overrides_orphaned": len(orphaned)},
+        warnings=warnings,
     )

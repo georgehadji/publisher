@@ -18,6 +18,9 @@ coverSpec:
   paperType: matte
   ink: full-color
   finish: perfect-bound
+  # KDP's spine formula, black ink on white paper: 0.002252 in a page. Cream is
+  # 0.0025 in (0.0635 mm), colour 0.002347 in -- a profile for either states its own.
+  pageThicknessMm: 0.0572
 proofSpec:
   watermark: true
   dpi: 150
@@ -25,6 +28,14 @@ proofSpec:
 minPages: 24
 maxPages: 828
 pageSizeMultiple: 4
+# KDP's minimum inside margin by page count (0.375 / 0.5 / 0.625 / 0.75 / 0.875 in).
+bindingSpec:
+  minInsideMarginMm:
+    - {maxPages: 150, mm: 9.525}
+    - {maxPages: 300, mm: 12.7}
+    - {maxPages: 500, mm: 15.875}
+    - {maxPages: 700, mm: 19.05}
+    - {maxPages: 828, mm: 22.225}
 ---
 # KDP US Trade 5.5x8.5
 schema: profile/1
@@ -45,6 +56,9 @@ coverSpec:
   paperType: matte
   ink: full-color
   finish: perfect-bound
+  # KDP's spine formula, black ink on white paper: 0.002252 in a page. Cream is
+  # 0.0025 in (0.0635 mm), colour 0.002347 in -- a profile for either states its own.
+  pageThicknessMm: 0.0572
 proofSpec:
   watermark: true
   dpi: 150
@@ -52,6 +66,14 @@ proofSpec:
 minPages: 24
 maxPages: 828
 pageSizeMultiple: 4
+# KDP's minimum inside margin by page count (0.375 / 0.5 / 0.625 / 0.75 / 0.875 in).
+bindingSpec:
+  minInsideMarginMm:
+    - {maxPages: 150, mm: 9.525}
+    - {maxPages: 300, mm: 12.7}
+    - {maxPages: 500, mm: 15.875}
+    - {maxPages: 700, mm: 19.05}
+    - {maxPages: 828, mm: 22.225}
 ---
 # KDP US Trade 8.5x11
 schema: profile/1
@@ -72,6 +94,9 @@ coverSpec:
   paperType: matte
   ink: full-color
   finish: perfect-bound
+  # KDP's spine formula, black ink on white paper: 0.002252 in a page. Cream is
+  # 0.0025 in (0.0635 mm), colour 0.002347 in -- a profile for either states its own.
+  pageThicknessMm: 0.0572
 proofSpec:
   watermark: true
   dpi: 150
@@ -79,3 +104,11 @@ proofSpec:
 minPages: 24
 maxPages: 828
 pageSizeMultiple: 4
+# KDP's minimum inside margin by page count (0.375 / 0.5 / 0.625 / 0.75 / 0.875 in).
+bindingSpec:
+  minInsideMarginMm:
+    - {maxPages: 150, mm: 9.525}
+    - {maxPages: 300, mm: 12.7}
+    - {maxPages: 500, mm: 15.875}
+    - {maxPages: 700, mm: 19.05}
+    - {maxPages: 828, mm: 22.225}

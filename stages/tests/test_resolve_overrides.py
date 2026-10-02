@@ -110,3 +110,34 @@ def test_an_override_on_an_ingested_book_takes_effect(tmp_path):
     result = resolve(ctx, ast=_write(tmp_path, "ast.json", ast),
                      overrides_path=_write(tmp_path, "ov.json", log))
     assert _effective(ctx, result)["body"][0]["attrs"]["title"] == "Chapter the First"
+
+
+def test_resolve_reports_an_op_that_does_not_fit_as_a_warning(tmp_path):
+    """A merge of the book's first chapter cannot apply. Failing would leave the
+    manuscript unbuildable (the log is append-only); dropping it silently would
+    tell the reviewer it took. It is a warning on the stage result."""
+    ctx = _ctx(tmp_path)
+    log = {"schema": "overrides/1", "documentId": "ms-1", "astVersion": 1, "ops": [{
+        "id": "ov-1", "sourceRef": {"docxId": "p1"}, "op": "merge",
+        "actor": "user:reviewer", "at": "2026-01-01T00:00:00Z",
+    }]}
+    result = resolve(ctx, ast=_write(tmp_path, "ast.json", AST),
+                     overrides_path=_write(tmp_path, "ov.json", log))
+    assert _effective(ctx, result) == AST
+    assert [w.code for w in result.warnings] == ["override-op-inapplicable"]
+    assert result.metrics["overrides_inapplicable"] == 1
+
+
+def test_resolve_reports_an_op_that_matches_nothing_as_a_warning(tmp_path):
+    """An op whose node is gone (its text changed on re-ingest) used to be
+    skipped with no word in the build: only the API's review view showed it."""
+    ctx = _ctx(tmp_path)
+    log = {"schema": "overrides/1", "documentId": "ms-1", "astVersion": 1, "ops": [{
+        "id": "ov-1", "sourceRef": {"docxId": "gone"}, "op": "retitle", "value": "X",
+        "actor": "user:reviewer", "at": "2026-01-01T00:00:00Z",
+    }]}
+    result = resolve(ctx, ast=_write(tmp_path, "ast.json", AST),
+                     overrides_path=_write(tmp_path, "ov.json", log))
+    assert _effective(ctx, result) == AST
+    assert [(w.code, w.source_ref) for w in result.warnings] == [("override-op-orphaned", "gone")]
+    assert (result.metrics["overrides_applied"], result.metrics["overrides_orphaned"]) == (0, 1)

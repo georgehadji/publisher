@@ -36,7 +36,7 @@ from stages.rendering import emit_css
     # silently ignored, so no chapter or front-matter section started on a recto.
     # v5: the built-in spec is set in GFS Didot. EB Garamond was never installed
     # anywhere, so every v4 render was in a substitute face.
-    version=11,  # v11: the completed DesignSpec (templates.complete_designspec) -- justification with hyphens, indent, gutter, recto/verso heads by source, chapter title body x scaleRatio^3; profile from profiles.resolve_profile. v10: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v9: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
+    version=12,  # v12: the stylesheet sets endnotes at a chapter's end (W9). v11: the completed DesignSpec (templates.complete_designspec) -- justification with hyphens, indent, gutter, recto/verso heads by source, chapter title body x scaleRatio^3; profile from profiles.resolve_profile. v10: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v9: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
                  # v8: .keep { white-space: nowrap } (keep span: a paragraph's last two words never split in print (no runts).) v7: footnote-policy keeps each note on its call's page (weasyprint 70).
                  # v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped.
     inputs={"designspec_path": "designspec/1", "profile_name": "profile/1"},

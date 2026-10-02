@@ -47,6 +47,7 @@ from .docx_rich import (
     MediaSink,
     UnsupportedContent,
     block_children,
+    dropped_drawings,
     paragraph_blocks,
     read_footnotes,
     source_texts,
@@ -138,6 +139,12 @@ BACK_MATTER_BY_PATTERN = 0.9  # the title matched an explicit back-matter string
 NUMBERED_BOLD_HEADING = 0.85  # a typed section number AND the whole line bold
 NAMED_BOLD_HEADING = 0.85     # a known section name ("Πρόλογος") AND the whole line bold
 
+# A caption the author typed as the paragraph under a picture (W9), matched on
+# `_fold` text: "Εικόνα 6: ...", "Figure 3.", "Πίνακας 2". Only directly after
+# a figure: the same words opening any other paragraph are prose about it.
+CAPTION = re.compile(r"^(ΕΙΚΟΝΑ|ΕΙΚ\.|ΣΧΗΜΑ|ΣΧ\.|ΠΙΝΑΚΑΣ|FIGURE|FIG\.|TABLE|PLATE)\s*\d+")
+MAX_CAPTION_CHARS = 1024   # figure.attrs.caption's maxLength in ast.schema.json
+
 
 @dataclass(frozen=True)
 class Block:
@@ -162,22 +169,62 @@ def _fold(text: str) -> str:
     return " ".join(bare.upper().split()).rstrip(":").strip()
 
 
-def _all_bold(p) -> bool:
-    """Every run that carries text is bold (direct formatting, as manuscripts set it).
+def _style_bold(document) -> dict[str, bool | None]:
+    """style id -> whether the style sets bold, through its `basedOn` chain;
+    None where no style in the chain says. Resolved once per document (W9).
 
-    ponytail: bold inherited from a paragraph or character style is not seen;
-    read the style chain if a book sets its headings bold only through a style.
+    ponytail: bold is a toggle property, and OOXML XORs a character style's
+    bold against its paragraph style's; here the nearer one simply wins. Model
+    the toggle if a book sets bold in both and means plain.
     """
+    styles = {s.get(f"{W}styleId"): s for s in document.styles.element.findall(f"{W}style")}
+    resolved: dict[str, bool | None] = {}
+
+    def bold(style_id: str | None, seen: frozenset = frozenset()) -> bool | None:
+        if style_id in resolved:
+            return resolved[style_id]
+        el = styles.get(style_id)
+        if el is None or style_id in seen:   # unknown, or a basedOn cycle
+            return None
+        flag = el.find(f"{W}rPr/{W}b")
+        base = el.find(f"{W}basedOn")
+        value = (_toggle_on(flag) if flag is not None
+                 else bold(base.get(f"{W}val"), seen | {style_id}) if base is not None
+                 else None)
+        resolved[style_id] = value
+        return value
+
+    return {style_id: bold(style_id) for style_id in styles}
+
+
+def _all_bold(p, style_bold: dict[str, bool | None], default_style: str | None) -> bool:
+    """Every run that carries text is bold: set on the run directly, or by its
+    character style, or by its paragraph's style -- nearest first. Manuscripts
+    usually set it directly; a book whose headings are bold only through a
+    style used to have none found (W9).
+    """
+    style_ref = p.find(f"{W}pPr/{W}pStyle")
+    para_bold = style_bold.get(style_ref.get(f"{W}val") if style_ref is not None else default_style)
+
+    def run_bold(r) -> bool:
+        direct = r.find(f"{W}rPr/{W}b")
+        if direct is not None:
+            return _toggle_on(direct)
+        char_style = r.find(f"{W}rPr/{W}rStyle")
+        char_bold = style_bold.get(char_style.get(f"{W}val")) if char_style is not None else None
+        return bool(char_bold if char_bold is not None else para_bold)
+
     runs = [r for r in p.iter(f"{W}r") if any((t.text or "").strip() for t in r.iter(f"{W}t"))]
-    return bool(runs) and all(_toggle_on(r.find(f"{W}rPr/{W}b")) for r in runs)
+    return bool(runs) and all(run_bold(r) for r in runs)
 
 
-def _heading_depth(p, text: str) -> tuple[int | None, float | None]:
+def _heading_depth(p, text: str, style_bold: dict[str, bool | None],
+                   default_style: str | None) -> tuple[int | None, float | None]:
     """(depth, confidence) of a bold heading, or (None, None).
 
     Depth 1 opens a chapter; deeper is a heading inside one.
     """
-    if not text or not _all_bold(p):
+    if not text or not _all_bold(p, style_bold, default_style):
         return None, None
     number = SECTION_NUMBER.match(text)
     if number and len(text) <= MAX_NUMBERED_HEADING_CHARS:
@@ -241,6 +288,8 @@ def read_blocks(
     style_names = {s.style_id: s.name for s in document.styles}
     default_style = document.styles.default(WD_STYLE_TYPE.PARAGRAPH)
     default_name = default_style.name if default_style is not None else "Normal"
+    default_id = default_style.style_id if default_style is not None else None
+    style_bold = _style_bold(document)
     footnotes = read_footnotes(document, store_media)
     # Numbering runs across the whole document, so the counter is threaded
     # through every paragraph and cell rather than restarting per block.
@@ -285,7 +334,7 @@ def read_blocks(
             confidence = (STYLED_UPPER_HEADING if upper and styled
                           else STYLED_HEADING if styled else UPPER_ONLY_HEADING)
         elif not toc_entry:
-            depth, bold_confidence = _heading_depth(item._p, text)
+            depth, bold_confidence = _heading_depth(item._p, text, style_bold, default_id)
             if depth == 1:
                 is_heading, confidence = True, bold_confidence
             elif depth and nodes[0].get("type") == "paragraph":
@@ -443,7 +492,7 @@ def _find_body_start(sections: list[tuple]) -> int:
 # table rows/cells, or inline runs.
 SOURCE_REF_TYPES = frozenset({
     "part", "chapter", "paragraph", "heading", "blockquote", "verse", "list", "table",
-    "figure", "footnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code",
+    "figure", "footnote", "endnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code",
     "equation", "pageBreak",
 })
 
@@ -492,6 +541,38 @@ def _assign_source_refs(ast: dict) -> None:
         walk(ast.get(root))
 
 
+def _attach_captions(nodes) -> None:
+    """Move a caption the author typed as prose under a figure into that
+    figure's `caption` (W9). The paragraph is REMOVED, so the text moves rather
+    than being printed twice; the no-loss check below counts captions, and
+    ast-assemble's integrity gate reads them in the same place.
+
+    The caption is a plain string in the schema, so the paragraph's marks
+    (an italic word in it) do not come along.
+    """
+    if not isinstance(nodes, list):
+        return
+    i = 0
+    while i < len(nodes):
+        node = nodes[i]
+        if isinstance(node, dict):
+            _attach_captions(node.get("content"))
+            following = nodes[i + 1] if i + 1 < len(nodes) else None
+            if (node.get("type") == "figure" and "caption" not in node["attrs"]
+                    and isinstance(following, dict) and following.get("type") == "paragraph"):
+                text = _node_text(following).strip()
+                if CAPTION.match(_fold(text)) and len(text) <= MAX_CAPTION_CHARS:
+                    node["attrs"]["caption"] = text
+                    del nodes[i + 1]
+        i += 1
+
+
+def drawings_dropped(path: str | Path) -> dict[str, int]:
+    """`docx_rich.dropped_drawings` for a DOCX on disk: what ingest saw and could
+    not keep (shapes, VML pictures, OLE objects). For the ingest stage's report."""
+    return dropped_drawings(docx.Document(str(path)))
+
+
 def _assert_no_text_lost(sources: list[str], ast: dict) -> None:
     """Post-condition: no DOCX text was dropped on the way into the AST.
 
@@ -502,9 +583,10 @@ def _assert_no_text_lost(sources: list[str], ast: dict) -> None:
 
     def walk(node) -> None:
         if isinstance(node, dict):
-            title = (node.get("attrs") or {}).get("title")
-            if title:
-                emitted.append(title)
+            for key in ("title", "caption"):
+                value = (node.get("attrs") or {}).get(key)
+                if value:
+                    emitted.append(value)
             if isinstance(node.get("content"), list):
                 # One chunk per block, with its text nodes concatenated and NOT
                 # separated: marks split a single sentence into several text
@@ -677,6 +759,8 @@ def docx_to_ast(
         },
     }
 
+    for root in (front_matter, body, back_matter):
+        _attach_captions(root)
     _assign_source_refs(ast)
     _assert_no_text_lost(sources, ast)
 

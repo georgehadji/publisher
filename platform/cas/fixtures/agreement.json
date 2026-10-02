@@ -1,0 +1,17 @@
+[
+  {
+    "text": "hello world",
+    "sha256": "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+    "path": "b9/4d/b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+  },
+  {
+    "text": "Η ποντιακή διάλεκτος — ένα κείμενο",
+    "sha256": "50ffbf43e100c75025779908618a123c57c92eab393db5175f5c8e783b3df93d",
+    "path": "50/ff/50ffbf43e100c75025779908618a123c57c92eab393db5175f5c8e783b3df93d"
+  },
+  {
+    "text": "line one\nline two\r\n",
+    "sha256": "8c7668e428096f1a8d66a54d0ca3e727ed4ac884e7451e228eaccc8905233194",
+    "path": "8c/76/8c7668e428096f1a8d66a54d0ca3e727ed4ac884e7451e228eaccc8905233194"
+  }
+]

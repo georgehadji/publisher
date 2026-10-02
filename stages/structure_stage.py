@@ -42,7 +42,7 @@ from stages.text_stream import ast_text, divergence, excerpt
     # v5: the AST's text stream moved to stages/text_stream.py (`ast_text`),
     # shared with the epub stage's own check, and now counts figure/table
     # captions and epigraph sources, which the HTML has always rendered.
-    version=5,
+    version=6,  # v6: the gate reads a code block's text (a string, not nodes) and endnotes where they print (W9/W10).
     inputs={"html": "typescript-html/1", "source": "raw-source/1"},
     outputs={"ast": "ast/1", "integrity-report": "integrity-report/1"},
     terminal_outputs=["integrity-report"],   # delivered via the API, never consumed

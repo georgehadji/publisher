@@ -29,7 +29,11 @@ FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1
 # before assuming the workaround still holds.
 #
 # fonts-gfs-didot is the house default face (templates, design-compile's
-# built-in spec): OFL, full polytonic Greek. paginate REFUSES to render a family
+# built-in spec): OFL, full polytonic Greek. fonts-ebgaramond,
+# fonts-linuxlibertine, fonts-noto-core and fonts-adobe-sourcesans3 carry every
+# other template's faces (W8) -- all OFL; the template names are the family
+# names these packages index under ("EB Garamond 12", "Source Sans 3"), checked
+# by the face gate below rather than assumed. paginate REFUSES to render a family
 # it cannot find (INFRA) rather than set the book in a substitute, so without
 # this package every default build fails. The licensed faces (Minion Pro,
 # PN Katsoulidis) are not redistributable and are not in this image: mount them
@@ -46,6 +50,7 @@ FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 \
     libffi-dev shared-mime-info fonts-liberation fonts-gfs-didot \
+    fonts-ebgaramond fonts-linuxlibertine fonts-noto-core fonts-adobe-sourcesans3 \
     ghostscript poppler-utils \
     libreoffice-writer \
     curl xz-utils ca-certificates \
@@ -112,6 +117,17 @@ COPY tracer_bullet.py worker.py cli.py ./
 # was never exercised because nothing in worker.py's own import chain needs
 # either package.
 ENV PYTHONPATH=/app/platform/stages/py:/app/platform/cas/py:/app/platform/cache/py:/app/platform/exec/py:/app/platform/sandbox/py:/app/platform/reproducibility:/app/platform/supply-chain:/app/services/structure:/app/services/agents:/app/services/ingest:/app/services/cover:/app/services/epub:/app/services/idml:/app/services/onix:/app/services/prepress:/app/services/alttext
+
+# Face gate (W8): every face a template names must be on disk here, found the
+# way paginate finds it. A template naming a face no package ships would
+# otherwise fail every build that picks it, at render time (paginate refuses a
+# missing face, INFRA); here it fails the image build instead.
+RUN python -c "\
+import templates; from publisher_prepress.fontvault import locate_font; \
+faces = {(f['family'], f['style']) for t in templates.TEMPLATES.values() for f in t.get('fonts', [])} | \
+        {(t['typography'][k]['family'], 'regular') for t in templates.TEMPLATES.values() for k in ('bodyFont', 'headingFont') if k in t['typography']}; \
+missing = sorted(f for f in faces if locate_font(*f) is None); \
+assert not missing, f'template faces not in this image: {missing}'; print(len(faces), 'template faces located')"
 
 # E2.2/E3.2 interaction found and reproduced empirically while verifying E3.1
 # against a real build in this container: publisher_exec's deadline_mw runs

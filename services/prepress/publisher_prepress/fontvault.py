@@ -9,7 +9,7 @@ don't cover the target output. Enforced in the domain layer, not the UI.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,6 +83,13 @@ for family, styles in {
     "Libertinus Sans": ["regular", "italic", "bold"],
     "Fira Mono": ["regular", "bold"],
     "Merriweather": ["regular", "italic", "bold", "bold-italic"],
+    # What the worker image ships (Debian packages in Dockerfile.worker), by
+    # the name-ID-1 family the vault indexes them under -- Debian's EB Garamond
+    # is "EB Garamond 12"; its Source Sans is "Source Sans 3". All OFL-1.1.
+    "EB Garamond 12": ["regular", "italic", "bold"],
+    "Linux Libertine O": ["regular", "italic", "bold", "bold-italic"],
+    "Source Sans 3": ["regular", "italic", "bold", "bold-italic"],
+    "Noto Sans Mono": ["regular", "bold"],
 }.items():
     for style in styles:
         register_font(FontAsset(
@@ -194,16 +201,37 @@ def build_font_manifest(font_refs: list[tuple[str, str]], build_id: str) -> Font
                 f"Font '{family} ({style})' is not in the vault. "
                 "Upload it or use a bundled font."
             )
-        assets.append(font)
+        # The face's bytes when its file is on this machine; the vault's
+        # `unverified:` identity only when it is not.
+        path = locate_font(family, style)
+        assets.append(replace(font, hash=hash_font_file(path)) if path else font)
     
     return FontLicenseManifest(fonts=assets, buildId=build_id)
 
 
 def hash_font_file(path: str | Path) -> str:
     """Compute sha256 of a font file."""
-    h = hashlib.sha256()
-    h.update(Path(path).read_bytes())
-    return h.hexdigest()
+    stat = Path(path).stat()
+    return _hash_file(str(path), stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=256)
+def _hash_file(path: str, _mtime_ns: int, _size: int) -> str:
+    # Keyed on mtime and size too, so a font replaced in place is read again.
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def fontset_hash(families: list[str]) -> str:
+    """One digest of the font FILES a render of `families` would embed: each
+    located face's path and bytes. A family with no file contributes its name
+    as missing, so installing it changes the digest too. This is what a cache
+    key needs -- a vault entry's metadata does not change when its file does."""
+    parts = []
+    for family in sorted(set(families)):
+        for style in FACE_CSS:
+            path = locate_font(family, style)
+            parts.append(f"{family}/{style}=" + (hash_font_file(path) if path else "missing"))
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 # ── Font files: where a vault face actually lives on this machine ─────────
@@ -218,7 +246,7 @@ def hash_font_file(path: str | Path) -> str:
 FONT_DIRS_ENV = "PUBLISHER_FONT_DIRS"
 _FONT_SUFFIXES = (".otf", ".ttf")
 # (css font-weight, css font-style) per vault style.
-_FACE_CSS = {
+FACE_CSS = {
     "regular": (400, "normal"),
     "italic": (400, "italic"),
     "bold": (700, "normal"),
@@ -300,6 +328,12 @@ def locate_font(family: str, style: str = "regular") -> Optional[Path]:
     return _font_index(font_dirs()).get((family, style))
 
 
+def font_files(families: list[str]) -> dict[tuple[str, str], Path]:
+    """(family, style) -> file, for every face of `families` on this machine."""
+    return {(family, style): path for family in dict.fromkeys(families)
+            for style in FACE_CSS if (path := locate_font(family, style))}
+
+
 def font_faces(families: list[str]) -> tuple[str, list[str]]:
     """`@font-face` rules pinning each family to its files, and the families
     that could not be found (no regular face on disk).
@@ -313,7 +347,7 @@ def font_faces(families: list[str]) -> tuple[str, list[str]]:
         if locate_font(family, "regular") is None:
             missing.append(family)
             continue
-        for style, (weight, css_style) in _FACE_CSS.items():
+        for style, (weight, css_style) in FACE_CSS.items():
             path = locate_font(family, style)
             if path is not None:
                 rules.append(

@@ -4,6 +4,8 @@
  * bounded read, not an unbounded one) closing L3's "zero test files".
  * No DB: these only touch the filesystem.
  */
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -29,6 +31,19 @@ describe('casPath', () => {
     ['embedded null byte', `${'a'.repeat(63)}\0`],
   ])('rejects a malformed hash: %s', (_label, bad) => {
     expect(() => casPath(bad)).toThrow(TypeError);
+  });
+});
+
+describe('the CAS layout is the one the worker writes (W7)', () => {
+  // platform/cas/fixtures/agreement.json: the same bytes give the same digest
+  // and shard path here, in the Rust crate (cargo test) and in the Python store
+  // the worker writes with (tests/test_cross_implementation.py).
+  const fixture = new URL('../../../platform/cas/fixtures/agreement.json', import.meta.url);
+  const cases = JSON.parse(readFileSync(fixture, 'utf-8')) as { text: string; sha256: string; path: string }[];
+
+  it.each(cases.map((c) => [c.sha256.slice(0, 12), c] as const))('%s', (_label, c) => {
+    expect(createHash('sha256').update(c.text, 'utf8').digest('hex')).toBe(c.sha256);
+    expect(casPath(c.sha256).endsWith(path.join(...c.path.split('/')))).toBe(true);
   });
 });
 

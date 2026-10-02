@@ -14,7 +14,7 @@ requires-python = ">=3.12"
 # publisher-prepress: runtime.py's `scan_pagemap` tool calls
 # publisher_prepress.preflight.scan_composition -- the SAME function the delivery
 # gate runs -- so an agent and the gate cannot disagree about what a defect is.
-dependencies = ["publisher-structure", "publisher-prepress"]
+dependencies = ["publisher-structure", "publisher-prepress", "jsonschema>=4.18"]
 optional-dependencies = {test = ["pytest>=8.0"]}
 
 [tool.setuptools.packages.find]

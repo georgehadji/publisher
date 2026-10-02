@@ -350,7 +350,29 @@ def _split_note(content: list, limit: int) -> list[list]:
     return pieces or [[]]
 
 
-class PrintNotes:
+class _EndnoteQueue:
+    """Endnotes for either flavour (W9): each call is numbered through the book
+    and its body waits for `endnotes()`, which the section renderers call when a
+    chapter (or front/back-matter section) ends. `ast_text` defers endnotes to
+    the same place, so both sides of the integrity gate read them there.
+    """
+
+    def __init__(self) -> None:
+        self.endnote_count = 0
+        self.pending: list[tuple[int, dict]] = []
+
+    def endnote_call(self, node: dict) -> str:
+        self.endnote_count += 1
+        self.pending.append((self.endnote_count, node))
+        return self._endnote_call(self.endnote_count)
+
+    def endnotes(self) -> str:
+        """The endnotes called since the last flush, or "" when there are none."""
+        items, self.pending = self.pending, []
+        return self._endnote_section(items) if items else ""
+
+
+class PrintNotes(_EndnoteQueue):
     """Footnote numbering and markup for the print flavour of `_render_content`.
 
     The call is our own element, `<span class="note-call" data-n>`, drawn by CSS
@@ -363,8 +385,23 @@ class PrintNotes:
     """
 
     def __init__(self) -> None:
+        super().__init__()
         self.count = 0
         self.seq = 0
+
+    @staticmethod
+    def _endnote_call(n: int) -> str:
+        # Drawn by CSS like the footnote call: numbering, not text.
+        return f'<span class="endnote-call" data-n="{n}"></span>'
+
+    @staticmethod
+    def _endnote_section(items: list[tuple[int, dict]]) -> str:
+        # `data-n` twice: the CSS marker reads the <p>'s, and the Typst path's
+        # Lua filter the <div>'s (pandoc keeps a div's attributes, not a p's).
+        return '<section class="endnotes">' + "".join(
+            f'<div class="endnote" data-n="{n}"><p class="endnote" data-n="{n}">'
+            f'{_render_inline(node.get("content", []))}</p></div>'
+            for n, node in items) + "</section>"
 
     def _seq(self) -> int:
         self.seq += 1
@@ -394,7 +431,7 @@ class PrintNotes:
                           for piece in rest))
 
 
-class EpubNotes:
+class EpubNotes(_EndnoteQueue):
     """Footnote numbering for the EPUB flavour of `_render_content`.
 
     Print leaves numbering to the renderer (`float: footnote`); a reading system
@@ -411,7 +448,21 @@ class EpubNotes:
     NOTEREF = "noteref"
 
     def __init__(self) -> None:
+        super().__init__()
         self.count = 0
+
+    @classmethod
+    def _endnote_call(cls, n: int) -> str:
+        return f'<a epub:type="{cls.NOTEREF}" id="enref-{n}" href="#en-{n}">{n}</a>'
+
+    @staticmethod
+    def _endnote_section(items: list[tuple[int, dict]]) -> str:
+        # The list numbers its items; a number written as text would be text the
+        # integrity check reads and the AST does not have.
+        return '<section epub:type="endnotes" role="doc-endnotes"><ol>' + "".join(
+            f'<li epub:type="endnote" id="en-{n}" value="{n}">'
+            f'<p>{_render_inline(node.get("content", []))}</p></li>'
+            for n, node in items) + "</ol></section>"
 
     def call(self) -> tuple[str, str]:
         """The next note's call link and its aside's opening tag."""
@@ -455,24 +506,26 @@ def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None
             # unchanged, so the integrity gate sees the same stream.
             cited = []
             for following in content[index + 1:]:
-                if following.get("type") != "footnote":
+                if following.get("type") not in ("footnote", "endnote"):
                     break
                 cited.append(following)
             absorbed = len(cited)
+            endnote_calls = "".join(notes.endnote_call(n) for n in cited if n["type"] == "endnote")
+            cited = [n for n in cited if n["type"] == "footnote"]
             inline = node.get("content", [])
             if isinstance(notes, PrintNotes):
                 # Print only (KEEP): a reflowing EPUB has no fixed last line to
                 # protect. All the calls come first, then the note bodies: the
                 # calls hold no text, so the text stream is unchanged.
                 rendered = [notes.render_parts(note) for note in cited]
-                calls = "".join(call for call, _ in rendered)
+                calls = "".join(call for call, _ in rendered) + endnote_calls
                 kept = _keep_tail(inline, cap, after=calls)
                 text = _render_inline(kept) + ("" if kept is not inline else calls)
                 parts.append(f'<p class="{cls}">{text}{"".join(body for _, body in rendered)}</p>')
             else:
                 text = _render_inline(inline)
                 calls = [notes.call() for _ in cited]
-                refs = "".join(ref for ref, _ in calls)
+                refs = "".join(ref for ref, _ in calls) + endnote_calls
                 asides = "".join(notes.aside(opening, note) for (_, opening), note in zip(calls, cited))
                 parts.append(f'<p class="{cls}">{text}{refs}</p>{asides}')
 
@@ -546,6 +599,10 @@ def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None
                 ref, opening = notes.call()
                 parts.append(f'<p class="noteref-only">{ref}</p>{notes.aside(opening, node)}')
 
+        elif ntype == "endnote":
+            # Called with no paragraph before it (after a heading or a figure).
+            parts.append(f'<p class="noteref-only">{notes.endnote_call(node)}</p>')
+
         elif ntype == "sidebar":
             parts.append(f'<aside class="sidebar">{_render_content(node.get("content", []), notes)}</aside>')
 
@@ -587,6 +644,7 @@ def ast_to_html(ast: dict) -> str:
     for item in front_matter:
         parts.append(f'<div class="front-matter {item.get("type", "unknown")}">')
         parts.append(_render_content(item.get("content", []), notes))
+        parts.append(notes.endnotes())
         parts.append("</div>")
 
     # Process body (chapters)
@@ -601,6 +659,7 @@ def ast_to_html(ast: dict) -> str:
         title_html = _render_inline(_keep_tail([{"type": "text", "text": title_text}]))
         parts.append(f'<h1 class="chapter-title">{title_html}</h1>')
         parts.append(_render_content(chapter.get("content", []), notes))
+        parts.append(notes.endnotes())
         parts.append("</div>")
 
     # Process back matter
@@ -608,6 +667,7 @@ def ast_to_html(ast: dict) -> str:
     for item in back_matter:
         parts.append(f'<div class="back-matter {item.get("type", "unknown")}">')
         parts.append(_render_content(item.get("content", []), notes))
+        parts.append(notes.endnotes())
         parts.append("</div>")
 
     lang = f' lang="{_escape_html(book["language"])}"' if book["language"] else ""
@@ -652,7 +712,7 @@ def ast_to_epub_sections(ast: dict) -> list[dict]:
         kind = item.get("type", "unknown")
         title = (item.get("attrs") or {}).get("title") or MATTER_LABELS.get(kind, kind)
         add("frontmatter", title, f'<section class="front-matter {kind}">'
-            f'{_render_content(item.get("content", []), notes)}</section>')
+            f'{_render_content(item.get("content", []), notes)}{notes.endnotes()}</section>')
 
     for chapter in ast.get("body", []):
         ctype = chapter.get("type", "unknown")
@@ -661,13 +721,13 @@ def ast_to_epub_sections(ast: dict) -> list[dict]:
         add("bodymatter", title,
             f'<section class="{ctype}" id="{_escape_html(str(attrs.get("id", "")))}">'
             f'<h1 class="chapter-title">{_escape_html(title)}</h1>'
-            f'{_render_content(chapter.get("content", []), notes)}</section>')
+            f'{_render_content(chapter.get("content", []), notes)}{notes.endnotes()}</section>')
 
     for item in ast.get("backMatter") or []:
         kind = item.get("type", "unknown")
         title = (item.get("attrs") or {}).get("title") or MATTER_LABELS.get(kind, kind)
         add("backmatter", title, f'<section class="back-matter {kind}">'
-            f'{_render_content(item.get("content", []), notes)}</section>')
+            f'{_render_content(item.get("content", []), notes)}{notes.endnotes()}</section>')
 
     return sections
 
@@ -1111,6 +1171,23 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         "  font-weight: normal;",
         "}",
         "span.footnote-cont::footnote-marker { content: ''; }",
+        "",
+        # Endnotes (W9): a section after the chapter's text, numbered like the
+        # footnotes, by CSS from `data-n`.
+        "section.endnotes {",
+        "  margin-top: 2em;",
+        "  border-top: 0.5pt solid currentColor;",
+        "  padding-top: 0.5em;",
+        f"  font-size: {body_size * 0.82}pt;",
+        "}",
+        "p.endnote { text-indent: 0; }",
+        "p.endnote::before { content: attr(data-n) '. '; }",
+        "span.endnote-call::after {",
+        "  content: attr(data-n);",
+        "  vertical-align: super;",
+        "  font-size: 0.7em;",
+        "  line-height: 0;",
+        "}",
         "",
     ])
 

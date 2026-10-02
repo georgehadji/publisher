@@ -14,8 +14,10 @@ import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { CAS_ROOT, UPLOAD_MAX_BYTES, casPath, loadOwned, readCasFile, withTenant } from '../db.js';
-import { LOW_CONFIDENCE_BELOW } from '../contract.js';
-import type { OrphanedOp, OverrideOp, StructureReview } from '../contract.js';
+import { BLOCK_EXCERPT_CHARS, LOW_CONFIDENCE_BELOW, PROPOSAL_OPS } from '../contract.js';
+import type {
+  BlockReview, ChapterReview, OrphanedOp, OverrideOp, ProposalReview, StructureReview,
+} from '../contract.js';
 
 export { LOW_CONFIDENCE_BELOW };
 
@@ -156,26 +158,22 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
 
   server.get<{ Params: { id: string } }>(
     '/v1/manuscripts/:id/structure',
-    { config: { auth: 'tenant' } },
+    { config: { auth: 'review' } },
     async (request, reply) => {
       const manuscript = await loadOwned('manuscripts', request.params.id, request.tenantId);
       if (!manuscript) {
         return reply.code(404).send({ error: 'not found' });
       }
 
-      // Structure comes from the `ast` artifact of the manuscript's most recent
-      // build. No build has necessarily run yet -- report that honestly rather
-      // than fabricating chapters that were never inferred.
-      const { artifact, overrides } = await withTenant(request.tenantId, async (client) => ({
-        artifact: (
-          await client.query(
-            `SELECT a.sha256 FROM artifacts a
-             JOIN builds b ON b.id = a.build_id
-             WHERE b.document_id = $1 AND a.schema_id = 'ast/1'
-             ORDER BY a.created_at DESC LIMIT 1`,
-            [request.params.id]
-          )
-        ).rows[0],
+      // Structure comes from the manuscript's most recent build that produced an
+      // AST: its effective document (overrides applied) when `resolve` ran, else
+      // the AST itself. Both from the SAME build -- picking each kind's latest
+      // independently could pair one build's AST with another's overrides. No
+      // build has necessarily run yet -- report that honestly rather than
+      // fabricating chapters that were never inferred.
+      const { artifacts, overrides } = await withTenant(request.tenantId, async (client) => ({
+        artifacts: await reviewedBuildArtifacts(
+          client, request.params.id, ['ast/1', 'doc-effective/1', 'agent-proposal/1']),
         // The override log, in the order it will be applied. Independent of
         // whether a build has run: a reviewer's decisions exist either way.
         overrides: (
@@ -186,25 +184,99 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
         ).rows.map((row) => row.op as OverrideOp),
       }));
 
-      if (!artifact) {
+      const astRow = artifacts.find((row) => row.schema_id === 'ast/1');
+      if (!astRow) {
         return {
           manuscriptId: request.params.id,
           status: 'pending',
+          shows: null,
           chapters: [],
           lowConfidenceNodes: null,   // nothing measured yet -- see structureView
           overrides,
           orphanedOps: null,          // no AST yet to check them against
+          proposals: null,
         } satisfies StructureReview;
       }
 
-      const ast = JSON.parse(await readCasFile(artifact.sha256));
+      const ast = JSON.parse(await readCasFile(astRow.sha256));
+      const effectiveRow = artifacts.find((row) => row.schema_id === 'doc-effective/1');
+      const effective = effectiveRow ? JSON.parse(await readCasFile(effectiveRow.sha256)) : null;
+      const proposalRow = artifacts.find((row) => row.schema_id === 'agent-proposal/1');
       return {
         manuscriptId: request.params.id,
         status: 'ready',
-        ...structureView(ast),
+        shows: effective ? 'effective' : 'ingested',
+        ...structureView(effective ?? ast),
         overrides,
-        orphanedOps: orphanedOps(ast, overrides),
+        // An op may aim at a node an earlier op created (a break `insert` added),
+        // which only the effective document has.
+        orphanedOps: orphanedOps(effective ? [ast, effective] : ast, overrides),
+        proposals: proposalRow
+          ? pendingProposals(JSON.parse(await readCasFile(proposalRow.sha256)), overrides)
+          : null,
       } satisfies StructureReview;
+    }
+  );
+
+  // ── Proposals ────────────────────────────────────────────────
+  //
+  // Accepting a model's proposal (W4) is the only way one reaches the override
+  // log, and so `resolve` (D9). The op is built here from the stored
+  // proposal, never from the request: a caller chooses which proposal, not what
+  // it does. Its id is `ov-<proposal id>`, so accepting twice is a 409, and a
+  // proposal with a logged op no longer shows as pending.
+  server.post<{ Params: { id: string; pid: string }; Body: { actor: string } }>(
+    '/v1/manuscripts/:id/proposals/:pid/accept',
+    {
+      config: { auth: 'review' },
+      schema: {
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string' }, pid: { type: 'string', pattern: '^pr-[a-zA-Z0-9_-]+$', maxLength: 64 } },
+          required: ['id', 'pid'],
+        },
+        body: {
+          type: 'object',
+          required: ['actor'],
+          properties: { actor: OVERRIDE_OP_SCHEMA.properties.actor },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { actor } = request.body;
+      const principal = request.principal;
+      if (principal.kind === 'reviewer' && actor !== `user:${principal.reviewer}`) {
+        return reply.code(403).send({ error: `a reviewer accepts as user:${principal.reviewer}` });
+      }
+      const manuscript = await loadOwned('manuscripts', request.params.id, request.tenantId);
+      if (!manuscript) {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      const [row] = await withTenant(request.tenantId, (client) =>
+        reviewedBuildArtifacts(client, request.params.id, ['agent-proposal/1']));
+      const document = row ? JSON.parse(await readCasFile(row.sha256)) : null;
+      const proposal = (document?.proposals ?? []).find((p: any) => p.id === request.params.pid);
+      if (!proposal) {
+        return reply.code(404).send({ error: 'no such proposal in the latest build' });
+      }
+      const kind = PROPOSAL_OPS[proposal.type as keyof typeof PROPOSAL_OPS];
+      if (!kind) {
+        return reply.code(422).send({ error: `proposal type ${proposal.type} has no op to become` });
+      }
+      const op: OverrideOp = {
+        id: `ov-${proposal.id}`,
+        sourceRef: { docxId: proposal.sourceRef.docxId },
+        op: kind,
+        actor,
+        at: new Date().toISOString(),
+        rationale: proposal.rationale,
+      };
+      if (await appendOps(request.tenantId, request.params.id, [op]) === 'conflict') {
+        return reply.code(409).send({ error: 'this proposal is already accepted' });
+      }
+      reply.code(201);
+      return { documentId: request.params.id, appended: [op.id] };
     }
   );
 
@@ -216,7 +288,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
   server.patch<{ Params: { id: string }; Body: { ops: OverrideOp[] } }>(
     '/v1/documents/:id/overrides',
     {
-      config: { auth: 'tenant' },
+      config: { auth: 'review' },
       schema: {
         body: {
           type: 'object',
@@ -230,18 +302,25 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
     },
     async (request, reply) => {
       const { ops } = request.body;
-      // The schema accepts twelve ops; `resolve` applies four and fails the
-      // build on the rest (publisher_structure.overrides.UNIMPLEMENTED_OPS).
-      // The log is append-only, so storing one would make every later build of
-      // this manuscript fail with no way to take it back. Refuse it here.
-      const unapplicable = ops.filter((op) => !APPLICABLE_OPS.includes(op.op));
-      if (unapplicable.length > 0) {
-        return reply.code(422).send({
-          error: `override op(s) the build cannot apply yet: `
-            + unapplicable.map((op) => `${op.id} (${op.op})`).join(', ')
-            + `. Applicable: ${APPLICABLE_OPS.join(', ')}.`,
-        });
+      // A reviewer writes as themself. The body must name the reviewer the
+      // token belongs to: an op attributed to someone else is refused, not
+      // rewritten, so what the caller sent is what the log holds.
+      const principal = request.principal;
+      if (principal.kind === 'reviewer') {
+        const actor = `user:${principal.reviewer}`;
+        const foreign = ops.filter((op) => op.actor !== actor);
+        if (foreign.length > 0) {
+          return reply.code(403).send({
+            error: `a reviewer's ops carry actor ${actor}; refused: `
+              + foreign.map((op) => op.id).join(', '),
+          });
+        }
       }
+      // Every op the schema accepts, `resolve` applies (UNIMPLEMENTED_OPS in
+      // publisher_structure.overrides is empty, and overrides.test.ts fails if
+      // it is not). An op that does not fit the document it meets is skipped
+      // and reported as a warning by the build, never fatal: the log is
+      // append-only, and a fatal op would leave the manuscript unbuildable.
 
       // A "document" is a structured manuscript -- same store, same ownership
       // check as /v1/manuscripts/:id/structure.
@@ -250,35 +329,79 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
         return reply.code(404).send({ error: 'not found' });
       }
 
-      try {
-        // One transaction: a batch lands whole or not at all. One INSERT per op,
-        // in body order, so `seq` records exactly the order they were sent in.
-        await withTenant(request.tenantId, async (client) => {
-          for (const op of ops) {
-            await client.query(
-              `INSERT INTO override_ops (manuscript_id, tenant_id, id, op)
-               VALUES ($1, $2, $3, $4)`,
-              [request.params.id, request.tenantId, op.id, JSON.stringify(op)]
-            );
-          }
+      if (await appendOps(request.tenantId, request.params.id, ops) === 'conflict') {
+        // An op is immutable once logged. Re-sending one (a retry without an
+        // Idempotency-Key, or a reused id) must not silently overwrite it.
+        return reply.code(409).send({
+          error: 'an override op with this id is already in the log; ops are immutable. '
+            + 'Retry with an Idempotency-Key, or send the change as a new op with a new id.',
         });
-      } catch (err: any) {
-        if (err?.code === '23505') {
-          // An op is immutable once logged. Re-sending one (a retry without an
-          // Idempotency-Key, or a reused id) must not silently overwrite it.
-          return reply.code(409).send({
-            error: 'an override op with this id is already in the log; ops are immutable. '
-              + 'Retry with an Idempotency-Key, or send the change as a new op with a new id.',
-            detail: err.detail,
-          });
-        }
-        throw err;
       }
 
       reply.code(201);
       return { documentId: request.params.id, appended: ops.map((op) => op.id) };
     }
   );
+}
+
+/**
+ * The given artifacts of the build a review shows: the manuscript's most recent
+ * build that produced an AST. One build for every kind, so a view never pairs
+ * one build's AST with another's overrides or proposals.
+ */
+async function reviewedBuildArtifacts(
+  client: { query: (sql: string, params: unknown[]) => Promise<{ rows: any[] }> },
+  manuscriptId: string,
+  schemaIds: string[],
+): Promise<{ schema_id: string; sha256: string }[]> {
+  return (
+    await client.query(
+      `SELECT a.schema_id, a.sha256 FROM artifacts a
+       WHERE a.schema_id = ANY($2) AND a.build_id = (
+         SELECT x.build_id FROM artifacts x JOIN builds b ON b.id = x.build_id
+         WHERE b.document_id = $1 AND x.schema_id = 'ast/1'
+         ORDER BY x.created_at DESC LIMIT 1)`,
+      [manuscriptId, schemaIds]
+    )
+  ).rows;
+}
+
+/**
+ * Appends ops to the log in one transaction (a batch lands whole or not at
+ * all), one INSERT per op in order, so `seq` records the order they came in.
+ * `conflict`: an op id is already logged, and nothing was written.
+ */
+async function appendOps(tenantId: string, manuscriptId: string, ops: OverrideOp[]): Promise<'ok' | 'conflict'> {
+  try {
+    await withTenant(tenantId, async (client) => {
+      for (const op of ops) {
+        await client.query(
+          `INSERT INTO override_ops (manuscript_id, tenant_id, id, op)
+           VALUES ($1, $2, $3, $4)`,
+          [manuscriptId, tenantId, op.id, JSON.stringify(op)]
+        );
+      }
+    });
+    return 'ok';
+  } catch (err: any) {
+    if (err?.code === '23505') return 'conflict';
+    throw err;
+  }
+}
+
+/** The proposals no logged op has accepted, in the order the stage wrote them. */
+export function pendingProposals(document: any, ops: OverrideOp[]): ProposalReview[] {
+  const logged = new Set(ops.map((op) => op.id));
+  return (document?.proposals ?? [])
+    .filter((p: any) => p.type in PROPOSAL_OPS && !logged.has(`ov-${p.id}`))
+    .map((p: any) => ({
+      id: p.id,
+      type: p.type,
+      op: PROPOSAL_OPS[p.type as keyof typeof PROPOSAL_OPS],
+      docxId: p.sourceRef.docxId,
+      rationale: p.rationale,
+      confidence: typeof p.confidence === 'number' ? p.confidence : null,
+    }));
 }
 
 /**
@@ -302,9 +425,10 @@ export const OVERRIDE_OP_SCHEMA = {
     },
     op: {
       type: 'string',
+      $comment: '`rename` was dropped: it meant nothing `retitle` does not, and the API refused it (422) from the day the log existed, so no stored log holds one.',
       enum: [
         'reclassify', 'split', 'merge', 'promote', 'demote', 'delete',
-        'insert', 'retitle', 'rename', 'set_attr', 'flag_ambiguity', 'resolve_ambiguity',
+        'insert', 'retitle', 'set_attr', 'flag_ambiguity', 'resolve_ambiguity',
       ],
     },
     path: { type: 'string', maxLength: 256, description: 'JSON Pointer to the target within the AST' },
@@ -321,12 +445,11 @@ export const OVERRIDE_OP_SCHEMA = {
     { if: { properties: { op: { const: 'reclassify' } } }, then: { required: ['from', 'to'] } },
     { if: { properties: { op: { const: 'retitle' } } }, then: { required: ['value'] } },
     { if: { properties: { op: { const: 'flag_ambiguity' } } }, then: { required: ['rationale'] } },
+    { if: { properties: { op: { const: 'set_attr' } } }, then: { required: ['path'] } },
+    { if: { properties: { op: { const: 'insert' } } }, then: { required: ['value'] } },
   ],
 } as const;
 
-/** The ops `resolve` can apply: the schema's enum minus
- * publisher_structure.overrides.UNIMPLEMENTED_OPS. Pinned by manuscripts.test.ts. */
-export const APPLICABLE_OPS: readonly string[] = ['reclassify', 'retitle', 'delete', 'flag_ambiguity'];
 
 
 const SECTION_ROOTS = ['frontMatter', 'body', 'backMatter'] as const;
@@ -373,13 +496,23 @@ function docxIdOf(node: any): string | null {
  * ingest v4.
  */
 export function structureView(ast: any): Pick<StructureReview, 'chapters' | 'lowConfidenceNodes'> {
-  const chapters = (ast?.body ?? [])
-    .filter((node: any) => node?.type === 'chapter')
-    .map((node: any) => ({
-      number: node.attrs?.number ?? null,
-      title: node.attrs?.title ?? '',
-      docxId: docxIdOf(node),
-      confidence: typeof node.confidence === 'number' ? node.confidence : null,
+  // Chapters inside a part count too: listing only the body's own children
+  // left every chapter of a book divided into parts out of the review.
+  const inBody = (ast?.body ?? []).flatMap((node: any) =>
+    node?.type === 'part'
+      ? (node.content ?? []).map((chapter: any) => ({ chapter, part: node.attrs?.title ?? null }))
+      : [{ chapter: node, part: null }]
+  );
+  const chapters = inBody
+    .filter(({ chapter }: any) => chapter?.type === 'chapter')
+    .map(({ chapter, part }: any): ChapterReview => ({
+      number: chapter.attrs?.number ?? null,
+      title: chapter.attrs?.title ?? '',
+      part,
+      docxId: docxIdOf(chapter),
+      confidence: typeof chapter.confidence === 'number' ? chapter.confidence : null,
+      flags: flagsOf(chapter),
+      blocks: (Array.isArray(chapter.content) ? chapter.content : []).map(blockView),
     }));
 
   const sections = SECTION_ROOTS.flatMap((root) =>
@@ -409,6 +542,34 @@ export function structureView(ast: any): Pick<StructureReview, 'chapters' | 'low
   return { chapters, lowConfidenceNodes };
 }
 
+/** The ids of the `flag_ambiguity` ops standing on a node of the effective document. */
+function flagsOf(node: any): string[] {
+  return (Array.isArray(node?._flags) ? node._flags : [])
+    .map((flag: any) => flag?.id)
+    .filter((id: unknown): id is string => typeof id === 'string');
+}
+
+function blockView(node: any): BlockReview {
+  return {
+    docxId: docxIdOf(node),
+    type: node?.type ?? 'unknown',
+    level: node?.type === 'heading' && typeof node.attrs?.level === 'number' ? node.attrs.level : null,
+    excerpt: allText(node).slice(0, BLOCK_EXCERPT_CHARS),
+    flags: flagsOf(node),
+  };
+}
+
+/** A node's text, runs joined, whitespace collapsed -- what a reviewer reads. */
+function allText(node: any): string {
+  const parts: string[] = [];
+  const walk = (n: any): void => {
+    if (n?.type === 'text') parts.push(n.text ?? '');
+    for (const child of Array.isArray(n?.content) ? n.content : []) walk(child);
+  };
+  walk(node);
+  return parts.join('').replace(/\s+/g, ' ').trim();
+}
+
 /**
  * Stored override ops that target no node in `ast` -- `overrides/1`'s
  * `orphanedOps`, reason `no_source_ref`.
@@ -426,6 +587,7 @@ export function structureView(ast: any): Pick<StructureReview, 'chapters' | 'low
  * skip it.
  */
 export function orphanedOps(ast: any, ops: OverrideOp[]): OrphanedOp[] {
+  // `ast` may be a list of documents: an op is an orphan when none holds its node.
   const ids = new Set<string>();
   const walk = (node: any): void => {
     if (Array.isArray(node)) {

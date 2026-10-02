@@ -7,7 +7,6 @@ in the pipeline, consumed by delivery/download, not by another stage.
 
 from __future__ import annotations
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 from publisher_stages import stage, StageCtx, StageResult, StageError, ErrorKind, ArtifactRef as StageArtifactRef, get_registry
@@ -16,7 +15,7 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 
 @stage(
     name="package",
-    version=3,
+    version=4,  # v4: no wall-clock timestamps; the manifest is a function of its inputs (W10).
     # `preflight_report` is a required, non-root input: its schema (preflight/1) is
     # produced only by the `preflight` stage, so the DAG makes it structurally
     # impossible to reach `package` without a preflight verdict having run first
@@ -56,8 +55,6 @@ def package(ctx: StageCtx, preflight_report: str | None = None, **kwargs) -> Sta
         raise StageError(kind=ErrorKind.BAD_INPUT, message=f"Preflight report not found: {preflight_report}")
     preflight_data = json.loads(preflight_path.read_bytes())
 
-    now = datetime.now(timezone.utc).isoformat()
-
     # Derived from the live registry rather than hand-copied, so this can't silently
     # drift out of date the way the previous hardcoded dict did (it still listed
     # stage names -- "structure" -- that no longer exist after F2.1's rewire).
@@ -77,8 +74,9 @@ def package(ctx: StageCtx, preflight_report: str | None = None, **kwargs) -> Sta
         },
         "stages": [],
         "reproductionKey": "tracer-bullet-v1",
-        "startedAt": now,
-        "completedAt": now,
+        # No startedAt/completedAt (W10): both were the wall clock at package
+        # time -- not when the build started -- and made every build's manifest
+        # different bytes. The worker records real times in `builds`.
     }
 
     manifest_bytes = json.dumps(manifest, indent=2).encode("utf-8")

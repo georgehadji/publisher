@@ -26,6 +26,7 @@ the first real book it silently shipped 76% of the text.
 """
 
 from __future__ import annotations
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -35,8 +36,11 @@ from publisher_stages import (
     ArtifactRef as StageArtifactRef,
 )
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
-from publisher_epub import CORE_IMAGE_TYPES, EPUB3Writer, EPUBError, Media, spine_text
+from publisher_epub import (CORE_IMAGE_TYPES, STYLESHEET, EPUB3Writer, EPUBError, Media,
+                            spine_text)
 from publisher_onix import ONIXWriter
+from publisher_prepress.fontvault import (FACE_CSS, FontLicenseViolation, font_files,
+                                          fonts_in_spec, fontset_hash, validate_font_use)
 from publisher_structure.rules import normalize_text
 
 from stages.media import MEDIA_REF
@@ -92,17 +96,79 @@ def _epub_media(sections: list[dict], cas_root: str) -> dict[str, Media]:
     return media
 
 
+FONT_MEDIA_TYPES = {".otf": "font/otf", ".ttf": "font/ttf"}
+
+
+def _design(designspec_path: str | None) -> dict:
+    """The DesignSpec the book was set in: the supplied one, or the house design."""
+    if designspec_path and Path(designspec_path).exists():
+        return json.loads(Path(designspec_path).read_bytes())
+    from templates import house_designspec
+    return house_designspec()
+
+
+def _epub_fonts(spec: dict) -> tuple[str, dict[str, Media], list[str]]:
+    """The design's faces for the EPUB: `@font-face` rules and the rules that
+    use them, the font files, and the families left to the reading system.
+
+    A family is embedded when its regular face is on this worker and the vault
+    licenses every face found for EPUB_EMBED -- so the commercial faces, which
+    are licensed for print only, are never put in a package a reader can unzip.
+    """
+    rules: list[str] = []
+    files: dict[str, Media] = {}
+    left: list[str] = []
+    for family in dict.fromkeys(f for f, _ in fonts_in_spec(spec)):
+        faces = font_files([family])
+        try:
+            for _, style in faces:
+                validate_font_use(family, style, "EPUB_EMBED")
+        except FontLicenseViolation:
+            faces = {}
+        if (family, "regular") not in faces:
+            left.append(family)
+            continue
+        for (_, style), path in sorted(faces.items()):
+            data = path.read_bytes()
+            href = f"fonts/{hashlib.sha256(data).hexdigest()[:16]}{path.suffix.lower()}"
+            files[href] = Media(FONT_MEDIA_TYPES[path.suffix.lower()], data)
+            weight, css_style = FACE_CSS[style]
+            rules.append(f"@font-face {{ font-family: {json.dumps(family)}; "
+                         f"src: url({json.dumps(href)}); font-weight: {weight}; "
+                         f"font-style: {css_style}; }}")
+    typography = spec.get("typography") or {}
+    body = (typography.get("bodyFont") or {}).get("family")
+    heading = (typography.get("headingFont") or {}).get("family") or body
+    for selector, family in (("body", body), (".chapter-title", heading)):
+        if family and family not in left:
+            rules.append(f"{selector} {{ font-family: {json.dumps(family)}, serif; }}")
+    return "\n".join(rules), files, left
+
+
+def _epub_font_salt(inputs: dict) -> str:
+    """Cache-key salt, as `paginate`'s: the bytes of the faces the EPUB may embed."""
+    return fontset_hash([f for f, _ in fonts_in_spec(_design(inputs.get("designspec_path")))])
+
+
 @stage(
     name="epub",
+    # v4: the package passes DAISY ACE (W10) -- OPF xml:lang, an
+    # accessibilitySummary, and role="doc-toc" on the nav (publisher_epub).
+    # v3: embeds the design's faces that are licensed for it (W8), from an
+    # optional designspec/1 like idml's; the cache key includes their bytes.
     # v2: rendered by stages/rendering.py (what the print gate verifies) instead
     # of the writer's own lossy walk, with figures, linked footnotes, all
     # front/back matter, and a text-integrity check on the stored package.
-    version=2,
-    inputs={"doc_path": "doc-effective/1"},
+    version=4,
+    inputs={"doc_path": "doc-effective/1", "designspec_path": "designspec/1"},
     outputs={"epub": "epub/1"},
     # `doc_path` is NOT root: it comes from `resolve`, so an EPUB can only be
     # produced for a document that already passed ast-assemble's text-
-    # integrity gate. Same posture as `idml`'s `doc_path`.
+    # integrity gate. Same posture as `idml`'s `doc_path`. An absent
+    # designspec means the house design, as for `idml`.
+    root_inputs=["designspec_path"],
+    optional_root_inputs=["designspec_path"],
+    cache_salt=_epub_font_salt,
     terminal=True,
     toolchain=[],
     fixtures=None,
@@ -110,16 +176,19 @@ def _epub_media(sections: list[dict], cas_root: str) -> dict[str, Media]:
     queue="q.composition",
     description="Emit an EPUB 3 package from the resolved document",
 )
-def epub(ctx: StageCtx, doc_path: str | None = None) -> StageResult:
+def epub(ctx: StageCtx, doc_path: str | None = None,
+         designspec_path: str | None = None) -> StageResult:
     doc = _load_doc(doc_path)
     work = Path(ctx.work_dir) / "epub"
     work.mkdir(parents=True, exist_ok=True)
 
     sections = ast_to_epub_sections(doc)
     media = _epub_media(sections, ctx.cas_root)
+    font_css, fonts, fonts_left = _epub_fonts(_design(designspec_path))
     try:
         out_path = EPUB3Writer(sections, metadata=doc.get("metadata") or {},
-                               media=media).write(work / "book.epub")
+                               media=media, fonts=fonts,
+                               stylesheet=STYLESHEET + font_css).write(work / "book.epub")
     except EPUBError as exc:
         raise StageError(kind=ErrorKind.ENGINE_BUG, message=f"EPUB not written: {exc}") from exc
 
@@ -165,15 +234,23 @@ def epub(ctx: StageCtx, doc_path: str | None = None) -> StageResult:
         metrics={"output_size_bytes": float(len(data)), "chapters": float(chapters),
                  "sections": float(len(sections)), "footnotes": float(notes),
                  "images": float(len(media)), "text_length": float(len(source_side)),
-                 "integrity_ok": 1.0},
+                 "fonts_embedded": float(len(fonts)), "integrity_ok": 1.0},
+        warnings=[Diagnostic(
+            code="epub-font-not-embedded", severity="warning",
+            human_message=f"{fonts_left} not embedded in the EPUB: not licensed for EPUB "
+                          "embedding, or not installed on this worker. Readers will "
+                          "use a face of their own.",
+            suggested_fix="Expected for a print-only commercial face. For an OFL face, "
+                          "install it or point PUBLISHER_FONT_DIRS at it.",
+        )] if fonts_left else [],
     )
 
 
 @stage(
     name="onix",
-    # v2: no change to its output; its module changed (the epub stage), and the
-    # version lint bumps every stage in a touched module.
-    version=2,
+    # v4, v3, v2: no change to its output; its module changed (the epub stage), and
+    # the version lint bumps every stage in a touched module.
+    version=4,
     inputs={"doc_path": "doc-effective/1"},
     outputs={"onix": "onix/1"},
     terminal=True,

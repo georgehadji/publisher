@@ -63,7 +63,8 @@ def test_a_schema_valid_log_parses_and_applies():
     jsonschema.validate(document, SCHEMA)   # the fixture is what the API accepts
 
     ast = {"type": "doc", "content": [
-        {"type": "chapter", "sourceRef": {"docxId": "p1"}, "attrs": {"title": "One"},
+        {"type": "chapter", "sourceRef": {"docxId": "p1"},
+         "attrs": {"number": 1, "id": "ch1", "title": "One"},
          "content": [{"type": "paragraph", "sourceRef": {"docxId": "p2"},
                       "content": [{"type": "text", "text": "x"}]}]},
     ]}

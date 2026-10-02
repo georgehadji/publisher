@@ -10,7 +10,17 @@ Gate: Preflight + raster diff + human
 
 from __future__ import annotations
 
-from .runtime import AgentRuntime, AgentRole, TaskBudget
+import json
+from pathlib import Path
+
+from .runtime import AgentResult, AgentRuntime, AgentRole, TaskBudget
+
+# Unwired (W5, docs/WIRING_PLAN.md W11): verifying a patch needs rendered
+# pages, and `crop`/`render_range` raise ToolUnavailable until something
+# rasterises one. The loop itself runs; nothing in a build calls it.
+PROPOSAL_SCHEMA = json.loads(
+    (Path(__file__).resolve().parents[3] / "schemas/agent-proposal/agent-proposal.schema.json")
+    .read_text(encoding="utf-8"))
 
 
 class Compositor:
@@ -41,26 +51,16 @@ class Compositor:
         pagemap: dict | None = None,
         design_spec: dict | None = None,
         agent_version: str = "1.0",
-    ) -> dict:
-        """
-        Run the full crop-and-verify loop.
-        
-        In production this is multi-turn: scan → crop → propose → verify.
-        In the tracer bullet, returns simulated adjustments.
-        """
-        result = self._runtime.execute(
+    ) -> AgentResult:
+        """Run the crop-and-verify loop: scan -> crop -> propose -> verify."""
+        return self._runtime.execute(
             role=AgentRole.COMPOSITOR,
             agent_version=agent_version,
-            inputs={
-                "defects": defects,
-                "pagemap": pagemap or {},
-                "design_spec": design_spec or {},
-                "agent_version": agent_version,
-            },
+            inputs={"defects": defects, "design_spec": design_spec or {}},
             tools=["scan_pagemap", "render_range", "crop", "propose_override"],
+            output_schema=PROPOSAL_SCHEMA,
+            bound={"pagemap": pagemap or {}},
         )
-        
-        return result
 
 
 # ── Evaluation helpers ──────────────────────────────────────────

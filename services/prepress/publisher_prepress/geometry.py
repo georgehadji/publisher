@@ -66,6 +66,11 @@ class PageGeometry:
         return (0, 0, self.media_width, self.media_height)
 
 
+# A page's caliper when the vendor states none: typical of 50-60 lb uncoated
+# stock. A guess, so the cover stage reports using it as a warning.
+DEFAULT_PAGE_THICKNESS_MM = 0.06
+
+
 def spine_width(page_count: int, page_thickness_mm: float) -> float:
     """Spine width in mm: page_count x the stock's thickness per page.
 

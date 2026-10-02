@@ -92,6 +92,55 @@ class UnsupportedContent(RuntimeError):
     """The manuscript holds content ingest cannot represent. Raised, never dropped."""
 
 
+# `w:sym` (W9): a character set in a symbol font, by its code in THAT font --
+# Word's AutoCorrect writes "-->" as Wingdings 0xE0, and an author picking from
+# Insert > Symbol gets Symbol-font codes. The walk used to skip the element, and
+# the oracle never counted it, so the character vanished with every check green.
+# Symbol fonts are addressed at 0xF0xx (or plain 0x00xx); the low byte is the
+# code. Symbol is Adobe's published encoding. Wingdings has no standard Unicode
+# table; only the arrows are mapped, to the arrows they mean (U+2190-2193)
+# rather than the rare sans-serif arrows at U+1F850, which almost no text face
+# draws. Anything else is refused by name, so the table grows from real books.
+_SYMBOL_LETTERS = dict(zip(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "ΑΒΧΔΕΦΓΗΙϑΚΛΜΝΟΠΘΡΣΤΥςΩΞΨΖαβχδεφγηιϕκλμνοπθρστυϖωξψζ",
+))
+SYMBOL_FONTS: dict[str, dict[int, str]] = {
+    "Symbol": {
+        **{ord(c): c for c in " !#%&(),./0123456789:;<=>?[]_{|}+"},
+        **{ord(k): v for k, v in _SYMBOL_LETTERS.items()},
+        0x22: "∀", 0x24: "∃", 0x27: "∋", 0x2A: "∗", 0x2D: "−", 0x40: "≅", 0x5C: "∴",
+        0x5E: "⊥", 0x7E: "∼", 0xA1: "ϒ", 0xA2: "′", 0xA3: "≤", 0xA4: "⁄", 0xA5: "∞",
+        0xA6: "ƒ", 0xA7: "♣", 0xA8: "♦", 0xA9: "♥", 0xAA: "♠", 0xAB: "↔", 0xAC: "←",
+        0xAD: "↑", 0xAE: "→", 0xAF: "↓", 0xB0: "°", 0xB1: "±", 0xB2: "″", 0xB3: "≥",
+        0xB4: "×", 0xB5: "∝", 0xB6: "∂", 0xB7: "•", 0xB8: "÷", 0xB9: "≠", 0xBA: "≡",
+        0xBB: "≈", 0xBC: "…", 0xC0: "ℵ", 0xC1: "ℑ", 0xC2: "ℜ", 0xC3: "℘", 0xC4: "⊗",
+        0xC5: "⊕", 0xC6: "∅", 0xC7: "∩", 0xC8: "∪", 0xC9: "⊃", 0xCA: "⊇", 0xCB: "⊄",
+        0xCC: "⊂", 0xCD: "⊆", 0xCE: "∈", 0xCF: "∉", 0xD0: "∠", 0xD1: "∇", 0xD5: "∏",
+        0xD6: "√", 0xD7: "⋅", 0xD8: "¬", 0xD9: "∧", 0xDA: "∨", 0xDB: "⇔", 0xDC: "⇐",
+        0xDD: "⇑", 0xDE: "⇒", 0xDF: "⇓", 0xE0: "◊", 0xE1: "〈", 0xE5: "∑", 0xF1: "〉",
+        0xF2: "∫",
+    },
+    "Wingdings": {0xDF: "←", 0xE0: "→", 0xE1: "↑", 0xE2: "↓"},
+}
+
+
+def sym_char(sym: etree._Element) -> str:
+    """The Unicode character a `w:sym` stands for, or UnsupportedContent."""
+    font = sym.get(f"{W}font") or ""
+    code = int(sym.get(f"{W}char") or "0", 16)
+    table = SYMBOL_FONTS.get(font)
+    if table is None and code < 0xF000:
+        return chr(code)   # an ordinary font: the code is the character itself
+    char = (table or {}).get(code & 0xFF)
+    if char is None:
+        raise UnsupportedContent(
+            f"a {font or 'symbol-font'} symbol (code {code:04X}) has no Unicode mapping; "
+            "replace it in Word with the character it stands for"
+        )
+    return char
+
+
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -237,6 +286,10 @@ def _inline_runs(
             elif tag == f"{W}noBreakHyphen":
                 nodes.append(_text_node(NO_BREAK_HYPHEN, marks))
                 source.append(NO_BREAK_HYPHEN)
+            elif tag == f"{W}sym":
+                char = sym_char(child)
+                nodes.append(_text_node(char, marks))
+                source.append(char)
             elif tag in (f"{W}br", f"{W}cr"):
                 nodes.append({"type": "hardBreak"})
             elif tag in (f"{W}footnoteReference", f"{W}endnoteReference") and footnote_refs is not None:
@@ -314,10 +367,8 @@ def read_footnotes(document, sink: Optional[MediaSink] = None) -> dict[str, list
     in the note that names it) refused to ingest at all when notes had no sink.
 
     Keys are `fn:<id>` and `en:<id>`: the two parts number their notes
-    independently, so bare ids collide. Endnotes become `footnote` nodes -- the
-    AST has no endnote type, and moving a note to the page foot keeps its text.
-    ponytail: add an endnote node (collected into back matter) when a book needs
-    them printed at the end.
+    independently, so bare ids collide. An endnote becomes an `endnote` node,
+    which the renderers print at the end of its chapter (W9).
 
     python-docx has no notes API, so each part is located by name and parsed
     directly. A document with no notes has no parts, and yields `{}`.
@@ -420,8 +471,8 @@ def paragraph_blocks(
         note = footnotes.get(key) or []
         content = [n for n in note if "__block__" not in n]
         if any(n.get("text", "").strip() for n in content):
-            blocks.append({"type": "footnote", "attrs": {"number": number},
-                           "content": content})
+            kind = "footnote" if key.startswith("fn:") else "endnote"
+            blocks.append({"type": kind, "attrs": {"number": number}, "content": content})
         # ponytail: a note's pictures print in the text, just after the note,
         # not in the note area -- the schema's footnote holds inline content
         # only. Give `footnote` block content if a book needs them in place.
@@ -476,6 +527,16 @@ def _hidden(el: etree._Element) -> bool:
     return any(a.tag in HIDDEN for a in el.iterancestors())
 
 
+def _text_roots(document) -> list:
+    """(root element, part) of the body and each notes part: the book's text."""
+    roots = [(document.element.body, document.part)]
+    for name in ("footnotes", "endnotes"):
+        part = _notes_part(document, name)
+        if part is not None:
+            roots.append((etree.fromstring(part.blob), part))
+    return roots
+
+
 def source_texts(document) -> list[str]:
     """Every paragraph of text the document holds, read straight off the XML.
 
@@ -490,14 +551,8 @@ def source_texts(document) -> list[str]:
     Equations are refused, not skipped: OMML text is `m:t`, and no renderer here
     has an equation case, so accepting one would only lose it further down.
     """
-    roots = [(document.element.body, document.part)]
-    for name in ("footnotes", "endnotes"):
-        part = _notes_part(document, name)
-        if part is not None:
-            roots.append((etree.fromstring(part.blob), part))
-
     texts: list[str] = []
-    for root, part in roots:
+    for root, part in _text_roots(document):
         for ids in root.iter(f"{DGM}relIds"):
             if not _hidden(ids):
                 texts.extend(diagram_texts(ids, part))
@@ -512,7 +567,7 @@ def source_texts(document) -> list[str]:
             if _hidden(para):
                 continue
             chars: list[str] = []
-            for el in para.iter(f"{W}t", f"{W}tab", f"{W}noBreakHyphen"):
+            for el in para.iter(f"{W}t", f"{W}tab", f"{W}noBreakHyphen", f"{W}sym"):
                 # Only this paragraph's own text: a text box's paragraphs nest
                 # inside it and are counted on their own.
                 owner = next(el.iterancestors(f"{W}p"))
@@ -522,9 +577,42 @@ def source_texts(document) -> list[str]:
                     chars.append(el.text or "")
                 elif el.tag == f"{W}noBreakHyphen":
                     chars.append(NO_BREAK_HYPHEN)
+                elif el.tag == f"{W}sym":
+                    chars.append(sym_char(el))
                 elif el.getparent().tag == f"{W}r":  # not a tab stop in w:pPr
                     chars.append(" ")
             text = "".join(chars).strip()
             if text:
                 texts.append(text)
     return texts
+
+
+# Drawing primitives a manuscript can hold that the AST has no node for (W9).
+V = "{urn:schemas-microsoft-com:vml}"
+WPS = "{http://schemas.microsoft.com/office/word/2010/wordprocessingShape}"
+VML_SHAPES = tuple(f"{V}{t}" for t in (
+    "line", "polyline", "shape", "rect", "oval", "arc", "curve", "roundrect"))
+
+
+def dropped_drawings(document) -> dict[str, int]:
+    """What ingest sees and cannot keep, by kind: `shapes` (lines, arrows and
+    boxes with no text), `pictures` (old VML pictures) and `objects` (embedded
+    OLE objects). Their TEXT is kept -- a text box's words reach the AST -- so
+    this is not text loss and fails nothing; it is reported, so a book whose
+    diagrams lost their arrows says so instead of looking complete.
+
+    ponytail: VML pictures are counted, not converted; read `v:imagedata`'s
+    r:id into a figure when a book needs them.
+    """
+    counts = {"shapes": 0, "pictures": 0, "objects": 0}
+    for root, _ in _text_roots(document):
+        for obj in root.iter(f"{W}object"):
+            if not _hidden(obj):
+                counts["objects"] += 1
+        for el in root.iter(*VML_SHAPES, f"{WPS}wsp"):
+            if (_hidden(el) or any(a.tag == f"{W}object" for a in el.iterancestors())
+                    or next(el.iter(f"{W}txbxContent"), None) is not None):
+                continue
+            kind = "pictures" if next(el.iter(f"{V}imagedata"), None) is not None else "shapes"
+            counts[kind] += 1
+    return counts

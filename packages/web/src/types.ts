@@ -13,7 +13,8 @@
  * API reaches this bundle and there is no second copy here to drift.
  */
 export type {
-  StructureReview, ChapterReview, LowConfidenceNode, OverrideOp, OrphanedOp,
+  StructureReview, ChapterReview, BlockReview, LowConfidenceNode, OverrideOp, OrphanedOp,
+  ProposalReview,
 } from "../../api/src/contract";
 
 /**
@@ -33,17 +34,6 @@ export interface QualityIssue {
   fix: string;
   beforeCrop: string; // raster image URL
   afterCrop?: string; // raster image URL with fix applied
-}
-
-/** Proposal from the Structure Wrangler agent. */
-export interface AgentProposal {
-  id: string;
-  type: string;
-  sourceRef: string;
-  rationale: string;
-  confidence: number;
-  accepted: boolean;
-  actor?: string;
 }
 
 /** Review session state. */

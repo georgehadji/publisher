@@ -46,6 +46,9 @@ class StageActivityOutput:
     cache_hit: bool
     metrics: dict[str, float]
     artifacts: list[dict[str, Any]]
+    # Diagnostic.to_dict() of each warning: the same wire form worker.py
+    # stores in build_stages.diagnostics.
+    warnings: list[dict[str, Any]] = field(default_factory=list)
 
 
 @activity.defn
@@ -95,6 +98,7 @@ async def run_stage_activity(payload: StageActivityInput) -> StageActivityOutput
             {"kind": a.kind, "hash": a.hash, "media_type": a.media_type, "size": a.size}
             for a in result.artifacts
         ],
+        warnings=[w.to_dict() for w in result.warnings],
     )
 
 

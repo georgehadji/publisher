@@ -37,6 +37,7 @@ CONTAINER_NS = "urn:oasis:names:tc:opendocument:xmlns:container"
 # that needs a fallback chain; the caller converts instead (the epub stage
 # turns TIFF into PNG), and this writer refuses what it is still handed.
 CORE_IMAGE_TYPES = frozenset({"image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp"})
+CORE_FONT_TYPES = frozenset({"font/otf", "font/ttf", "font/woff", "font/woff2"})
 
 # Every zip entry gets this timestamp: the package is content-addressed, and a
 # wall-clock mtime in each entry would give every build of the same book a
@@ -104,6 +105,9 @@ class EPUB3Writer:
     not parse raises `EPUBError` rather than producing a package readers reject).
     `media`: href (relative to the package documents, e.g. `media/<sha>.png`) ->
     `Media`.
+    `fonts`: href -> `Media` likewise (e.g. `fonts/<sha>.otf`), for the
+    stylesheet's `@font-face` rules. Kept apart from `media` because images
+    make the book's access mode visual and fonts do not.
 
     Layout: mimetype, META-INF/container.xml, OEBPS/content.opf, OEBPS/nav.xhtml,
     OEBPS/book.css, OEBPS/<section id>.xhtml, OEBPS/media/...
@@ -111,18 +115,23 @@ class EPUB3Writer:
 
     def __init__(self, sections: Sequence[Mapping], *, metadata: Mapping | None = None,
                  media: Mapping[str, Media] | None = None, stylesheet: str = STYLESHEET,
+                 fonts: Mapping[str, Media] | None = None,
                  modified: str | None = None):
         if not sections:
             raise EPUBError("an EPUB needs at least one content document")
         self.sections = list(sections)
         self.metadata = dict(metadata or {})
         self.media = dict(media or {})
+        self.fonts = dict(fonts or {})
         self.stylesheet = stylesheet
         self.language = self.metadata.get("language") or "und"
         self._modified = _reproducible_utc(modified)
         for href, item in self.media.items():
             if item.media_type not in CORE_IMAGE_TYPES:
                 raise EPUBError(f"{href}: {item.media_type} is not an EPUB core media type")
+        for href, item in self.fonts.items():
+            if item.media_type not in CORE_FONT_TYPES:
+                raise EPUBError(f"{href}: {item.media_type} is not an EPUB core font type")
 
     def write(self, output_path: str | Path) -> Path:
         output_path = Path(output_path)
@@ -141,7 +150,7 @@ class EPUB3Writer:
             self._put(zf, "OEBPS/book.css", self.stylesheet.encode("utf-8"))
             for name, data in documents.items():
                 self._put(zf, f"OEBPS/{name}", data)
-            for href, item in sorted(self.media.items()):
+            for href, item in sorted({**self.media, **self.fonts}.items()):
                 self._put(zf, f"OEBPS/{href}", item.data)
         return output_path
 
@@ -203,6 +212,13 @@ class EPUB3Writer:
             '<meta property="schema:accessibilityFeature">structuralNavigation</meta>',
             '<meta property="schema:accessibilityFeature">tableOfContents</meta>',
             '<meta property="schema:accessibilityHazard">none</meta>',
+            # ACE (W10): a reader's one-line answer to "can I read this?". It
+            # states only what this writer guarantees; figures' alt text is the
+            # manuscript's, so it is described as that, not promised.
+            '<meta property="schema:accessibilitySummary">Reflowable text with a table of '
+            "contents and headings for structural navigation; no known hazards."
+            + (" Images carry the text alternatives the manuscript supplied." if self.media else "")
+            + "</meta>",
         ]
 
         items = [
@@ -213,12 +229,14 @@ class EPUB3Writer:
                   for s in self.sections]
         items += [f'<item id="img{n}" href={quoteattr(href)} media-type="{item.media_type}"/>'
                   for n, (href, item) in enumerate(sorted(self.media.items()), 1)]
+        items += [f'<item id="font{n}" href={quoteattr(href)} media-type="{item.media_type}"/>'
+                  for n, (href, item) in enumerate(sorted(self.fonts.items()), 1)]
         spine = [f'<itemref idref="{s["id"]}"/>' for s in self.sections]
 
         return (
             '<?xml version="1.0" encoding="utf-8"?>\n'
             f'<package xmlns="{OPF_NS}" version="3.0" unique-identifier="book-id" '
-            'prefix="schema: http://schema.org/">\n'
+            f'xml:lang={quoteattr(self.language)} prefix="schema: http://schema.org/">\n'
             '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n' + "\n".join(meta) +
             "\n</metadata>\n<manifest>\n" + "\n".join(items) +
             "\n</manifest>\n<spine>\n" + "\n".join(spine) + "\n</spine>\n</package>\n"
@@ -227,7 +245,7 @@ class EPUB3Writer:
     def _nav(self) -> bytes:
         entries = "".join(f'<li><a href="{s["id"]}.xhtml">{escape(s.get("title", ""))}</a></li>'
                           for s in self.sections)
-        body = f'<nav epub:type="toc" id="toc"><h1>Contents</h1><ol>{entries}</ol></nav>'
+        body = f'<nav epub:type="toc" role="doc-toc" id="toc"><h1>Contents</h1><ol>{entries}</ol></nav>'
         return self._xhtml("Contents", body).encode("utf-8")
 
 

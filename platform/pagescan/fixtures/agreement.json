@@ -1,0 +1,106 @@
+{
+  "pagemap": {
+    "schema": "pagemap/1",
+    "pages": [
+      {
+        "pageNumber": 1,
+        "folio": 1,
+        "side": "recto",
+        "widthPt": 432.0,
+        "heightPt": 648.0,
+        "chapterId": "ch1",
+        "wordCount": 300,
+        "hasOrphans": false,
+        "hasWidows": false,
+        "hasRunts": false
+      },
+      {
+        "pageNumber": 2,
+        "folio": 2,
+        "side": "verso",
+        "widthPt": 432.0,
+        "heightPt": 648.0,
+        "chapterId": "ch1",
+        "wordCount": 300,
+        "hasOrphans": false,
+        "hasWidows": true,
+        "hasRunts": true
+      },
+      {
+        "pageNumber": 3,
+        "folio": 3,
+        "side": "recto",
+        "widthPt": 432.0,
+        "heightPt": 648.0,
+        "chapterId": "ch1",
+        "wordCount": 300,
+        "hasOrphans": true,
+        "hasWidows": false,
+        "hasRunts": false
+      },
+      {
+        "pageNumber": 4,
+        "folio": 4,
+        "side": "verso",
+        "widthPt": 432.0,
+        "heightPt": 648.0,
+        "chapterId": "ch2",
+        "wordCount": 300,
+        "hasOrphans": false,
+        "hasWidows": false,
+        "hasRunts": true
+      },
+      {
+        "pageNumber": 5,
+        "folio": 5,
+        "side": "recto",
+        "widthPt": 432.0,
+        "heightPt": 648.0,
+        "chapterId": "ch2",
+        "wordCount": 300
+      },
+      {
+        "pageNumber": 6,
+        "folio": 6,
+        "side": "verso",
+        "widthPt": 432.0,
+        "heightPt": 648.0,
+        "chapterId": "ch2",
+        "wordCount": 300,
+        "hasOrphans": true,
+        "hasWidows": true,
+        "hasRunts": false
+      }
+    ],
+    "chapters": [
+      {
+        "chapterId": "ch1",
+        "number": 1,
+        "startPage": 1,
+        "endPage": 3,
+        "pageCount": 3
+      },
+      {
+        "chapterId": "ch2",
+        "number": 2,
+        "startPage": 4,
+        "endPage": 6,
+        "pageCount": 3
+      }
+    ]
+  },
+  "expected": {
+    "orphans": [
+      3,
+      6
+    ],
+    "widows": [
+      2,
+      6
+    ],
+    "runts": [
+      2,
+      4
+    ]
+  }
+}

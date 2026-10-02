@@ -139,6 +139,24 @@ pub fn sharded_path(root: &std::path::Path, hash: &Sha256) -> std::path::PathBuf
 mod tests {
     use super::*;
 
+    /// The digests and shard paths in fixtures/agreement.json are what the
+    /// Python store (tests/test_cross_implementation.py) and the API's
+    /// `casPath` (packages/api/src/db.test.ts) produce for the same bytes.
+    #[test]
+    fn agrees_with_python_and_typescript_on_the_shared_fixture() {
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../fixtures/agreement.json")).unwrap();
+        for case in cases.as_array().unwrap() {
+            let hash = Sha256::from_bytes(case["text"].as_str().unwrap().as_bytes());
+            assert_eq!(hash.hex(), case["sha256"].as_str().unwrap());
+            let path = sharded_path(std::path::Path::new("root"), &hash);
+            let expected: std::path::PathBuf =
+                ["root"].iter().chain(case["path"].as_str().unwrap().split('/').collect::<Vec<_>>().iter())
+                    .collect();
+            assert_eq!(path, expected);
+        }
+    }
+
     #[test]
     fn test_sha256_from_bytes() {
         let h = Sha256::from_bytes(b"hello world");

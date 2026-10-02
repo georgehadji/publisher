@@ -46,7 +46,7 @@
         "paperType": { "type": "string", "enum": ["matte", "glossy", "premium-matte", "linen", "none"] },
         "ink": { "type": "string", "enum": ["full-color", "black-and-white"], "default": "full-color" },
         "finish": { "type": "string", "enum": ["perfect-bound", "saddle-stitch", "case-bound", "spiral"] },
-        "pageThicknessMm": { "type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 0.06, "description": "Thickness of one leaf's page, mm: spine = pages x this. 0.06 is typical for 60# cream or white stock." }
+        "pageThicknessMm": { "type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "The vendor's stated caliper per page, mm: spine = pages x this. No default: a profile that states none gets a spine from publisher_prepress.geometry.DEFAULT_PAGE_THICKNESS_MM, and the cover stage warns that it is a guess." }
       },
       "additionalProperties": false
     },
@@ -80,6 +80,26 @@
     "minPages": { "type": "integer", "minimum": 1, "description": "Vendor minimum page count" },
     "maxPages": { "type": "integer", "minimum": 1, "description": "Vendor maximum page count" },
     "pageSizeMultiple": { "type": "integer", "minimum": 1, "default": 4, "description": "e.g. 4 for KDP (books are 4-page multiples)" },
+    "bindingSpec": {
+      "type": "object",
+      "properties": {
+        "minInsideMarginMm": {
+          "type": "array",
+          "description": "The vendor's minimum inside (gutter-side) margin by page count, mm, ascending by maxPages. Preflight measures each page's inside margin from the press PDF against the band for its page count; a profile without a table skips the check.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "maxPages": { "type": "integer", "minimum": 1 },
+              "mm": { "type": "number", "minimum": 0, "maximum": 60 }
+            },
+            "required": ["maxPages", "mm"],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "composition": {
       "type": "object",
       "properties": {

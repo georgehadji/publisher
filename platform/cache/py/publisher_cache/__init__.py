@@ -159,16 +159,23 @@ def compute_toolchain_digest(
 #
 # Neither is a stand-in for the other. The worker always uses Postgres --
 # that is the durable, cross-process index BUILD_PLAN.md and A1.3 specify.
+#
+# An entry also keeps the stage's `diagnostics` ({"metrics", "warnings"}).
+# A hit used to return artifacts alone, so a warning a stage raised was
+# reported on the first build and silently gone from every cached rebuild of
+# the same inputs -- the defect still there, the report of it not.
 
 
 class CacheStore:
     """Common interface. Do not instantiate directly."""
 
     def get(self, cache_key: str) -> Optional[dict]:
-        """Return {"output_refs": {...}} on hit, None on miss."""
+        """Return {"output_refs": {...}, "diagnostics": {...}} on hit, None on miss.
+        `diagnostics` is {} for an entry written before it was kept."""
         raise NotImplementedError
 
-    def put(self, cache_key: str, stage: str, version: int, output_refs: dict) -> None:
+    def put(self, cache_key: str, stage: str, version: int, output_refs: dict,
+            diagnostics: Optional[dict] = None) -> None:
         raise NotImplementedError
 
 
@@ -179,7 +186,8 @@ CREATE TABLE IF NOT EXISTS cache_index (
     version     INTEGER NOT NULL,
     output_refs TEXT NOT NULL,
     created_at  TEXT NOT NULL,
-    hit_count   INTEGER NOT NULL DEFAULT 0
+    hit_count   INTEGER NOT NULL DEFAULT 0,
+    diagnostics TEXT
 )
 """
 
@@ -194,11 +202,15 @@ class SqliteCacheStore(CacheStore):
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path))
         self._conn.execute(_SCHEMA_SQL)
+        # An index created before `diagnostics` existed keeps its entries.
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(cache_index)")}
+        if "diagnostics" not in columns:
+            self._conn.execute("ALTER TABLE cache_index ADD COLUMN diagnostics TEXT")
         self._conn.commit()
 
     def get(self, cache_key: str) -> Optional[dict]:
         row = self._conn.execute(
-            "SELECT output_refs FROM cache_index WHERE cache_key = ?", (cache_key,)
+            "SELECT output_refs, diagnostics FROM cache_index WHERE cache_key = ?", (cache_key,)
         ).fetchone()
         if row is None:
             return None
@@ -207,15 +219,17 @@ class SqliteCacheStore(CacheStore):
             (cache_key,),
         )
         self._conn.commit()
-        return {"output_refs": json.loads(row[0])}
+        return {"output_refs": json.loads(row[0]), "diagnostics": json.loads(row[1] or "{}")}
 
-    def put(self, cache_key: str, stage: str, version: int, output_refs: dict) -> None:
+    def put(self, cache_key: str, stage: str, version: int, output_refs: dict,
+            diagnostics: Optional[dict] = None) -> None:
         from datetime import datetime, timezone
 
         self._conn.execute(
             "INSERT OR IGNORE INTO cache_index "
-            "(cache_key, stage, version, output_refs, created_at) VALUES (?, ?, ?, ?, ?)",
-            (cache_key, stage, version, json.dumps(output_refs), datetime.now(timezone.utc).isoformat()),
+            "(cache_key, stage, version, output_refs, created_at, diagnostics) VALUES (?, ?, ?, ?, ?, ?)",
+            (cache_key, stage, version, json.dumps(output_refs), datetime.now(timezone.utc).isoformat(),
+             json.dumps(diagnostics or {})),
         )
         self._conn.commit()
 
@@ -239,7 +253,8 @@ class PostgresCacheStore(CacheStore):
 
     def get(self, cache_key: str) -> Optional[dict]:
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute("SELECT output_refs FROM cache_index WHERE cache_key = %s", (cache_key,))
+            cur.execute("SELECT output_refs, diagnostics FROM cache_index WHERE cache_key = %s",
+                        (cache_key,))
             row = cur.fetchone()
             if row is None:
                 return None
@@ -248,12 +263,13 @@ class PostgresCacheStore(CacheStore):
                 "WHERE cache_key = %s",
                 (cache_key,),
             )
-            return {"output_refs": row[0]}
+            return {"output_refs": row[0], "diagnostics": row[1] or {}}
 
-    def put(self, cache_key: str, stage: str, version: int, output_refs: dict) -> None:
+    def put(self, cache_key: str, stage: str, version: int, output_refs: dict,
+            diagnostics: Optional[dict] = None) -> None:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO cache_index (cache_key, stage, version, output_refs, created_at) "
-                "VALUES (%s, %s, %s, %s, now()) ON CONFLICT (cache_key) DO NOTHING",
-                (cache_key, stage, version, self._json(output_refs)),
+                "INSERT INTO cache_index (cache_key, stage, version, output_refs, created_at, diagnostics) "
+                "VALUES (%s, %s, %s, %s, now(), %s) ON CONFLICT (cache_key) DO NOTHING",
+                (cache_key, stage, version, self._json(output_refs), self._json(diagnostics or {})),
             )

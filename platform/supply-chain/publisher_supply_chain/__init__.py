@@ -1,5 +1,9 @@
 """
-Publisher Supply Chain Security — SBOM generation, dependency scanning, CVE gates.
+Publisher Supply Chain Security — SBOM generation and dependency scanning.
+
+The CVE gates are pip-audit and npm audit in .github/workflows/ci.yml (E3.5).
+A `CveGate` class lived here with an empty vulnerability table, so it passed every
+SBOM; it was deleted (W7) rather than left looking like a gate.
 
 From BUILD_PLAN.md §5 P5:
 - SBOM/signing/CVE gates
@@ -82,65 +86,6 @@ class SBOM:
             },
             "components": [d.to_dict() for d in self._dependencies],
             "images": self._images,
-        }
-
-
-class CveGate:
-    """
-    CVE gate — checks dependencies against known vulnerabilities.
-    
-    In production, integrates with Trivy/Grype.
-    In the tracer bullet, provides a structured pass/fail.
-    """
-    
-    def __init__(self):
-        self._known_cves: dict[str, list[dict]] = {}
-    
-    def scan(self, sbom: SBOM) -> "CveResult":
-        """Scan SBOM components for known CVEs."""
-        findings = []
-        
-        for dep in sbom._dependencies:
-            # Check against known CVE database (stub)
-            if dep.name in self._known_cves:
-                for cve in self._known_cves[dep.name]:
-                    findings.append({
-                        "id": cve["id"],
-                        "severity": cve.get("severity", "unknown"),
-                        "package": dep.name,
-                        "version": dep.version,
-                        "fix_version": cve.get("fix_version", "unknown"),
-                    })
-        
-        critical = [f for f in findings if f["severity"] == "critical"]
-        high = [f for f in findings if f["severity"] == "high"]
-        
-        return CveResult(
-            total_scanned=len(sbom._dependencies),
-            findings=findings,
-            critical_count=len(critical),
-            high_count=len(high),
-            passed=len(critical) == 0,  # Gate: zero critical CVEs
-        )
-
-
-class CveResult:
-    """Result of a CVE scan."""
-    def __init__(self, total_scanned: int, findings: list[dict],
-                 critical_count: int, high_count: int, passed: bool):
-        self.total_scanned = total_scanned
-        self.findings = findings
-        self.critical_count = critical_count
-        self.high_count = high_count
-        self.passed = passed
-    
-    def to_dict(self) -> dict:
-        return {
-            "totalScanned": self.total_scanned,
-            "findings": self.findings,
-            "criticalCount": self.critical_count,
-            "highCount": self.high_count,
-            "passed": self.passed,
         }
 
 

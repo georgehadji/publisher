@@ -423,6 +423,9 @@ def _initial_inputs_for(conn, build: dict, registry) -> dict:
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
     if openrouter_key:
         initial_inputs["structure-infer"] = {"api_key": openrouter_key}
+        # W5: the same key lets structure-propose's Structure Wrangler review
+        # its proposals. Optional there: without it the proposals go out unreviewed.
+        initial_inputs["structure-propose"] = {"api_key": openrouter_key}
     # The reviewer's override log. Supplied only when there is one: `resolve`
     # declares overrides_path an OPTIONAL root input whose absence means zero
     # overrides, so a book nobody has reviewed keeps the cache key it had.
@@ -433,20 +436,26 @@ def _initial_inputs_for(conn, build: dict, registry) -> dict:
 
 
 def _record_stage(conn, build_id: str, tenant_id: str, stage_name: str, decl_version: int,
-                   status: str, cache_hit: bool, duration_ms: int, metrics: dict) -> None:
+                   status: str, cache_hit: bool, duration_ms: int, metrics: dict,
+                   diagnostics: list | None = None) -> None:
+    """`diagnostics` are the stage's warnings, or a failed stage's diagnostics
+    (migration 007). Recorded, not only printed: GET /v1/builds/:id is where a
+    reviewer reads them, and a warning nothing stores certifies nothing."""
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO build_stages
-                (build_id, tenant_id, stage_name, stage_version, status, cache_hit, duration_ms, metrics, started_at, completed_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now(), now())
+                (build_id, tenant_id, stage_name, stage_version, status, cache_hit, duration_ms, metrics,
+                 diagnostics, started_at, completed_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
             ON CONFLICT (build_id, stage_name) DO UPDATE SET
                 status = EXCLUDED.status, cache_hit = EXCLUDED.cache_hit,
                 duration_ms = EXCLUDED.duration_ms, metrics = EXCLUDED.metrics,
-                completed_at = EXCLUDED.completed_at
+                diagnostics = EXCLUDED.diagnostics, completed_at = EXCLUDED.completed_at
             """,
             (build_id, tenant_id, stage_name, decl_version, status, cache_hit, duration_ms,
-             psycopg2.extras.Json(metrics)),
+             psycopg2.extras.Json(metrics),
+             psycopg2.extras.Json([d.to_dict() for d in diagnostics or []])),
         )
         _notify(conn, build_id, {"stage": stage_name, "status": status})
         conn.commit()
@@ -523,7 +532,7 @@ def run_build(conn, build: dict) -> None:
     def _on_stage(stage_name, decl, result, duration_ms):
         _record_stage(
             conn, build_id, tenant_id, stage_name, decl.version, "completed",
-            result.cache_hit, duration_ms, result.metrics,
+            result.cache_hit, duration_ms, result.metrics, result.warnings,
         )
         for art in result.artifacts:
             _record_artifact(
@@ -547,6 +556,7 @@ def run_build(conn, build: dict) -> None:
             False, duration_ms,
             {"error_kind": getattr(error, "kind", ErrorKind.ENGINE_BUG).value,
              "error": getattr(error, "message", str(error))},
+            getattr(error, "diagnostics", None),
         )
         # A gate that refuses still leaves its verdict: record it like any
         # artifact, or GET /v1/builds/:id/preflight reports a rejected book's

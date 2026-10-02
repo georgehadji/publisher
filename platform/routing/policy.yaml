@@ -26,7 +26,7 @@
 # fields listed there. `cache_key_adds` on each route is the checklist, not decoration --
 # a route missing a field here is a route that can silently poison its own cache.
 
-policy_version: 3          # bump on ANY edit to this file. Enters art-provenance /
+policy_version: 5          # bump on ANY edit to this file. Enters art-provenance /
                             # inference-result records for provenance, but is
                             # deliberately NOT itself part of any individual route's
                             # cache key -- keying on it would invalidate every route on
@@ -77,7 +77,7 @@ routes:
                                             # stays constant, silently changing what a
                                             # frozen artifact was actually produced by
     tier: fast
-    prompt_version: "1.0"
+    prompt_version: "1.1"   # 1.1: a real system prompt (classify_contract.py); 1.0 was a placeholder line
     schema_version: classification/1
     cost_per_call: 0.003
     fallback_route: structure-classify-deep
@@ -91,11 +91,29 @@ routes:
       data_collection: deny
       zdr: true
 
+  structure-wrangle:
+    service: agents      # publisher_agents' Structure Wrangler (W5): reviews structure-propose's
+                         # proposals with read-only tools; may drop or re-rank, never add
+    model: anthropic/claude-sonnet-5
+    tier: good
+    prompt_version: "1.0"
+    schema_version: agent-proposal/1
+    cost_per_call: 0.03
+    fallback_route: null
+    reasoning:
+      effort: none
+    provider:
+      only: [anthropic]
+      allow_fallbacks: false
+      require_parameters: true
+      data_collection: deny
+      zdr: true
+
   structure-classify-deep:
     service: structure   # which gateway owns this route (LLM_STRATEGY.md §3.16)
     model: anthropic/claude-sonnet-5
     tier: good
-    prompt_version: "1.0"
+    prompt_version: "1.1"   # 1.1: a real system prompt (classify_contract.py); 1.0 was a placeholder line
     schema_version: classification/1
     cost_per_call: 0.015
     fallback_route: null

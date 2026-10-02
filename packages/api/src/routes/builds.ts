@@ -10,6 +10,7 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { loadOwned, openListenConnection, readCasFile, withTenant } from '../db.js';
+import type { BuildStage } from '../contract.js';
 
 // Build ids are server-generated `build-<base64url>` tokens; the SSE channel
 // name is interpolated into SQL below (LISTEN takes a literal), so the shape
@@ -85,13 +86,17 @@ export async function registerBuilds(server: FastifyInstance): Promise<void> {
       const stageRows = (
         await withTenant(request.tenantId, (client) =>
           client.query(
-            'SELECT stage_name, status, duration_ms, cache_hit FROM build_stages WHERE build_id = $1 ORDER BY started_at',
+            'SELECT stage_name, status, duration_ms, cache_hit, metrics, diagnostics FROM build_stages ' +
+              'WHERE build_id = $1 ORDER BY started_at',
             [request.params.id]
           )
         )
       ).rows;
-      const stages = stageRows.map((s) => ({
+      // A stage's warnings are part of its result: a build whose resolve skipped
+      // an override, or whose spine used a default caliper, must say so here.
+      const stages = stageRows.map((s): BuildStage => ({
         name: s.stage_name, status: s.status, durationMs: s.duration_ms ?? 0, cacheHit: s.cache_hit,
+        metrics: s.metrics ?? {}, diagnostics: s.diagnostics ?? null,
       }));
       const totalDurationMs = stageRows.reduce((sum, s) => sum + (s.duration_ms ?? 0), 0);
       return {

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -47,7 +48,8 @@ from publisher_stages import (
     ArtifactRef as StageArtifactRef,
 )
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
-from publisher_prepress.fontvault import FontLicenseViolation, validate_spec_fonts
+from publisher_prepress.fontvault import (FontLicenseViolation, font_files, fontset_hash,
+                                          locate_font, validate_spec_fonts)
 from profiles import resolve_profile
 from templates import complete_designspec, house_designspec
 # The fallbacks for the page-furniture blocks, shared with the CSS emitter so
@@ -257,7 +259,7 @@ def _furniture_typst(block: dict, body_size: float) -> tuple[str, str]:
 
 @stage(
     name="design-compile-typst",
-    version=10,   # v10: the completed DesignSpec (see design-compile v11); document title/author/lang from the AST. v9: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
+    version=11,   # v11: module-level bump (paginate-typst v11). v10: the completed DesignSpec (see design-compile v11); document title/author/lang from the AST. v9: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
                  # v5: figures reach the renderer without alpha (stages/media.py opaque).
                  # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: none to its output; paginate-typst's rendering changed in this module.
@@ -437,6 +439,24 @@ local function span_of(el, class)
   return el.t == "Span" and el.classes:includes(class)
 end
 
+-- pandoc drops the `data-` prefix of an HTML attribute; accept either.
+local function number_of(el)
+  return el.attributes["n"] or el.attributes["data-n"] or ""
+end
+
+-- An endnote (W9): the CSS path draws its number from data-n; here it is
+-- written in, as Typst has no generated content.
+function Div(el)
+  if el.classes:includes("endnote") then
+    local first = el.content[1]
+    if first and (first.t == "Para" or first.t == "Plain") then
+      first.content:insert(1, pandoc.Space())
+      first.content:insert(1, pandoc.Str(number_of(el) .. "."))
+    end
+    return el
+  end
+end
+
 function Inlines(inlines)
   local out = pandoc.Inlines({})
   for _, el in ipairs(inlines) do
@@ -460,6 +480,8 @@ function Inlines(inlines)
       end
     elseif span_of(el, "footnote") then
       out:insert(pandoc.Note({pandoc.Plain(el.content)}))
+    elseif span_of(el, "endnote-call") then
+      out:insert(pandoc.Superscript({pandoc.Str(number_of(el))}))
     else
       out:insert(el)
     end
@@ -473,12 +495,15 @@ def _build_main_typ(doc: dict, styles: str, chapters: list[dict],
                     pandoc: str, filter_path: Path | None = None) -> str:
     """Assemble the Typst document: preamble, front matter, chapters, back
     matter -- with pandoc converting each HTML fragment into Typst markup."""
-    from stages.rendering import _render_content
+    from stages.rendering import PrintNotes, _render_content
 
     filter_args = ["--lua-filter", str(filter_path)] if filter_path else []
+    # One numbering through the book, as the CSS path has; each section's
+    # endnotes are rendered at its end.
+    notes = PrintNotes()
 
     def to_typst(content: list) -> str:
-        html = _render_content(content)
+        html = _render_content(content, notes) + notes.endnotes()
         if not html.strip():
             return ""
         out = _run([pandoc, "--from=html", "--to=typst", "--wrap=preserve",
@@ -540,9 +565,72 @@ class _MeasuredPage:
         self.height = height
 
 
+def _typst_styles(typ_path: str | None) -> str:
+    """The preamble a render uses: design-compile-typst's, or the house design's.
+
+    Same posture as `paginate`: a missing stylesheet falls back to the built-in
+    default rather than failing, because preflight -- not this stage -- is the
+    authority on whether the resulting geometry is legal.
+    """
+    if typ_path and Path(typ_path).exists():
+        return Path(typ_path).read_text(encoding="utf-8")
+    return _emit_typst({**house_designspec(), "preferredEngine": "typst"})
+
+
+_FONT_ARG = re.compile(r'font:\s*(\([^)]*\)|"(?:[^"\\]|\\.)*")')
+_TYP_STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def _typst_fonts(styles: str) -> tuple[list[str], list[str]]:
+    """(design faces, glyph fallbacks) a preamble names: the first family of
+    each `font:` argument, and the rest of its stack."""
+    faces: list[str] = []
+    fallbacks: list[str] = []
+    for arg in _FONT_ARG.findall(styles):
+        # _typ_str writes JSON string literals; json reads them back.
+        names = [json.loads(f'"{s}"') for s in _TYP_STRING.findall(arg)]
+        faces += names[:1]
+        fallbacks += names[1:]
+    faces = list(dict.fromkeys(faces))
+    return faces, [f for f in dict.fromkeys(fallbacks) if f not in faces]
+
+
+def _font_files_salt(inputs: dict) -> str:
+    """Cache-key salt, as `paginate`'s: the bytes of every face this render embeds."""
+    faces, fallbacks = _typst_fonts(_typst_styles(inputs.get("typ_path")))
+    return fontset_hash(faces + fallbacks)
+
+
+def _pin_fonts(styles: str, dest: Path) -> list[str]:
+    """Copy the vault-resolved file of every face the preamble names into
+    `dest`, and return the typst arguments that make those the only fonts it
+    sees besides its own embedded ones.
+
+    Typst used to discover fonts itself: it never searched PUBLISHER_FONT_DIRS,
+    where a deployment puts its licensed faces, and a system face that merely
+    claims a family's name could win it. This is the Typst side of what
+    `font_faces` does for weasyprint. A design face with no regular file is
+    refused, as `paginate` refuses it. A missing fallback is not: Typst's
+    embedded faces cover stray glyphs then.
+    """
+    faces, fallbacks = _typst_fonts(styles)
+    missing = [f for f in faces if locate_font(f, "regular") is None]
+    if missing:
+        raise StageError(
+            kind=ErrorKind.INFRA,
+            message=f"Font(s) {missing} are not installed on this worker, so the book "
+                    "would be set in a substitute face. Install them, or point "
+                    "PUBLISHER_FONT_DIRS at a folder that holds them.",
+        )
+    dest.mkdir(parents=True, exist_ok=True)
+    for i, path in enumerate(sorted(set(font_files(faces + fallbacks).values()))):
+        shutil.copy2(path, dest / f"{i}-{path.name}")
+    return ["--font-path", str(dest), "--ignore-system-fonts"]
+
+
 @stage(
     name="paginate-typst",
-    version=10,   # v10: module-level bump (design-compile-typst v10). v9: module-level bump (black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black.) v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
+    version=11,   # v11: typst sees only the vault's files for the faces it names (--font-path, --ignore-system-fonts), and the cache key includes their bytes. v10: module-level bump (design-compile-typst v10). v9: module-level bump (black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black.) v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
                  # v5: figures reach the renderer without alpha (stages/media.py opaque).
                  # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: link hrefs are percent-encoded (rendering._safe_href).
@@ -554,6 +642,7 @@ class _MeasuredPage:
     # no composition flags and preflight reports them as "not measured" rather
     # than clean.
     implements="paginate",   # alternative to the weasyprint/CSS renderer
+    cache_salt=_font_files_salt,
     toolchain=["typst", "pandoc"],
     fixtures=None,
     memory_budget_mb=512,
@@ -576,19 +665,14 @@ def paginate_typst(ctx: StageCtx, doc_path: str | None = None,
 
     doc = json.loads(doc_file.read_bytes())
 
-    if typ_path and Path(typ_path).exists():
-        styles = Path(typ_path).read_text(encoding="utf-8")
-    else:
-        # Same posture as `paginate`: a missing stylesheet falls back to the
-        # built-in default rather than failing, because preflight -- not this
-        # stage -- is the authority on whether the resulting geometry is legal.
-        styles = _emit_typst({**house_designspec(), "preferredEngine": "typst"})
+    styles = _typst_styles(typ_path)
 
     chapters = _chapters_of(doc)
     work = Path(ctx.work_dir) / "typst"
     work.mkdir(parents=True, exist_ok=True)
     main_typ = work / "main.typ"
     out_pdf = work / "out.pdf"
+    font_args = _pin_fonts(styles, work / "fonts")
 
     # Figures are `media/<sha256>.<ext>` in the HTML and become `#image(...)` in
     # the Typst source, resolved relative to --root -- so the bytes have to be
@@ -609,7 +693,7 @@ def paginate_typst(ctx: StageCtx, doc_path: str | None = None,
 
     # --root confines Typst's file access to the scratch dir; the document is
     # generated here, but its text is ultimately tenant-supplied.
-    _run([typst, "compile", "--root", str(work), str(main_typ), str(out_pdf)],
+    _run([typst, "compile", "--root", str(work), *font_args, str(main_typ), str(out_pdf)],
          timeout=TYPST_TIMEOUT_S, what="typst compile")
 
     if not out_pdf.is_file():
@@ -622,7 +706,7 @@ def paginate_typst(ctx: StageCtx, doc_path: str | None = None,
     # the spine width is priced off) and an estimate.
     # ponytail: `typst query` recompiles; if render time ever dominates, emit
     # the marks to a sidecar during the first pass instead.
-    raw = _run([typst, "query", "--root", str(work), "--field", "value",
+    raw = _run([typst, "query", "--root", str(work), *font_args, "--field", "value",
                 str(main_typ), "<pubmeta>"],
                timeout=TYPST_TIMEOUT_S, what="typst query <pubmeta>")
     try:
