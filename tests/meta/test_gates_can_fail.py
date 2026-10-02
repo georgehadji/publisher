@@ -320,7 +320,9 @@ STEP_CLASSIFICATION: dict[str, str | None] = {
     "pip install ${{ env.PUBLISHER_PKGS }} import-linter": None,  # dependency install, not a gate
     "Render toolchain and Python dependencies (the lock, by hash)": None,  # install, not a gate
     "pip install -r requirements.lock --require-hashes && pip install pytest==8.4.2": None,  # ditto
-    "pip install ${{ env.PUBLISHER_PKGS }} psycopg2-binary requests": None,  # ditto
+    "pip install ${{ env.PUBLISHER_PKGS }} psycopg2-binary requests import-linter": None,  # ditto
+    "pandoc 3.5 and typst 0.13.1, pinned (as Dockerfile.worker)": None,  # tool install, its tests are the gate
+    "Node dependencies the suite drives (api via tsx, schemas codegen)": None,  # dependency install
     "Load schema": None,  # CI setup -- no initdb mount for services: postgres
     # Tool install (W10): a digest mismatch fails it, and "Full test suite" then
     # refuses a run where the EPUBCheck test skipped for want of the jar.

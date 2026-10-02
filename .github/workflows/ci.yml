@@ -50,6 +50,10 @@ jobs:
           POSTGRES_DB: publisher
           POSTGRES_USER: publisher
           POSTGRES_PASSWORD: publisher
+          # As docker-compose.yml: the least-privilege roles migration 003
+          # creates are reached by password-less DSNs in the integration
+          # tests (e.g. `publisher_app:x@`), which only `trust` admits.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports: ["55432:5432"]
         options: >-
           --health-cmd pg_isready --health-interval 2s --health-timeout 5s --health-retries 15
@@ -70,7 +74,24 @@ jobs:
             libpango-1.0-0 libpangoft2-1.0-0 ghostscript poppler-utils fonts-gfs-didot
           pip install -r requirements.lock --require-hashes
           pip install pytest==8.4.2
-      - run: pip install ${{ env.PUBLISHER_PKGS }} psycopg2-binary requests
+      - run: pip install ${{ env.PUBLISHER_PKGS }} psycopg2-binary requests import-linter
+      - name: pandoc 3.5 and typst 0.13.1, pinned (as Dockerfile.worker)
+        # The Typst render path's tests skip without them, and a build in
+        # test_api_drives_pipeline runs paginate-typst once a sibling test has
+        # registered it. Same assets and digests as Dockerfile.worker, so CI
+        # renders with the image's versions, not whatever Ubuntu ships.
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/pandoc.deb" \
+            https://github.com/jgm/pandoc/releases/download/3.5/pandoc-3.5-1-amd64.deb
+          echo "4f41d817d262ef3d17953a3e6e0fefddb971aa4f2f121544a9a86db449d945e1  $RUNNER_TEMP/pandoc.deb" | sha256sum -c -
+          sudo dpkg -i "$RUNNER_TEMP/pandoc.deb"
+          curl -fsSL -o "$RUNNER_TEMP/typst.tar.xz" \
+            https://github.com/typst/typst/releases/download/v0.13.1/typst-x86_64-unknown-linux-musl.tar.xz
+          echo "7d214bfeffc2e585dc422d1a09d2b144969421281e8c7f5d784b65fc69b5673f  $RUNNER_TEMP/typst.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/typst.tar.xz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/typst-x86_64-unknown-linux-musl/typst" /usr/local/bin/typst
+          pandoc --list-output-formats | grep -qx typst
+          typst --version
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -105,6 +126,12 @@ jobs:
           chmod +x "$RUNNER_TEMP/ace-xvfb"
           "$RUNNER_TEMP/ace-xvfb" --version | grep -qx 1.4.6
           echo "PUBLISHER_ACE=$RUNNER_TEMP/ace-xvfb" >> "$GITHUB_ENV"
+      - name: Node dependencies the suite drives (api via tsx, schemas codegen)
+        # The API integration tests start packages/api with its own tsx, and the
+        # codegen-sync meta-gate copies schemas/node_modules into its worktree.
+        run: |
+          npm ci --prefix packages/api
+          npm ci --prefix schemas
       - name: Load schema
         # GitHub's `services:` Postgres has no init-script mount (unlike
         # docker-compose.yml's `/docker-entrypoint-initdb.d/`), so CI applies
