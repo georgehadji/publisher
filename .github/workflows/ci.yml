@@ -57,6 +57,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Render toolchain and Python dependencies (the lock, by hash)
+        # The suite needs what the worker has: weasyprint's Pango stack,
+        # Ghostscript, pdfimages, the house face, and requirements.lock. The
+        # packages' own pyproject.toml declare almost nothing (by convention),
+        # so installing them alone left weasyprint, python-docx and pytest
+        # itself missing -- and the suite step still passed (see below).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangoft2-1.0-0 ghostscript poppler-utils fonts-gfs-didot
+          pip install -r requirements.lock --require-hashes
+          pip install pytest==8.4.2
       - run: pip install ${{ env.PUBLISHER_PKGS }} psycopg2-binary requests
       - uses: actions/setup-java@v4
         with:
@@ -79,14 +91,19 @@ jobs:
         with:
           node-version: "22"
       - name: DAISY ACE 1.4.6, pinned (W10)
-        # So test_ace_finds_no_serious_violation runs instead of skipping. ACE
-        # drives a headless Chromium; Ubuntu 24.04's AppArmor forbids the
-        # unprivileged user namespaces its sandbox needs, so allow them here.
+        # So test_ace_finds_no_serious_violation runs instead of skipping. ACE's
+        # CLI starts Electron, which needs an X display even to print its
+        # version (first CI run: "Missing X server or $DISPLAY", SIGSEGV), so
+        # it runs under xvfb-run through a wrapper. Ubuntu 24.04's AppArmor
+        # forbids the unprivileged user namespaces Chromium's sandbox needs.
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          command -v xvfb-run || { sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb; }
           npm install -g @daisy/ace@1.4.6
-          ace --version | grep -qx 1.4.6
-          echo "PUBLISHER_ACE=ace" >> "$GITHUB_ENV"
+          printf '#!/bin/sh\nexec xvfb-run -a ace "$@"\n' > "$RUNNER_TEMP/ace-xvfb"
+          chmod +x "$RUNNER_TEMP/ace-xvfb"
+          "$RUNNER_TEMP/ace-xvfb" --version | grep -qx 1.4.6
+          echo "PUBLISHER_ACE=$RUNNER_TEMP/ace-xvfb" >> "$GITHUB_ENV"
       - name: Load schema
         # GitHub's `services:` Postgres has no init-script mount (unlike
         # docker-compose.yml's `/docker-entrypoint-initdb.d/`), so CI applies
@@ -111,7 +128,11 @@ jobs:
         # integration tests silently skip is indistinguishable from one where
         # they passed (E0.3) -- so a skip for that reason fails the job even
         # though pytest itself exits 0 for a skip.
+        # `pipefail`: GitHub's default `bash -e` takes a pipeline's status from
+        # its LAST command, so `pytest | tee` passed whatever pytest did. It
+        # passed "No module named pytest" on every run before this line.
         run: |
+          set -o pipefail
           python -m pytest --tb=short -rs | tee pytest-output.txt
           ! grep -q "Postgres is not listening" pytest-output.txt
           ! grep -q "set PUBLISHER_EPUBCHECK_JAR" pytest-output.txt
@@ -188,6 +209,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: pip install -r requirements.lock --require-hashes && pip install pytest==8.4.2
       - run: pip install ${{ env.PUBLISHER_PKGS }} import-linter
       - name: Codegen in sync (§3.1 Done)
         run: |

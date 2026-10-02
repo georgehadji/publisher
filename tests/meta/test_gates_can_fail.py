@@ -318,6 +318,8 @@ GATES: list[Gate] = [
 # mutation because its own pass/fail IS the signal under test.
 STEP_CLASSIFICATION: dict[str, str | None] = {
     "pip install ${{ env.PUBLISHER_PKGS }} import-linter": None,  # dependency install, not a gate
+    "Render toolchain and Python dependencies (the lock, by hash)": None,  # install, not a gate
+    "pip install -r requirements.lock --require-hashes && pip install pytest==8.4.2": None,  # ditto
     "pip install ${{ env.PUBLISHER_PKGS }} psycopg2-binary requests": None,  # ditto
     "Load schema": None,  # CI setup -- no initdb mount for services: postgres
     # Tool install (W10): a digest mismatch fails it, and "Full test suite" then
