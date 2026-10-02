@@ -1,0 +1,5 @@
+# Copied verbatim into Linux images, whose parsers reject a trailing \r:
+# a Windows checkout (core.autocrlf=true) turned tinyproxy.conf's
+# `Port 8888` into `Port 8888\r`, and llm-egress-proxy crash-looped on it.
+infra/** text eol=lf
+*.sh text eol=lf
