@@ -31,7 +31,16 @@ from pathlib import Path
 # so no `--` separator and no flags may follow it.
 SCRIBUS_ARGS = ("-g", "-ns")
 SCRIBUS_BINARIES = ("scribus", "scribus-ng", "scribus-1.6", "scribus-1.5")
-TIMEOUT_S = 180
+# Scribus scans every installed font before it runs a script. On a machine with
+# ~4,400 fonts that took 202-360s from an empty profile and 92s from one holding
+# the font cache -- the old 180s limit failed on startup alone, before the IDML
+# was ever opened. `PUBLISHER_SCRIBUS_TIMEOUT_S` overrides.
+DEFAULT_TIMEOUT_S = 600
+# Each run gets a fresh profile (see `-pr` below), so the font cache Scribus
+# writes into it (checkfonts<ver>.xml) is carried between runs here instead.
+# Scribus re-checks any font whose file changed, so a stale cache is safe.
+FONT_CACHE = Path(tempfile.gettempdir()) / "publisher-scribus-fontcache"
+FONT_CACHE_GLOB = "checkfonts*.xml"
 
 # Runs *inside* Scribus, which supplies the `scribus` module.
 #
@@ -104,6 +113,9 @@ def scribus_opens(idml_path: str | Path) -> ScribusVerdict:
         # than creating it, so `-pr` needs a directory that is already there.
         prefs = Path(tmp) / "prefs"
         prefs.mkdir()
+        for cached in FONT_CACHE.glob(FONT_CACHE_GLOB):
+            shutil.copy2(cached, prefs / cached.name)
+        timeout_s = int(os.environ.get("PUBLISHER_SCRIBUS_TIMEOUT_S", DEFAULT_TIMEOUT_S))
         try:
             proc = subprocess.run(
                 # `-pr` gives this run its own preferences directory. Without it
@@ -114,10 +126,17 @@ def scribus_opens(idml_path: str | Path) -> ScribusVerdict:
                 [binary, *SCRIBUS_ARGS, "-pr", str(prefs),
                  "-py", str(probe),
                  str(Path(idml_path).resolve()), str(report)],
-                capture_output=True, text=True, timeout=TIMEOUT_S,
+                capture_output=True, text=True, timeout=timeout_s,
             )
         except subprocess.TimeoutExpired:
-            return ScribusVerdict(False, 0, 0, f"Scribus timed out after {TIMEOUT_S}s")
+            return ScribusVerdict(False, 0, 0, f"Scribus timed out after {timeout_s}s")
+
+        # Only after a run that finished: a killed scan may have left a partial file.
+        FONT_CACHE.mkdir(exist_ok=True)
+        for fresh in prefs.glob(FONT_CACHE_GLOB):
+            staged = FONT_CACHE / f"{fresh.name}.{os.getpid()}.tmp"
+            shutil.copy2(fresh, staged)
+            os.replace(staged, FONT_CACHE / fresh.name)
 
         # Scribus exits 0 whether or not the script succeeded, so the report
         # file -- not the exit code -- is the verdict. An absent file means the
