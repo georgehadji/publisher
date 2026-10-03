@@ -26,5 +26,14 @@ COPY --from=build /app/packages/api/node_modules ./packages/api/node_modules
 COPY --from=build /app/packages/api/dist ./packages/api/dist
 COPY packages/api/package.json ./packages/api/package.json
 COPY platform/db/migrations ./platform/db/migrations
+# The same uid:gid as Dockerfile.worker's USER. The API writes uploads into the
+# shared CAS volume, and as root every shard directory it created was root-owned
+# 0755 -- the worker (10001) then failed with EACCES storing any later blob whose
+# hash shared that prefix. An existing volume needs a one-off
+# `chown -R 10001:10001` of /data/cas; a fresh one inherits the ownership below.
+RUN groupadd -g 10001 publisher \
+    && useradd -u 10001 -g publisher -M -d /nonexistent -s /usr/sbin/nologin publisher \
+    && mkdir -p /data/cas && chown 10001:10001 /data/cas
+USER 10001:10001
 EXPOSE 4000
 CMD ["node", "packages/api/dist/index.js"]
