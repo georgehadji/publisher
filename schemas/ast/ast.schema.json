@@ -834,7 +834,8 @@
               "items": { "$ref": "#/$defs/blockNode" },
               "minItems": 1
             },
-            "confidence": { "$ref": "#/$defs/confidence" }
+            "confidence": { "$ref": "#/$defs/confidence" },
+            "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
           },
           "required": ["type", "content"],
           "additionalProperties": false
@@ -859,7 +860,8 @@
               "items": { "$ref": "#/$defs/blockNode" },
               "minItems": 1
             },
-            "confidence": { "$ref": "#/$defs/confidence" }
+            "confidence": { "$ref": "#/$defs/confidence" },
+            "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
           },
           "required": ["type", "content"],
           "additionalProperties": false

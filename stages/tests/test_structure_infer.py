@@ -45,6 +45,13 @@ SAMPLE_AST = {"schema": "ast/1", "body": [
         _chapter(3, "WHY", 0.6, "c3")]},                  # inside a part: sent
     _chapter(4, "Unscored"),                             # not measured: not sent
     _chapter(5, "No id", 0.5),                           # nothing could target it
+], "frontMatter": [                                      # the boundary's fallback: sent
+    {"type": "dedication", "confidence": 0.5, "sourceRef": {"docxId": "f1"}, "content": [
+        {"type": "paragraph", "content": [{"type": "text", "text": "DEDICATION"}]},
+        {"type": "paragraph", "content": [{"type": "text", "text": "For mum."}]}]},
+], "backMatter": [                                       # found by pattern: not sent
+    {"type": "colophon", "confidence": 0.9, "sourceRef": {"docxId": "b1"}, "content": [
+        {"type": "paragraph", "content": [{"type": "text", "text": "COLOPHON"}]}]},
 ]}
 
 
@@ -176,8 +183,11 @@ def test_structure_infer_writes_a_classification_artifact(monkeypatch):
         assert fake.requests[0].route == "structure-classify"
         # Only what ingest was unsure of, by the id an op can target.
         sent = fake.requests[0].inputs["nodes"]
-        assert [n["sourceRef"] for n in sent] == ["c2", "c3"]
+        assert [n["sourceRef"] for n in sent] == ["c2", "c3", "f1"]
         assert sent[0]["text"] == "NO!" and sent[0]["context"].startswith("Prose of NO!")
+        # A section has no title: its first block stands in, under its type's label.
+        assert sent[2] == {"sourceRef": "f1", "current": "front-dedication",
+                           "text": "DEDICATION", "context": "For mum."}
 
 
 def test_nothing_doubtful_means_no_model_is_asked(monkeypatch):

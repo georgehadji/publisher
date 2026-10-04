@@ -481,7 +481,7 @@ def test_every_addressable_node_gets_a_unique_id_and_nothing_else_does(tmp_path)
         if node.get("type") in SOURCE_REF_TYPES:
             assert "sourceRef" in node, f"{node['type']} has no sourceRef"
         else:
-            # Section wrappers, table rows, inline runs: the schema has no field.
+            # Table rows, inline runs: the schema has no field.
             assert "sourceRef" not in node, f"{node['type']} must not carry one"
     ids = _ids(ast)
     assert len(ids) == len(set(ids)), "two nodes share an id -- an override would hit both"
@@ -560,4 +560,24 @@ def test_source_ref_types_are_the_schemas():
         for d in defs.values()
         if isinstance(d, dict) and "sourceRef" in (d.get("properties") or {})
     }
+    # Front/back-matter sections are declared inline, as a branch of their union.
+    for union in ("frontMatterNode", "backMatterNode"):
+        for branch in defs[union]["allOf"]:
+            props = (branch.get("then") or {}).get("properties") or {}
+            if "sourceRef" in props:
+                declared |= set(props["type"]["enum"])
     assert SOURCE_REF_TYPES == declared
+
+
+def test_front_and_back_matter_sections_are_addressable(tmp_path):
+    """A model's verdict on a doubtful dedication or colophon needs an id an op
+    can target; the wrappers used to carry none."""
+    ast = docx_to_ast(_write(tmp_path, BOOK))
+    sections = ast["frontMatter"] + ast["backMatter"]
+    assert sections and all(s["sourceRef"]["docxId"].startswith(s["type"] + ":") for s in sections)
+    # Keyed by the section's own text, so editing a chapter does not orphan an op on it.
+    (tmp_path / "edited").mkdir()
+    edited = [(PROSE + " revised", s) if t == PROSE else (t, s) for t, s in BOOK]
+    after = docx_to_ast(_write(tmp_path / "edited", edited))
+    assert [s["sourceRef"] for s in after["frontMatter"] + after["backMatter"]] == \
+        [s["sourceRef"] for s in sections]

@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 
 from publisher_structure.classify_contract import (
-    ClassificationReplyInvalid, classification_document, labels, response_schema, system_prompt,
+    SECTION_LABELS, ClassificationReplyInvalid, classification_document, labels, response_schema,
+    system_prompt,
 )
 from publisher_structure.inference import (
     InferenceRequest, ModelTier, OpenRouterProvider, PromptCacheManager, load_routes_from_policy,
@@ -46,6 +47,19 @@ def _provider(reply, usage=None, **choice):
 
 def test_the_label_set_is_classification_1s_own():
     assert labels() == SCHEMA["$defs"]["classifiedNode"]["properties"]["classification"]["enum"]
+
+
+def test_every_front_and_back_matter_section_type_has_its_label():
+    """Pinned to both schemas: a section type with no label could not be sent,
+    and a label outside the set would be refused by strict output."""
+    defs = json.loads((Path(__file__).resolve().parents[3] / "schemas/ast/ast.schema.json")
+                      .read_text(encoding="utf-8"))["$defs"]
+    section_types = {t for union in ("frontMatterNode", "backMatterNode")
+                     for branch in defs[union]["allOf"]
+                     if "sourceRef" in ((branch.get("then") or {}).get("properties") or {})
+                     for t in branch["then"]["properties"]["type"]["enum"]}
+    assert set(SECTION_LABELS) == section_types
+    assert set(SECTION_LABELS.values()) <= set(labels())
 
 
 def test_the_request_pins_schema_provider_reasoning_and_prompt():

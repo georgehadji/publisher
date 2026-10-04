@@ -35,6 +35,12 @@ AST = {"schema": "ast/1", "body": [
     _chapter(4, "FOUR", "c4"),       # agrees -> nothing
     {"type": "part", "attrs": {"title": "II", "id": "p2"}, "content": [
         _chapter(5, "Odd", "c5")]},  # prose, but first in its part -> only a flag
+], "frontMatter": [                  # read as a chapter -> no op moves it, so a flag
+    {"type": "dedication", "sourceRef": {"docxId": "f1"},
+     "content": [{"type": "paragraph", "content": [{"type": "text", "text": "PROLOGUE"}]}]},
+], "backMatter": [                   # its own label -> agrees, nothing
+    {"type": "colophon", "sourceRef": {"docxId": "b1"},
+     "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Set in Garamond"}]}]},
 ]}
 
 
@@ -46,12 +52,20 @@ def _classification(*nodes) -> dict:
 
 
 VERDICTS = _classification(("c2", "paragraph", 0.8), ("c3", "heading-2", 0.7),
-                           ("c4", "chapter-title", 0.9), ("c5", "paragraph", 0.6))
+                           ("c4", "chapter-title", 0.9), ("c5", "paragraph", 0.6),
+                           ("f1", "chapter-title", 0.7), ("b1", "back-colophon", 0.9))
 
 
 def test_each_label_becomes_the_proposal_its_mapping_says():
     got = {p["sourceRef"]["docxId"]: p["type"] for p in proposals_for(VERDICTS, AST)}
-    assert got == {"c2": "merge_chapters", "c3": "adjust_heading_level", "c5": "flag_ambiguity"}
+    assert got == {"c2": "merge_chapters", "c3": "adjust_heading_level", "c5": "flag_ambiguity",
+                   "f1": "flag_ambiguity"}
+
+
+def test_a_section_flag_quotes_its_opening_and_both_labels():
+    flag = next(p for p in proposals_for(VERDICTS, AST) if p["sourceRef"]["docxId"] == "f1")
+    assert "“PROLOGUE”" in flag["rationale"]
+    assert "as chapter-title, not front-dedication" in flag["rationale"]
 
 
 def test_ids_are_stable_across_rebuilds_and_distinct_per_change():
@@ -101,7 +115,7 @@ def _wrangler_keeps(monkeypatch, keep: list[str]):
 def test_the_stage_writes_a_valid_agent_proposal(tmp_path):
     result, document = _run_stage(tmp_path)
     validate(document, SCHEMA)
-    assert result.metrics["proposals"] == 3 and document["modelId"] == "m/x"
+    assert result.metrics["proposals"] == 4 and document["modelId"] == "m/x"
     assert result.warnings == []
 
 
@@ -110,14 +124,14 @@ def test_with_a_key_the_wrangler_may_drop_and_reorder(tmp_path, monkeypatch):
     _wrangler_keeps(monkeypatch, [ids[2], ids[0]])
     result, document = _run_stage(tmp_path, api_key="sk-fake")
     assert [p["id"] for p in document["proposals"]] == [ids[2], ids[0]]
-    assert result.metrics["proposals_dropped"] == 1 and result.warnings == []
+    assert result.metrics["proposals_dropped"] == 2 and result.warnings == []
     validate(document, SCHEMA)
 
 
 def test_a_failed_review_keeps_every_proposal_and_says_so(tmp_path, monkeypatch):
     _wrangler_keeps(monkeypatch, ["pr-invented"])
     result, document = _run_stage(tmp_path, api_key="sk-fake")
-    assert len(document["proposals"]) == 3
+    assert len(document["proposals"]) == 4
     assert [w.code for w in result.warnings] == ["proposal-review-failed"]
 
 
@@ -128,7 +142,7 @@ def test_without_a_key_no_agent_is_built(tmp_path, monkeypatch):
         raise AssertionError("a Wrangler was built with no key")
     monkeypatch.setattr(propose_stage, "_wrangler", no_agent)
     result, document = _run_stage(tmp_path)
-    assert len(document["proposals"]) == 3 and result.warnings == []
+    assert len(document["proposals"]) == 4 and result.warnings == []
 
 
 def test_reachable_exactly_when_structure_infer_is():

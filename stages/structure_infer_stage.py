@@ -11,8 +11,9 @@ is configured. No env-var-gated escape hatch inside this stage decides
 anything; the DAG's own reachability fixpoint does.
 
 Consumes `ast/1` (W3, docs/WIRING_PLAN.md) and sends the model exactly the
-chapters ingest scored below the review line (`rules.ESCALATE_BELOW`), each
-under its `sourceRef.docxId` -- the id an override op targets, so whatever the
+chapters and front/back-matter sections ingest scored below the review line
+(`rules.ESCALATE_BELOW`), each under its `sourceRef.docxId` -- the id an
+override op targets, so whatever the
 model says about a node can become a proposal about that node. It used to
 re-run the rules pass over typescript HTML and label nodes `block-<i>`, ids no
 op can aim at, from a second classifier whose scores nothing else used.
@@ -32,6 +33,7 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "structure"))
 from publisher_structure.rules import ESCALATE_BELOW
+from publisher_structure.classify_contract import SECTION_LABELS
 from publisher_structure.inference import InferenceGateway, InferenceRequest, OpenRouterProvider
 
 # What the model sees of a node: its text, and the opening of what follows it.
@@ -48,28 +50,38 @@ def _text(node) -> str:
     return own + _text(node.get("content"))
 
 
-def _doubtful_chapters(ast: dict) -> list[dict]:
-    """The chapters ingest was unsure of, as the model's input nodes. A chapter
-    with no score was never measured: it is not sent as if it were doubtful,
-    and not counted as certain either -- the review view shows it as unscored."""
+def _doubtful_nodes(ast: dict) -> list[dict]:
+    """The chapters and front/back-matter sections ingest was unsure of, as the
+    model's input nodes. A node with no score was never measured: it is not sent
+    as if it were doubtful, and not counted as certain either -- the review view
+    shows it as unscored. A section has no title, so its first block stands in."""
     chapters = [c for node in ast.get("body") or []
                 for c in (node.get("content") or [] if node.get("type") == "part" else [node])
                 if c.get("type") == "chapter"]
+    sections = [s for root in ("frontMatter", "backMatter") for s in ast.get(root) or []
+                if s.get("type") in SECTION_LABELS]
     nodes = []
-    for chapter in chapters:
-        ref = (chapter.get("sourceRef") or {}).get("docxId")
-        score = chapter.get("confidence")
-        if ref and isinstance(score, (int, float)) and score < ESCALATE_BELOW:
-            following = " ".join(_text(b).strip() for b in chapter.get("content") or [])
-            nodes.append({"sourceRef": ref, "current": "chapter-title",
-                          "text": (chapter.get("attrs") or {}).get("title", ""),
-                          "context": " ".join(following.split())[:CONTEXT_CHARS]})
+    for node in chapters + sections:
+        ref = (node.get("sourceRef") or {}).get("docxId")
+        score = node.get("confidence")
+        if not (ref and isinstance(score, (int, float)) and score < ESCALATE_BELOW):
+            continue
+        blocks = node.get("content") or []
+        if node["type"] == "chapter":
+            current, text = "chapter-title", (node.get("attrs") or {}).get("title", "")
+        else:
+            current, text, blocks = SECTION_LABELS[node["type"]], _text(blocks[:1]).strip(), blocks[1:]
+        following = " ".join(_text(b).strip() for b in blocks)
+        nodes.append({"sourceRef": ref, "current": current, "text": text,
+                      "context": " ".join(following.split())[:CONTEXT_CHARS]})
     return nodes
 
 
 @stage(
     name="structure-infer",
-    version=3,   # v3: answers cached under cas_root/inference-cache, keyed on what
+    version=4,   # v4: front/back-matter sections ingest was unsure of are sent too,
+                 # under their own docxId, with their type's label as `current`.
+                 # v3: answers cached under cas_root/inference-cache, keyed on what
                  # is sent -- an edit elsewhere in the book no longer buys the
                  # same classification again.
                  # v2: reads ast/1, sends ingest's low-confidence chapters by docxId
@@ -101,7 +113,7 @@ def structure_infer(ctx: StageCtx, ast: str | None = None, api_key: str | None =
     if not ast_path.exists():
         raise StageError(kind=ErrorKind.BAD_INPUT, message=f"AST input not found: {ast}")
 
-    nodes = _doubtful_chapters(json.loads(ast_path.read_bytes()))
+    nodes = _doubtful_nodes(json.loads(ast_path.read_bytes()))
     if nodes:
         # Inside cas_root: the only path the worker's read-only container can write
         # that outlives the build. Shard dirs are two hex chars, so no collision.

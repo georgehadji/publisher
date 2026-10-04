@@ -239,8 +239,13 @@ let model output change a build on its own.
 **Still open:**
 - The six `corpus/manuscripts/*.ast.json` predate this and carry no scores. They're valid
   (the field is optional), but they exercise only the unscored path.
-- Only chapters are sent. Front/back-matter wrappers carry no `sourceRef`, so no op could
-  act on a verdict about them.
+- **Done (2026-10-04): front/back-matter sections are sent too.** Each section carries a
+  `sourceRef.docxId` (schema; `ingest` v9), keyed by its own text. `structure-infer` (v4)
+  sends the ones scored below 0.8 (in practice the 0.5 fallback when ingest found no
+  body boundary), its first block as `text` and its type's label as `current`
+  (`classify_contract.SECTION_LABELS`). `structure-propose` (v2) flags any other verdict
+  for the reviewer. Still open: no op moves a section into the body or to the other end
+  of the book, so a section can only be flagged, not fixed, from a proposal.
 - `split_chapter`, `reclassify` and promote proposals are not produced: a chapter-level
   verdict has no block to split at, and a chapter is already the top level.
 

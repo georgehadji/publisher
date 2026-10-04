@@ -16,6 +16,10 @@ Each proposal is one implemented override op, named by its type:
 | uncertain, or any other label             | flag_ambiguity    | flag_ambiguity |
 | chapter-title                             | (none -- it agrees with ingest) |  |
 
+A doubtful front/back-matter section has no op that moves it (into the body,
+or to the other end of the book), so any label but its own type's becomes
+`flag_ambiguity`, and its own label is agreement.
+
 The API builds the op from a proposal only when a reviewer accepts it
 (`POST /v1/manuscripts/:id/proposals/:pid/accept`); until then nothing reaches
 `resolve`. That is D9: no LLM output enters a deterministic stage on its own.
@@ -40,6 +44,7 @@ from publisher_stages import (
     stage, StageCtx, StageResult, StageError, ErrorKind, Diagnostic, ArtifactRef as StageArtifactRef,
 )
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
+from publisher_structure.classify_contract import SECTION_LABELS
 
 AGENT_ID = "structure-propose"
 AGENT_VERSION = "1"
@@ -103,12 +108,40 @@ def proposals_for(classification: dict, ast: dict) -> list[dict]:
             "confidence": score,
             "evidence": [f"label: {label}", f"model: {model}"],
         })
+    for section in (s for root in ("frontMatter", "backMatter") for s in ast.get(root) or []):
+        ref = (section.get("sourceRef") or {}).get("docxId")
+        verdict = verdicts.get(ref)
+        own = SECTION_LABELS.get(section.get("type"))
+        if verdict is None or own is None or verdict["classification"] == own:
+            continue
+        label, score = verdict["classification"], verdict["confidence"]
+        opening = _opening(section)
+        proposals.append({
+            "id": _proposal_id(ref, "flag_ambiguity"),
+            "type": "flag_ambiguity",
+            "sourceRef": {"docxId": ref},
+            "rationale": f"The model ({model}) reads the {section['type']} section opening "
+                         f"“{opening}” as {label}, not {own} (confidence {score:.2f}).",
+            "confidence": score,
+            "evidence": [f"label: {label}", f"model: {model}"],
+        })
     return proposals
+
+
+def _opening(section: dict, limit: int = 80) -> str:
+    """A section's first block, as plain text: it has no title to quote."""
+    def text(node) -> str:
+        if isinstance(node, list):
+            return "".join(text(n) for n in node)
+        if not isinstance(node, dict):
+            return ""
+        return (node.get("text", "") if node.get("type") == "text" else "") + text(node.get("content"))
+    return " ".join(text((section.get("content") or [])[:1]).split())[:limit]
 
 
 @stage(
     name="structure-propose",
-    version=1,
+    version=2,  # v2: a verdict on a doubtful front/back-matter section is flagged
     inputs={"classification": "classification/1", "ast": "ast/1", "api_key": "openrouter-credential/1"},
     root_inputs=["api_key"],
     optional_root_inputs=["api_key"],  # absent: proposals unreviewed, never unreachable

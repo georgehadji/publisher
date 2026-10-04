@@ -182,7 +182,9 @@ def _check_zip_limits(source: Path) -> None:
     # v8 (W9): symbol-font characters (w:sym) are kept, bold set through a style
     # finds headings, a prose caption under a figure becomes its caption, and
     # the shapes and objects ingest cannot keep are counted and warned about.
-    version=8,
+    # v9: front/back-matter sections carry a `sourceRef.docxId` too, so a model's
+    # verdict on a doubtful one can become a proposal a reviewer accepts.
+    version=9,
     inputs={"docx_path": "raw-docx/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["docx_path"],

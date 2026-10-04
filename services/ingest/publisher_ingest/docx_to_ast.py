@@ -494,6 +494,11 @@ SOURCE_REF_TYPES = frozenset({
     "part", "chapter", "paragraph", "heading", "blockquote", "verse", "list", "table",
     "figure", "footnote", "endnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code",
     "equation", "pageBreak",
+    # Front/back-matter sections: a verdict about one needs an id an op can target.
+    "halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface",
+    "acknowledgments", "prologue",
+    "epilogue", "afterword", "appendix", "notes", "bibliography", "index", "aboutTheAuthor",
+    "alsoBy", "colophon",
 })
 
 

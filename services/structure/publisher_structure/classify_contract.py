@@ -42,6 +42,19 @@ def labels() -> list[str]:
     return list(_schema()["$defs"]["classifiedNode"]["properties"]["classification"]["enum"])
 
 
+# A front/back-matter section's AST type, as the label that names it: what
+# ingest made it (`current`), and what a verdict agreeing with ingest says.
+SECTION_LABELS = {
+    "halfTitle": "front-half-title", "titlePage": "front-title-page",
+    "copyrightPage": "front-copyright", "dedication": "front-dedication", "toc": "front-toc",
+    "foreword": "front-foreword", "preface": "front-preface",
+    "acknowledgments": "front-acknowledgments", "prologue": "front-prologue",
+    "epilogue": "back-epilogue", "afterword": "back-afterword", "appendix": "back-appendix",
+    "notes": "back-notes", "bibliography": "back-bibliography", "index": "back-index",
+    "aboutTheAuthor": "back-about-author", "alsoBy": "back-also-by", "colophon": "back-colophon",
+}
+
+
 def response_schema() -> dict:
     node = _schema()["$defs"]["classifiedNode"]["properties"]
     return {
