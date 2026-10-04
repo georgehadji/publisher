@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -409,7 +410,8 @@ class InferenceGateway:
     
     def __init__(self, config: Optional[InferenceGatewayConfig] = None,
                  policy_path: Optional[str] = None, *,
-                 provider: InferenceProvider):
+                 provider: InferenceProvider,
+                 cache_dir: Optional[Path] = None):
         """
         `provider` is REQUIRED and has no default (E6.1 --
         ARCHITECTURE_SCORE_10_PLAN.md, closing L7).
@@ -424,8 +426,12 @@ class InferenceGateway:
         `OpenRouterProvider`; only services/structure/tests/
         fabricating_provider.py (not shipped, not on the worker image's
         PYTHONPATH) can construct the fabricating one.
+
+        `cache_dir` holds one JSON answer per cache key (route, prompt, schema,
+        model, inputs), kept for the route's `cache_ttl_hours`. None: no cache.
         """
         self._provider = provider
+        self._cache_dir = Path(cache_dir) if cache_dir is not None else None
         self._config = config or InferenceGatewayConfig()
         self._prompt_cache = PromptCacheManager()
         self._cost_trackers: dict[str, CostTracker] = {}
@@ -482,35 +488,34 @@ class InferenceGateway:
         # Determine starting tier
         start_tier = request.force_tier or route_config.tier
         
-        # Cache hit check (simulated — real impl checks CAS)
         cache_key = self._cache_key(request, route_config)
-        cached = self._check_cache(cache_key)
+        cached = self._check_cache(cache_key, route_config)
         if cached:
-            cached["cache_hit"] = True
+            output = {**cached["output"], "modelInfo": {
+                **cached["output"].get("modelInfo", {}), "cacheHit": True, "costUsd": 0.0}}
             return InferenceResult(
                 request_id=request.request_id,
                 route=request.route,
-                tier_used=start_tier,
-                output=cached["output"],
-                confidence=cached.get("confidence", 1.0),
-                model_id=route_config.model_id,
-                prompt_version=route_config.prompt_version,
+                tier_used=ModelTier(cached["tier_used"]),
+                output=output,
+                confidence=cached["confidence"],
+                model_id=cached["model_id"],
+                prompt_version=cached["prompt_version"],
                 cache_hit=True,
                 cost_usd=0.0,
             )
-        
+
         # Run the model call through whichever provider was injected at
         # construction (E6.1). Production code injects OpenRouterProvider;
         # a fabricated result can only occur if a test injected
         # FabricatingProvider, and it is marked `simulated: true` when it does.
         result = self._provider.complete(request, route_config, start_tier)
-        
+
         # Record cost
         tracker.record_call(request.route, result.cost_usd)
-        
-        # Write to CAS (simulated)
+
         self._write_to_cache(cache_key, result)
-        
+
         return result
     
     def _run_deterministic(self, request: InferenceRequest,
@@ -588,19 +593,33 @@ class InferenceGateway:
             json.dumps(payload, sort_keys=True).encode("utf-8")
         ).hexdigest()
     
-    def _check_cache(self, cache_key: str) -> Optional[dict]:
-        """Check if a cached inference result exists.
-        
-        In production, checks CAS + Postgres cache index.
-        """
-        return None  # Miss for tracer bullet
-    
+    def _check_cache(self, cache_key: str, config: RouteConfig) -> Optional[dict]:
+        """The stored answer for this key, unless absent or older than the route's TTL."""
+        if self._cache_dir is None:
+            return None
+        entry = self._cache_dir / f"{cache_key}.json"
+        try:
+            if time.time() - entry.stat().st_mtime > config.cache_ttl_hours * 3600:
+                return None
+            return json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None   # absent, or a torn write: ask again
+
     def _write_to_cache(self, cache_key: str, result: InferenceResult):
-        """Store inference result in CAS.
-        
-        In production, writes to CAS and indexes in Postgres.
-        """
-        pass
+        """Store a real answer. A fabricated, refused or failed one is never
+        replayed: it would come back as if a model had said it."""
+        if (self._cache_dir is None or result.refusal or "error" in result.output
+                or result.output.get("modelInfo", {}).get("simulated")):
+            return
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        entry = self._cache_dir / f"{cache_key}.json"
+        staged = entry.with_suffix(f".{time.time_ns()}.tmp")
+        staged.write_text(json.dumps({
+            "output": result.output, "confidence": result.confidence,
+            "tier_used": result.tier_used.value, "model_id": result.model_id,
+            "prompt_version": result.prompt_version,
+        }, ensure_ascii=False), encoding="utf-8")
+        os.replace(staged, entry)
     
     def _get_cost_tracker(self, request: InferenceRequest) -> CostTracker:
         """Get or create cost tracker for a tenant."""

@@ -1,5 +1,6 @@
 """Tests for inference gateway."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -173,6 +174,73 @@ def test_route_config():
     )
     assert config.route == "test"
     assert config.cost_per_call == 0.001
+
+
+class _CountingProvider:
+    """A real-shaped (not simulated) answer, counting the calls that cost money."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def complete(self, request, route, tier):
+        self.calls += 1
+        return InferenceResult(
+            request_id=request.request_id, route=request.route, tier_used=tier,
+            output={"schema": "classification/1",
+                    "nodes": [{"sourceRef": "p1", "classification": "chapter-title", "confidence": 0.9}],
+                    "modelInfo": {"modelId": route.model_id, "cacheHit": False, "costUsd": 0.004}},
+            confidence=0.9, model_id=route.model_id, prompt_version=route.prompt_version, cost_usd=0.004,
+        )
+
+
+def _request(text="Hello", rid="r1"):
+    return InferenceRequest(request_id=rid, route="structure-classify",
+                            inputs={"nodes": [{"sourceRef": "p1", "text": text}]},
+                            prompt_version="1.0", schema_version="classification/1")
+
+
+def test_the_same_question_is_paid_for_once(tmp_path):
+    """The stage cache keys on the whole AST, so a typo fixed anywhere in the book
+    used to buy the same classification again. The gateway keys on what it sends."""
+    provider = _CountingProvider()
+    first = InferenceGateway(provider=provider, cache_dir=tmp_path).classify(_request(rid="b1"))
+    # A new gateway, as the next build constructs: the cache is on disk, not in memory.
+    again = InferenceGateway(provider=provider, cache_dir=tmp_path).classify(_request(rid="b2"))
+
+    assert provider.calls == 1
+    assert (first.cache_hit, again.cache_hit) == (False, True)
+    assert again.cost_usd == 0.0 and again.request_id == "b2"
+    assert again.output["nodes"] == first.output["nodes"]
+    assert again.output["modelInfo"]["cacheHit"] is True and again.output["modelInfo"]["costUsd"] == 0.0
+    assert first.output["modelInfo"]["cacheHit"] is False   # the stored copy is not rewritten
+
+
+def test_a_different_question_or_an_expired_answer_is_asked_again(tmp_path):
+    provider = _CountingProvider()
+    gateway = InferenceGateway(provider=provider, cache_dir=tmp_path)
+    gateway.classify(_request())
+    gateway.classify(_request(text="Another chapter"))
+    assert provider.calls == 2
+
+    for entry in tmp_path.glob("*.json"):   # older than the route's TTL (168 h)
+        os.utime(entry, (0, 0))
+    gateway.classify(_request())
+    assert provider.calls == 3
+
+
+def test_simulated_and_refused_answers_are_never_cached(tmp_path):
+    gateway = InferenceGateway(provider=FabricatingProvider(), cache_dir=tmp_path)
+    gateway.classify(_request())
+    assert not gateway.classify(_request()).cache_hit
+    assert not list(tmp_path.glob("*.json"))
+
+
+def test_no_cache_dir_means_no_cache(tmp_path):
+    provider = _CountingProvider()
+    gateway = InferenceGateway(provider=provider)
+    gateway.classify(_request())
+    gateway.classify(_request())
+    assert provider.calls == 2
 
 
 def test_cost_summary():

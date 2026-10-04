@@ -36,6 +36,7 @@ from publisher_structure.inference import InferenceGateway, InferenceRequest, Op
 
 # What the model sees of a node: its text, and the opening of what follows it.
 CONTEXT_CHARS = 200
+INFERENCE_CACHE_DIR = "inference-cache"
 
 
 def _text(node) -> str:
@@ -68,7 +69,10 @@ def _doubtful_chapters(ast: dict) -> list[dict]:
 
 @stage(
     name="structure-infer",
-    version=2,   # v2: reads ast/1, sends ingest's low-confidence chapters by docxId
+    version=3,   # v3: answers cached under cas_root/inference-cache, keyed on what
+                 # is sent -- an edit elsewhere in the book no longer buys the
+                 # same classification again.
+                 # v2: reads ast/1, sends ingest's low-confidence chapters by docxId
                  # (was: rules over typescript-html/1, `block-<i>` ids); strict
                  # structured output, pinned provider, real prompt (W3).
     inputs={"ast": "ast/1", "api_key": "openrouter-credential/1"},
@@ -99,7 +103,10 @@ def structure_infer(ctx: StageCtx, ast: str | None = None, api_key: str | None =
 
     nodes = _doubtful_chapters(json.loads(ast_path.read_bytes()))
     if nodes:
-        gateway = InferenceGateway(provider=OpenRouterProvider(api_key=api_key))
+        # Inside cas_root: the only path the worker's read-only container can write
+        # that outlives the build. Shard dirs are two hex chars, so no collision.
+        gateway = InferenceGateway(provider=OpenRouterProvider(api_key=api_key),
+                                   cache_dir=Path(ctx.cas_root) / INFERENCE_CACHE_DIR)
         route = gateway.route("structure-classify")
         result = gateway.classify(InferenceRequest(
             request_id=ctx.build_id,

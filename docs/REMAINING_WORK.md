@@ -769,8 +769,14 @@ that reasoned on an `effort: none` route fails, and so does a refusal.
 **Still open:**
 - No call has been made with a real key from this repo; the request shape is pinned by
   tests (`services/structure/tests/test_classify_contract.py`), not by a live response.
-- `InferenceGateway`'s own cache (`_check_cache`/`_write_to_cache`) is still a stub. The
-  stage cache covers a repeat build of the same AST.
+
+**Done (2026-10-04): the gateway's own cache.** The stage cache keys on the whole AST, so a
+typo fixed anywhere in the book paid for the same classification again. `InferenceGateway`
+now takes `cache_dir` and stores one JSON answer per key (route, prompt, schema, model,
+inputs) for the route's `cache_ttl_hours`. `structure-infer` (v3) keeps it under
+`cas_root/inference-cache`, the one path the read-only worker can write that outlives a
+build. A fabricated, refused or failed answer is never stored. A hit reports
+`cacheHit: true` and `costUsd: 0`.
 
 ---
 
