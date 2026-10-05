@@ -244,8 +244,10 @@ let model output change a build on its own.
   sends the ones scored below 0.8 (in practice the 0.5 fallback when ingest found no
   body boundary), its first block as `text` and its type's label as `current`
   (`classify_contract.SECTION_LABELS`). `structure-propose` (v2) flags any other verdict
-  for the reviewer. Still open: no op moves a section into the body or to the other end
-  of the book, so a section can only be flagged, not fixed, from a proposal.
+  for the reviewer. **Done (2026-10-05):** a front-matter section read as a chapter title
+  now proposes `start_body` (`structure-propose` v3) — the earliest one only, since the
+  ones after it move with it. Still open: no op moves a back-matter section into the body
+  or a section to the other end of the book, so those are only flagged.
 - `split_chapter`, `reclassify` and promote proposals are not produced: a chapter-level
   verdict has no block to split at, and a chapter is already the top level.
 
@@ -384,6 +386,7 @@ No vendor publishes either, so they stay schema defaults. That is written down, 
 | `insert` | Adds a scene or page break after a block. It never adds text: words inserted after the integrity gate would reach the book unchecked. The break gets an id derived from the op, so a `delete` can take it out. |
 | `set_attr` | Sets or removes one attribute the node's type declares (`path` is `/attrs/<name>`). It refuses `title` (retitle's), `level` (promote/demote's), and the derived `id` and `number`. |
 | `resolve_ambiguity` | Clears a node's flags, or only the one named in `value`. |
+| `start_body` | (2026-10-05) Targets a front-matter section: it and every front-matter section after it become chapters at the head of the body, each titled with its first block. Refused when a moved section has no text to title it, a title over the schema's limit, or nothing left after the title. |
 | `rename` | **Dropped from the schema.** It meant nothing `retitle` does not, and the API always refused it, so no stored log holds one. |
 
 Two fixes to existing ops:

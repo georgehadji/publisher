@@ -109,3 +109,14 @@ def test_proposal_ops_are_one_mapping_in_two_languages():
     from stages.propose_stage import PROPOSAL_OPS
     body = _read("packages/api/src/contract.ts").split("export const PROPOSAL_OPS = {", 1)[1].split("}", 1)[0]
     assert dict(re.findall(r'(\w+): "(\w+)"', body)) == PROPOSAL_OPS
+
+
+def test_the_override_route_and_contract_accept_every_schema_op():
+    """The API restates the op enum twice (the PATCH route's JSON schema and
+    contract.ts's union). An op missing there is one no reviewer can log."""
+    ops = set(json.loads(_read("schemas/overrides/overrides.schema.json"))
+              ["$defs"]["overrideOp"]["properties"]["op"]["enum"])
+    route = _read("packages/api/src/routes/manuscripts.ts").split("enum: [", 1)[1].split("]", 1)[0]
+    union = re.search(r"\n\s*op:\s*\n(.*?);", _read("packages/api/src/contract.ts"), re.S).group(1)
+    assert set(re.findall(r"'(\w+)'", route)) == ops
+    assert set(re.findall(r'"(\w+)"', union)) == ops

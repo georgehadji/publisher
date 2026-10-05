@@ -231,8 +231,75 @@ def test_insert_refuses_text_and_places_a_break_cannot_go(ref, value, reason):
     _refused(_op("insert", ref, value=value), reason)
 
 
+# ── start_body: the front/body boundary ingest got wrong ───────
+
+def _section(kind: str, ref: str, *blocks: dict) -> dict:
+    return {"type": kind, "sourceRef": {"docxId": ref}, "confidence": 0.5, "content": list(blocks)}
+
+
+BOOK = {**AST, "frontMatter": [
+    _section("dedication", "f1", _p("DEDICATION", "fp1"), _p("For mum.", "fp2")),
+    _section("preface", "f2", _p("THE STORM", "fp3"), _p("It rained.", "fp4")),       # really chapter 1
+    _section("toc", "f3", _p("THE CALM", "fp5"), _p("It stopped.", "fp6"), _p("Then.", "fp7")),
+], "backMatter": [_section("colophon", "b1", _p("Set in Garamond", "bp1"))]}
+
+
+def _text_in_order(ast: dict) -> str:
+    def walk(node) -> str:
+        if isinstance(node, list):
+            return " ".join(walk(n) for n in node)
+        if not isinstance(node, dict):
+            return ""
+        own = [node["text"]] if node.get("type") == "text" else []
+        title = [(node.get("attrs") or {}).get("title", "")] if node.get("type") == "chapter" else []
+        return " ".join(title + own + [walk(node.get(k)) for k in ("frontMatter", "body", "backMatter", "content")])
+    return " ".join(walk(ast).split())
+
+
+def _apply_to_book(*ops: OverrideOp) -> dict:
+    out = apply_overrides(BOOK, list(ops))
+    errors = sorted(Draft202012Validator(SCHEMA).iter_errors(_public(out)), key=str)
+    assert not errors, f"the effective document is not a valid AST: {errors[0].message}"
+    return out
+
+
+def test_start_body_moves_that_section_and_the_rest_of_the_front_matter_into_the_body():
+    out = _apply_to_book(_op("start_body", "f2"))
+    assert [s["sourceRef"]["docxId"] for s in out["frontMatter"]] == ["f1"]
+    assert _outline(out)[:3] == [(1, "THE STORM", ["It rained."]), (2, "THE CALM", ["It stopped.", "Then."]),
+                                 (3, "One", ["a", "h1:Section", "b", "h2:Sub", "c"])]
+    assert [c["attrs"]["number"] for c in out["body"]] == [1, 2, 3, 4, 5]
+    # The section's id goes with it, so an op aimed at it still lands.
+    assert [c["sourceRef"]["docxId"] for c in out["body"][:2]] == ["f2", "f3"]
+    assert len({c["attrs"]["id"] for c in out["body"]}) == 5
+    # Every word stays in the book, in order: the integrity gate already passed.
+    assert _text_in_order(out) == _text_in_order(BOOK)
+
+
+def test_start_body_can_empty_the_front_matter():
+    out = _apply_to_book(_op("start_body", "f1"))
+    assert out["frontMatter"] == [] and _outline(out)[0][1] == "DEDICATION"
+
+
+@pytest.mark.parametrize("book, ref, reason", [
+    (BOOK, "c2", "not a front-matter section"),
+    (BOOK, "b1", "not a front-matter section"),
+    (BOOK, "fp3", "not a front-matter section"),
+    ({**BOOK, "frontMatter": [_section("titlePage", "t1", _p("ALONE", "tp1"))]}, "t1",
+     "nothing left once its first block titles it"),
+    ({**BOOK, "frontMatter": [_section("preface", "t1", _p("TITLE", "tp1"), _p("x", "tp2")),
+                              _p("a stray line", "tp3")]}, "t1", "a paragraph, not a section"),
+    ({**BOOK, "frontMatter": [_section("preface", "t1", {"type": "sceneBreak"}, _p("x", "tp2"))]}, "t1",
+     "no text to title"),
+])
+def test_start_body_refuses_what_it_cannot_turn_into_chapters(book, ref, reason):
+    skipped: list = []
+    assert apply_overrides(book, [_op("start_body", ref)], skipped) is book
+    assert skipped and reason in skipped[0][1], skipped
+
+
 def test_ops_on_nothing_are_orphans_left_to_the_api():
-    for name in ("promote", "demote", "delete", "insert", "set_attr", "resolve_ambiguity"):
+    for name in ("promote", "demote", "delete", "insert", "set_attr", "resolve_ambiguity", "start_body"):
         assert apply_overrides(AST, [_op(name, "nowhere", value="sceneBreak", path="/attrs/role")]) is AST
 
 

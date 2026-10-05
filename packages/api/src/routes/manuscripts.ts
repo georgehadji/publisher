@@ -428,7 +428,7 @@ export const OVERRIDE_OP_SCHEMA = {
       $comment: '`rename` was dropped: it meant nothing `retitle` does not, and the API refused it (422) from the day the log existed, so no stored log holds one.',
       enum: [
         'reclassify', 'split', 'merge', 'promote', 'demote', 'delete',
-        'insert', 'retitle', 'set_attr', 'flag_ambiguity', 'resolve_ambiguity',
+        'insert', 'retitle', 'set_attr', 'flag_ambiguity', 'resolve_ambiguity', 'start_body',
       ],
     },
     path: { type: 'string', maxLength: 256, description: 'JSON Pointer to the target within the AST' },

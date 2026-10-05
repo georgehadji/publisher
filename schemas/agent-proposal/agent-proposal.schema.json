@@ -57,7 +57,8 @@
             "identify_front_matter",
             "identify_back_matter",
             "flag_ambiguity",
-            "suggest_title"
+            "suggest_title",
+            "start_body"
           ]
         },
         "sourceRef": {

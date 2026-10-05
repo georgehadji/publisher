@@ -22,6 +22,11 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = json.loads((ROOT / "schemas/agent-proposal/agent-proposal.schema.json").read_text(encoding="utf-8"))
 
 
+def _section(kind: str, docx_id: str, *lines: str) -> dict:
+    return {"type": kind, "sourceRef": {"docxId": docx_id},
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": t}]} for t in lines]}
+
+
 def _chapter(n: int, title: str, docx_id: str) -> dict:
     return {"type": "chapter", "attrs": {"number": n, "id": f"ch{n}", "title": title},
             "sourceRef": {"docxId": docx_id},
@@ -35,12 +40,13 @@ AST = {"schema": "ast/1", "body": [
     _chapter(4, "FOUR", "c4"),       # agrees -> nothing
     {"type": "part", "attrs": {"title": "II", "id": "p2"}, "content": [
         _chapter(5, "Odd", "c5")]},  # prose, but first in its part -> only a flag
-], "frontMatter": [                  # read as a chapter -> no op moves it, so a flag
-    {"type": "dedication", "sourceRef": {"docxId": "f1"},
-     "content": [{"type": "paragraph", "content": [{"type": "text", "text": "PROLOGUE"}]}]},
-], "backMatter": [                   # its own label -> agrees, nothing
-    {"type": "colophon", "sourceRef": {"docxId": "b1"},
-     "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Set in Garamond"}]}]},
+], "frontMatter": [
+    _section("dedication", "f0", "For mum", "x"),       # its own label -> agrees, nothing
+    _section("dedication", "f1", "PROLOGUE", "It began."),  # read as a chapter -> start_body
+    _section("preface", "f2", "THE STORM", "It rained."),   # also a chapter -> moves with f1
+], "backMatter": [
+    _section("colophon", "b1", "Set in Garamond", "x"),  # its own label -> agrees, nothing
+    _section("notes", "b2", "Note one", "x"),             # read as prose -> only a flag
 ]}
 
 
@@ -53,19 +59,22 @@ def _classification(*nodes) -> dict:
 
 VERDICTS = _classification(("c2", "paragraph", 0.8), ("c3", "heading-2", 0.7),
                            ("c4", "chapter-title", 0.9), ("c5", "paragraph", 0.6),
-                           ("f1", "chapter-title", 0.7), ("b1", "back-colophon", 0.9))
+                           ("f0", "front-dedication", 0.9), ("f1", "chapter-title", 0.7),
+                           ("f2", "chapter-title", 0.8), ("b1", "back-colophon", 0.9),
+                           ("b2", "paragraph", 0.6))
 
 
 def test_each_label_becomes_the_proposal_its_mapping_says():
     got = {p["sourceRef"]["docxId"]: p["type"] for p in proposals_for(VERDICTS, AST)}
     assert got == {"c2": "merge_chapters", "c3": "adjust_heading_level", "c5": "flag_ambiguity",
-                   "f1": "flag_ambiguity"}
+                   "f1": "start_body", "b2": "flag_ambiguity"}
 
 
-def test_a_section_flag_quotes_its_opening_and_both_labels():
-    flag = next(p for p in proposals_for(VERDICTS, AST) if p["sourceRef"]["docxId"] == "f1")
-    assert "“PROLOGUE”" in flag["rationale"]
-    assert "as chapter-title, not front-dedication" in flag["rationale"]
+def test_section_proposals_quote_the_opening_and_say_what_moves():
+    by_ref = {p["sourceRef"]["docxId"]: p for p in proposals_for(VERDICTS, AST)}
+    assert "“PROLOGUE”" in by_ref["f1"]["rationale"]
+    assert "the 1 front-matter section(s) after it become chapters" in by_ref["f1"]["rationale"]
+    assert "“Note one” as paragraph, not back-notes" in by_ref["b2"]["rationale"]
 
 
 def test_ids_are_stable_across_rebuilds_and_distinct_per_change():
@@ -87,7 +96,9 @@ def test_every_accepted_proposal_applies_to_the_ast_it_was_made_from():
     inapplicable, orphaned = [], []
     out = apply_overrides(AST, ops, inapplicable=inapplicable, orphaned=orphaned)
     assert inapplicable == [] and orphaned == []
-    assert [c["attrs"]["title"] for c in out["body"] if c["type"] == "chapter"] == ["ONE", "FOUR"]
+    assert [c["attrs"]["title"] for c in out["body"] if c["type"] == "chapter"] == \
+        ["PROLOGUE", "THE STORM", "ONE", "FOUR"]
+    assert [s["sourceRef"]["docxId"] for s in out["frontMatter"]] == ["f0"]
 
 
 def _run_stage(tmp_path, api_key=None):
@@ -115,7 +126,7 @@ def _wrangler_keeps(monkeypatch, keep: list[str]):
 def test_the_stage_writes_a_valid_agent_proposal(tmp_path):
     result, document = _run_stage(tmp_path)
     validate(document, SCHEMA)
-    assert result.metrics["proposals"] == 4 and document["modelId"] == "m/x"
+    assert result.metrics["proposals"] == 5 and document["modelId"] == "m/x"
     assert result.warnings == []
 
 
@@ -124,14 +135,14 @@ def test_with_a_key_the_wrangler_may_drop_and_reorder(tmp_path, monkeypatch):
     _wrangler_keeps(monkeypatch, [ids[2], ids[0]])
     result, document = _run_stage(tmp_path, api_key="sk-fake")
     assert [p["id"] for p in document["proposals"]] == [ids[2], ids[0]]
-    assert result.metrics["proposals_dropped"] == 2 and result.warnings == []
+    assert result.metrics["proposals_dropped"] == 3 and result.warnings == []
     validate(document, SCHEMA)
 
 
 def test_a_failed_review_keeps_every_proposal_and_says_so(tmp_path, monkeypatch):
     _wrangler_keeps(monkeypatch, ["pr-invented"])
     result, document = _run_stage(tmp_path, api_key="sk-fake")
-    assert len(document["proposals"]) == 4
+    assert len(document["proposals"]) == 5
     assert [w.code for w in result.warnings] == ["proposal-review-failed"]
 
 
@@ -142,7 +153,7 @@ def test_without_a_key_no_agent_is_built(tmp_path, monkeypatch):
         raise AssertionError("a Wrangler was built with no key")
     monkeypatch.setattr(propose_stage, "_wrangler", no_agent)
     result, document = _run_stage(tmp_path)
-    assert len(document["proposals"]) == 4 and result.warnings == []
+    assert len(document["proposals"]) == 5 and result.warnings == []
 
 
 def test_reachable_exactly_when_structure_infer_is():

@@ -445,6 +445,57 @@ def _op_demote(ast: dict, op: OverrideOp) -> dict:
                     lambda n: _with_attrs(n, {**(n.get("attrs") or {}), "level": level + 1}, op))
 
 
+# ── start_body: where the front matter ends ────────────────────
+#
+# When ingest finds no prose to mark the body's start it falls back, and real
+# chapters can land in the front matter (each scored 0.5). `start_body` targets
+# the front-matter section where the body really begins: it and every section
+# after it become chapters, in order, ahead of the body -- each titled by its
+# first block, as `split` titles a chapter. Nothing is reordered, so every word
+# stays where the integrity gate saw it. Undo is dropping the op from the log.
+
+def _section_as_chapter(section: dict, number: int, chapter_id: str, op: OverrideOp) -> dict:
+    kind = section.get("type")
+    if "content" not in section or kind not in _section_types():
+        raise InapplicableOverride(f"the front matter after it holds a {kind}, not a section")
+    first, *rest = section["content"]
+    title = _plain_text(first)
+    if not title:
+        raise InapplicableOverride(f"the {kind} opens with no text to title a chapter")
+    if len(title) > _TITLE_MAX:
+        raise InapplicableOverride(f"the {kind}'s first block is {len(title)} characters, too long for a title")
+    if not rest:
+        raise InapplicableOverride(f"the {kind} has nothing left once its first block titles it")
+    chapter = {"type": "chapter",
+               "attrs": {"number": number, "id": chapter_id, "title": title, "startsOn": "recto"},
+               "content": rest, "_override": op.id}
+    return {**chapter, "sourceRef": section["sourceRef"]} if "sourceRef" in section else chapter
+
+
+@functools.lru_cache(maxsize=1)
+def _section_types() -> frozenset:
+    """The front-matter section types (ast.schema.json's frontMatterNode branch)."""
+    for branch in _ast_defs()["frontMatterNode"]["allOf"]:
+        if "$ref" not in branch["then"]:
+            return frozenset(branch["then"]["properties"]["type"]["enum"])
+    return frozenset()
+
+
+def _op_start_body(ast: dict, op: OverrideOp) -> dict:
+    front = ast.get("frontMatter") or []
+    at = next((i for i, node in enumerate(front) if _matches(node, op.sourceRef)), None)
+    if at is None:
+        if _find_by_source_ref(ast, op.sourceRef) is not None:
+            raise InapplicableOverride("it is not a front-matter section")
+        return ast
+    base = _derived_id("ch", op)
+    moved = [_section_as_chapter(section, n, f"{base}-{n}", op)
+             for n, section in enumerate(front[at:], start=1)]
+    out = {**ast, "frontMatter": front[:at], "body": moved + (ast.get("body") or [])}
+    # The book's existing chapters now follow the moved ones.
+    return _shift_chapter_numbers(out, moved[-1]["attrs"]["id"], len(moved))
+
+
 # ── delete / insert: the list that holds a node changes ────────
 
 # Lists that may be left empty: the book's front and back matter.
@@ -544,6 +595,7 @@ _TRANSFORMS = {
     "merge": _op_merge,
     "promote": _op_promote,
     "demote": _op_demote,
+    "start_body": _op_start_body,
 }
 
 # Ops `schemas/overrides/overrides.schema.json` accepts that no transform above

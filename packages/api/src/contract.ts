@@ -47,6 +47,7 @@ export const PROPOSAL_OPS = {
   merge_chapters: "merge",
   adjust_heading_level: "demote",
   flag_ambiguity: "flag_ambiguity",
+  start_body: "start_body",
 } as const satisfies Record<string, OverrideOp["op"]>;
 
 /** One proposal awaiting a reviewer. Accepting it logs op `ov-<id>`. */
@@ -115,7 +116,7 @@ export interface OverrideOp {
   sourceRef: { docxId: string; contentHash?: string; fallbackText?: string };
   op:
     | "reclassify" | "split" | "merge" | "promote" | "demote" | "delete" | "insert"
-    | "retitle" | "set_attr" | "flag_ambiguity" | "resolve_ambiguity";
+    | "retitle" | "set_attr" | "flag_ambiguity" | "resolve_ambiguity" | "start_body";
   path?: string;
   from?: string;
   to?: string;

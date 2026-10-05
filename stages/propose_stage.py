@@ -16,9 +16,11 @@ Each proposal is one implemented override op, named by its type:
 | uncertain, or any other label             | flag_ambiguity    | flag_ambiguity |
 | chapter-title                             | (none -- it agrees with ingest) |  |
 
-A doubtful front/back-matter section has no op that moves it (into the body,
-or to the other end of the book), so any label but its own type's becomes
-`flag_ambiguity`, and its own label is agreement.
+A doubtful front/back-matter section's own type's label is agreement. The
+earliest front-matter section read as a `chapter-title` becomes `start_body`
+(the body really starts there; later ones move with it, so get nothing). Any
+other label -- or a back-matter section read as a chapter, which no op moves --
+becomes `flag_ambiguity`.
 
 The API builds the op from a proposal only when a reviewer accepts it
 (`POST /v1/manuscripts/:id/proposals/:pid/accept`); until then nothing reaches
@@ -57,7 +59,7 @@ _AGREES = {"chapter-title"}
 # op (packages/api/src/contract.ts PROPOSAL_OPS, pinned to this by
 # tests/test_single_source.py); every value is an implemented op.
 PROPOSAL_OPS = {"merge_chapters": "merge", "adjust_heading_level": "demote",
-                "flag_ambiguity": "flag_ambiguity"}
+                "flag_ambiguity": "flag_ambiguity", "start_body": "start_body"}
 
 
 def _proposal_id(docx_id: str, kind: str) -> str:
@@ -108,23 +110,37 @@ def proposals_for(classification: dict, ast: dict) -> list[dict]:
             "confidence": score,
             "evidence": [f"label: {label}", f"model: {model}"],
         })
-    for section in (s for root in ("frontMatter", "backMatter") for s in ast.get(root) or []):
-        ref = (section.get("sourceRef") or {}).get("docxId")
-        verdict = verdicts.get(ref)
-        own = SECTION_LABELS.get(section.get("type"))
-        if verdict is None or own is None or verdict["classification"] == own:
-            continue
-        label, score = verdict["classification"], verdict["confidence"]
-        opening = _opening(section)
-        proposals.append({
-            "id": _proposal_id(ref, "flag_ambiguity"),
-            "type": "flag_ambiguity",
-            "sourceRef": {"docxId": ref},
-            "rationale": f"The model ({model}) reads the {section['type']} section opening "
-                         f"“{opening}” as {label}, not {own} (confidence {score:.2f}).",
-            "confidence": score,
-            "evidence": [f"label: {label}", f"model: {model}"],
-        })
+    body_starts = False
+    for root in ("frontMatter", "backMatter"):
+        front = root == "frontMatter"
+        sections = ast.get(root) or []
+        for index, section in enumerate(sections):
+            ref = (section.get("sourceRef") or {}).get("docxId")
+            verdict = verdicts.get(ref)
+            own = SECTION_LABELS.get(section.get("type"))
+            if verdict is None or own is None or verdict["classification"] == own:
+                continue
+            label, score = verdict["classification"], verdict["confidence"]
+            opening = _opening(section)
+            if front and label in _AGREES:
+                if body_starts:
+                    continue   # the earlier start_body already moves this one
+                body_starts, kind = True, "start_body"
+                after = len(sections) - index - 1
+                why = (f"reads the {section['type']} section opening “{opening}” as a chapter "
+                       f"title: the body starts here, so it and the {after} front-matter "
+                       f"section(s) after it become chapters")
+            else:
+                kind = "flag_ambiguity"
+                why = f"reads the {section['type']} section opening “{opening}” as {label}, not {own}"
+            proposals.append({
+                "id": _proposal_id(ref, kind),
+                "type": kind,
+                "sourceRef": {"docxId": ref},
+                "rationale": f"The model ({model}) {why} (confidence {score:.2f}).",
+                "confidence": score,
+                "evidence": [f"label: {label}", f"model: {model}"],
+            })
     return proposals
 
 
@@ -141,7 +157,8 @@ def _opening(section: dict, limit: int = 80) -> str:
 
 @stage(
     name="structure-propose",
-    version=2,  # v2: a verdict on a doubtful front/back-matter section is flagged
+    version=3,  # v3: a front-matter section read as a chapter proposes start_body
+                # v2: a verdict on a doubtful front/back-matter section is flagged
     inputs={"classification": "classification/1", "ast": "ast/1", "api_key": "openrouter-credential/1"},
     root_inputs=["api_key"],
     optional_root_inputs=["api_key"],  # absent: proposals unreviewed, never unreachable
