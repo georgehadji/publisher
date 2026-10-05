@@ -36,7 +36,7 @@ carries the invariants that folder enforces and the mistakes that have already b
 | Add or change a build step | Find the module with `grep -n 'name="<stage>"' stages/*.py` (names ≠ filenames) → bump `@stage(version=)` → add new modules to `stages/__init__.py` only (`integrity.py` does `import stages`; it has no list, and re-adding one recreates a duplicate that already drifted once) |
 | Change what a stage consumes/produces | The `inputs=`/`outputs=` schema IDs in `stages/` — the DAG follows automatically |
 | A stage is unreachable | Fix the producing chain. Never promote an input to `root_inputs`, never set `allow_stub_engines` |
-| Add or edit an artifact schema | `schemas/<name>/` → `cd schemas && node codegen/generate.mjs` → `node codegen/test.mjs`. The `.gen.*` files are **gitignored and untracked** — do not try to commit them, and note `gen:check` cannot fail (see **publisher-schemas**) |
+| Add or edit an artifact schema | `schemas/<name>/` → `cd schemas && node codegen/generate.mjs` → `node codegen/test.mjs`. The `.gen.*` files are **tracked — commit them with the schema change**, or CI's "Codegen in sync" step fails (see **publisher-schemas**) |
 | DOCX parsing / text loss | `services/ingest/publisher_ingest/docx_to_ast.py` |
 | Chapter/front-matter detection, confidence | `services/structure/publisher_structure/rules.py` |
 | LLM routing, model choice, cache keys | `platform/routing/policy.yaml` + `services/structure/publisher_structure/inference.py` |

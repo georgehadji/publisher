@@ -39,9 +39,8 @@ lint-imports --config .importlinter     # import boundaries (E1.4) -- needs the 
                                         # installs on PYTHONPATH, see PUBLISHER_PKGS in ci.yml
 python platform/stages/integrity.py     # DAG integrity — run as a SCRIPT, not -m
 cd schemas && node codegen/test.mjs     # generated types actually execute
-cd schemas && node codegen/test.mjs     # codegen: the ONLY real check here.
-                                        # `gen:check` / `git diff -- '**/*.gen.*'` always
-                                        # exits 0 -- .gen.* are gitignored and untracked.
+cd schemas && node codegen/generate.mjs && git diff --exit-code   # codegen in sync:
+                                        # .gen.* are tracked, CI runs exactly this
 bash scripts/test.sh                    # never bare pytest (no exec bit: use `bash`)
 cargo test 2>&1 | tail -30 && cargo clippy -- -D warnings 2>&1 | tail -30
 ```

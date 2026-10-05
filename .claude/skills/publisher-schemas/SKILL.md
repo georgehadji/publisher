@@ -11,9 +11,9 @@ the DAG is derived from, so **a schema ID is an API**, not a label.
 Two rules govern the whole folder:
 
 1. **Schema-first codegen.** JSON Schema → Pydantic (`schemas/py/models.gen.py`) + Zod
-   (`schemas/ts/index.gen.ts`). Never hand-edit them. **Neither exists in a fresh checkout**
-   (`schemas/py/` is not even created until you run codegen) and neither is tracked — see the
-   gen:check warning below before trusting any "in sync" claim.
+   (`schemas/ts/index.gen.ts`). Never hand-edit them. **Both are tracked (since E0,
+   `949a68c`): commit them with the schema change that produced them**, or CI's "Codegen in
+   sync" step fails.
 2. **The AST schema is one schema, used three ways** — canonical book model, ProseMirror
    schema, and the input to every writer. That is what prevents drift.
 
@@ -37,12 +37,10 @@ Two rules govern the whole folder:
 | `codegen/test.mjs` | — | **Executes** the generated types rather than grepping them. The previous version only ran substring checks and passed while the generated TS had 39 dangling refs and the generated Python was an unimportable SyntaxError. |
 | `package.json` | — | `@publisher/schemas`. Scripts: `gen`, `gen:check`, `test`, `build`. Depends on `zod`. |
 
-**The `.gitignore` comment above `*.gen.*` says "checked in" and is wrong.** Zero `.gen.*`
-files are tracked, none exist in a fresh checkout, and `git add` refuses them. Consequently
-`gen:check` (`git diff --exit-code -- '**/*.gen.*'`) **exits 0 unconditionally** — it inspects
-only tracked files, so it can never detect drift. CI's step regenerates and then runs a bare
-`git diff --exit-code`, which is equally blind to ignored files. Treat codegen freshness as
-*unverified* and rerun `node codegen/test.mjs`, which actually executes the output.
+**The `.gen.*` files are tracked and not gitignored** (E0, `949a68c`; until then they were
+ignored and `gen:check` could never fail). CI's "Codegen in sync" step regenerates and runs
+`git diff --exit-code`, so a schema edit committed without its regenerated types fails CI.
+`gen:check` (`git diff --exit-code -- '**/*.gen.*'`) is the same check, run locally.
 
 `ts/shared.types.json` (a `types/1` file nothing referenced -- its `$defs` were
 duplicated inline in every schema and codegen skipped it) was deleted: a second copy of
@@ -56,7 +54,7 @@ cd schemas && node codegen/generate.mjs      # regenerate types
 cd schemas && node codegen/test.mjs          # execute the generated types
 python cli.py schema validate <file>         # validate an instance
 python tools/lint_schemas.py                 # no free-text in structure-route schemas
-# NOTE: gen:check cannot fail (see above) — codegen/test.mjs is the real check
+cd schemas && npm run gen:check              # regenerated types match what's committed
 ```
 
 ## Rules that bite
@@ -76,8 +74,8 @@ python tools/lint_schemas.py                 # no free-text in structure-route s
   (`test_word_corpus.py` checks they agree). Codegen reads this shape as a union via
   `unionBranches()` in `generate.mjs`, but only when each `if` tests `type` alone. The
   `op`-keyed `allOf` in `overrides.schema.json` is per-op constraints, not a union.
-- **Regenerate** after any schema edit and run `node codegen/test.mjs`. Do **not** try to
-  commit the `.gen.*` files — they are gitignored, and no gate will catch stale ones for you.
+- **Regenerate** after any schema edit, run `node codegen/test.mjs`, and **commit the
+  `.gen.*` files in the same commit** — CI fails on stale ones.
 
 ## Related
 
