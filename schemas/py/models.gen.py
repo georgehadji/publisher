@@ -837,6 +837,7 @@ class OverrideOp_Op(str, Enum):
     SET_ATTR = "set_attr"
     FLAG_AMBIGUITY = "flag_ambiguity"
     RESOLVE_AMBIGUITY = "resolve_ambiguity"
+    START_BODY = "start_body"
 
 
 class OverrideOp(BaseModel):
@@ -1328,6 +1329,7 @@ class Proposal_Type(str, Enum):
     IDENTIFY_BACK_MATTER = "identify_back_matter"
     FLAG_AMBIGUITY = "flag_ambiguity"
     SUGGEST_TITLE = "suggest_title"
+    START_BODY = "start_body"
 
 
 class Proposal_SourceRef(BaseModel):
