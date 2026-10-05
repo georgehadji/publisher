@@ -838,6 +838,7 @@ class OverrideOp_Op(str, Enum):
     FLAG_AMBIGUITY = "flag_ambiguity"
     RESOLVE_AMBIGUITY = "resolve_ambiguity"
     START_BODY = "start_body"
+    END_BODY = "end_body"
 
 
 class OverrideOp(BaseModel):
@@ -1330,6 +1331,7 @@ class Proposal_Type(str, Enum):
     FLAG_AMBIGUITY = "flag_ambiguity"
     SUGGEST_TITLE = "suggest_title"
     START_BODY = "start_body"
+    END_BODY = "end_body"
 
 
 class Proposal_SourceRef(BaseModel):

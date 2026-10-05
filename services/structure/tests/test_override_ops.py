@@ -298,8 +298,51 @@ def test_start_body_refuses_what_it_cannot_turn_into_chapters(book, ref, reason)
     assert skipped and reason in skipped[0][1], skipped
 
 
+# ── end_body: its mirror at the back of the book ───────────────
+
+BACK = {**BOOK, "backMatter": [
+    _section("epilogue", "e1", _p("THE LAST", "ep1"), _p("It ended.", "ep2")),   # really a chapter
+    _section("afterword", "e2", _p("AFTER", "ep3"), _p("Later.", "ep4"), _p("Then.", "ep5")),
+    *BOOK["backMatter"],
+]}
+
+
+def test_end_body_moves_that_section_and_the_back_matter_before_it_into_the_body():
+    out = apply_overrides(BACK, [_op("end_body", "e2")])
+    errors = sorted(Draft202012Validator(SCHEMA).iter_errors(_public(out)), key=str)
+    assert not errors, errors[0].message
+    assert [s["sourceRef"]["docxId"] for s in out["backMatter"]] == ["b1"]
+    assert _outline(out)[-2:] == [(4, "THE LAST", ["It ended."]), (5, "AFTER", ["Later.", "Then."])]
+    assert [c["attrs"]["number"] for c in out["body"]] == [1, 2, 3, 4, 5]
+    assert [c["sourceRef"]["docxId"] for c in out["body"][-2:]] == ["e1", "e2"]
+    assert len({c["attrs"]["id"] for c in out["body"]}) == 5
+    assert _text_in_order(out) == _text_in_order(BACK)
+
+
+def test_both_boundaries_can_move_in_one_log():
+    out = apply_overrides(BACK, [_op("start_body", "f2"), _op("end_body", "e1")])
+    assert [c["attrs"]["number"] for c in out["body"]] == [1, 2, 3, 4, 5, 6]
+    assert [c["attrs"]["title"] for c in out["body"]][::5] == ["THE STORM", "THE LAST"]
+    assert _text_in_order(out) == _text_in_order(BACK)
+
+
+@pytest.mark.parametrize("book, ref, reason", [
+    (BACK, "c2", "not a back-matter section"),
+    (BACK, "f1", "not a back-matter section"),
+    (BACK, "ep1", "not a back-matter section"),
+    (BOOK, "b1", "nothing left once its first block titles it"),
+    ({**BACK, "backMatter": [_p("a stray line", "sp1"), *BACK["backMatter"]]}, "e1",
+     "the back matter before it holds a paragraph, not a section"),
+])
+def test_end_body_refuses_what_it_cannot_turn_into_chapters(book, ref, reason):
+    skipped: list = []
+    assert apply_overrides(book, [_op("end_body", ref)], skipped) is book
+    assert skipped and reason in skipped[0][1], skipped
+
+
 def test_ops_on_nothing_are_orphans_left_to_the_api():
-    for name in ("promote", "demote", "delete", "insert", "set_attr", "resolve_ambiguity", "start_body"):
+    for name in ("promote", "demote", "delete", "insert", "set_attr", "resolve_ambiguity",
+                 "start_body", "end_body"):
         assert apply_overrides(AST, [_op(name, "nowhere", value="sceneBreak", path="/attrs/role")]) is AST
 
 

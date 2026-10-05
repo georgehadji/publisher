@@ -246,8 +246,10 @@ let model output change a build on its own.
   (`classify_contract.SECTION_LABELS`). `structure-propose` (v2) flags any other verdict
   for the reviewer. **Done (2026-10-05):** a front-matter section read as a chapter title
   now proposes `start_body` (`structure-propose` v3) — the earliest one only, since the
-  ones after it move with it. Still open: no op moves a back-matter section into the body
-  or a section to the other end of the book, so those are only flagged.
+  ones after it move with it. **Done (2026-10-05):** its mirror, `end_body`, for the last
+  back-matter section read as a chapter title (`structure-propose` v4). Still open: no op
+  moves a section to the other end of the book (an epilogue filed as front matter), so
+  such a section is only flagged.
 - `split_chapter`, `reclassify` and promote proposals are not produced: a chapter-level
   verdict has no block to split at, and a chapter is already the top level.
 
@@ -387,6 +389,7 @@ No vendor publishes either, so they stay schema defaults. That is written down, 
 | `set_attr` | Sets or removes one attribute the node's type declares (`path` is `/attrs/<name>`). It refuses `title` (retitle's), `level` (promote/demote's), and the derived `id` and `number`. |
 | `resolve_ambiguity` | Clears a node's flags, or only the one named in `value`. |
 | `start_body` | (2026-10-05) Targets a front-matter section: it and every front-matter section after it become chapters at the head of the body, each titled with its first block. Refused when a moved section has no text to title it, a title over the schema's limit, or nothing left after the title. |
+| `end_body` | (2026-10-05) The mirror: targets a back-matter section; it and every back-matter section before it become chapters at the end of the body, numbered on from the book's last chapter. Same refusals. |
 | `rename` | **Dropped from the schema.** It meant nothing `retitle` does not, and the API always refused it, so no stored log holds one. |
 
 Two fixes to existing ops:

@@ -429,6 +429,7 @@ export const OVERRIDE_OP_SCHEMA = {
       enum: [
         'reclassify', 'split', 'merge', 'promote', 'demote', 'delete',
         'insert', 'retitle', 'set_attr', 'flag_ambiguity', 'resolve_ambiguity', 'start_body',
+        'end_body',
       ],
     },
     path: { type: 'string', maxLength: 256, description: 'JSON Pointer to the target within the AST' },

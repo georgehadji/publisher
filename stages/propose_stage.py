@@ -18,8 +18,8 @@ Each proposal is one implemented override op, named by its type:
 
 A doubtful front/back-matter section's own type's label is agreement. The
 earliest front-matter section read as a `chapter-title` becomes `start_body`
-(the body really starts there; later ones move with it, so get nothing). Any
-other label -- or a back-matter section read as a chapter, which no op moves --
+(the body really starts there; later ones move with it, so get nothing), and
+the last back-matter one becomes `end_body` (its mirror). Any other label
 becomes `flag_ambiguity`.
 
 The API builds the op from a proposal only when a reviewer accepts it
@@ -59,7 +59,8 @@ _AGREES = {"chapter-title"}
 # op (packages/api/src/contract.ts PROPOSAL_OPS, pinned to this by
 # tests/test_single_source.py); every value is an implemented op.
 PROPOSAL_OPS = {"merge_chapters": "merge", "adjust_heading_level": "demote",
-                "flag_ambiguity": "flag_ambiguity", "start_body": "start_body"}
+                "flag_ambiguity": "flag_ambiguity", "start_body": "start_body",
+                "end_body": "end_body"}
 
 
 def _proposal_id(docx_id: str, kind: str) -> str:
@@ -110,26 +111,32 @@ def proposals_for(classification: dict, ast: dict) -> list[dict]:
             "confidence": score,
             "evidence": [f"label: {label}", f"model: {model}"],
         })
-    body_starts = False
     for root in ("frontMatter", "backMatter"):
         front = root == "frontMatter"
         sections = ast.get(root) or []
+        disagreeing = {}
         for index, section in enumerate(sections):
-            ref = (section.get("sourceRef") or {}).get("docxId")
-            verdict = verdicts.get(ref)
+            verdict = verdicts.get((section.get("sourceRef") or {}).get("docxId"))
             own = SECTION_LABELS.get(section.get("type"))
-            if verdict is None or own is None or verdict["classification"] == own:
-                continue
+            if verdict is not None and own is not None and verdict["classification"] != own:
+                disagreeing[index] = (verdict, own)
+        chapters = [i for i, (v, _) in disagreeing.items() if v["classification"] in _AGREES]
+        # The body boundary: the first such front section, the last such back one.
+        # The others move with it, so they get no proposal of their own.
+        boundary = (min if front else max)(chapters, default=None)
+        for index, (verdict, own) in disagreeing.items():
+            section, ref = sections[index], sections[index]["sourceRef"]["docxId"]
             label, score = verdict["classification"], verdict["confidence"]
             opening = _opening(section)
-            if front and label in _AGREES:
-                if body_starts:
-                    continue   # the earlier start_body already moves this one
-                body_starts, kind = True, "start_body"
-                after = len(sections) - index - 1
+            if label in _AGREES:
+                if index != boundary:
+                    continue
+                if front:
+                    kind, edge, others = "start_body", "starts", f"{len(sections) - index - 1} front-matter section(s) after it"
+                else:
+                    kind, edge, others = "end_body", "ends", f"{index} back-matter section(s) before it"
                 why = (f"reads the {section['type']} section opening “{opening}” as a chapter "
-                       f"title: the body starts here, so it and the {after} front-matter "
-                       f"section(s) after it become chapters")
+                       f"title: the body {edge} here, so it and the {others} become chapters")
             else:
                 kind = "flag_ambiguity"
                 why = f"reads the {section['type']} section opening “{opening}” as {label}, not {own}"
@@ -157,7 +164,8 @@ def _opening(section: dict, limit: int = 80) -> str:
 
 @stage(
     name="structure-propose",
-    version=3,  # v3: a front-matter section read as a chapter proposes start_body
+    version=4,  # v4: a back-matter section read as a chapter proposes end_body
+                # v3: a front-matter section read as a chapter proposes start_body
                 # v2: a verdict on a doubtful front/back-matter section is flagged
     inputs={"classification": "classification/1", "ast": "ast/1", "api_key": "openrouter-credential/1"},
     root_inputs=["api_key"],

@@ -445,19 +445,22 @@ def _op_demote(ast: dict, op: OverrideOp) -> dict:
                     lambda n: _with_attrs(n, {**(n.get("attrs") or {}), "level": level + 1}, op))
 
 
-# ── start_body: where the front matter ends ────────────────────
+# ── start_body / end_body: where the body begins and ends ──────
 #
 # When ingest finds no prose to mark the body's start it falls back, and real
 # chapters can land in the front matter (each scored 0.5). `start_body` targets
 # the front-matter section where the body really begins: it and every section
 # after it become chapters, in order, ahead of the body -- each titled by its
-# first block, as `split` titles a chapter. Nothing is reordered, so every word
+# first block, as `split` titles a chapter. `end_body` is its mirror: it targets
+# the back-matter section where the body really ends, and it and every section
+# before it become chapters after the body. Nothing is reordered, so every word
 # stays where the integrity gate saw it. Undo is dropping the op from the log.
 
-def _section_as_chapter(section: dict, number: int, chapter_id: str, op: OverrideOp) -> dict:
+def _section_as_chapter(section: dict, number: int, chapter_id: str, op: OverrideOp,
+                        where: str) -> dict:
     kind = section.get("type")
     if "content" not in section or kind not in _section_types():
-        raise InapplicableOverride(f"the front matter after it holds a {kind}, not a section")
+        raise InapplicableOverride(f"the {where} holds a {kind}, not a section")
     first, *rest = section["content"]
     title = _plain_text(first)
     if not title:
@@ -474,26 +477,55 @@ def _section_as_chapter(section: dict, number: int, chapter_id: str, op: Overrid
 
 @functools.lru_cache(maxsize=1)
 def _section_types() -> frozenset:
-    """The front-matter section types (ast.schema.json's frontMatterNode branch)."""
-    for branch in _ast_defs()["frontMatterNode"]["allOf"]:
-        if "$ref" not in branch["then"]:
-            return frozenset(branch["then"]["properties"]["type"]["enum"])
-    return frozenset()
+    """The front- and back-matter section types (the section branches of
+    ast.schema.json's frontMatterNode and backMatterNode)."""
+    return frozenset(kind for union in ("frontMatterNode", "backMatterNode")
+                     for branch in _ast_defs()[union]["allOf"] if "$ref" not in branch["then"]
+                     for kind in branch["then"]["properties"]["type"]["enum"])
+
+
+def _section_at(ast: dict, op: OverrideOp, root: str, name: str) -> Optional[int]:
+    """The index of the section `op` targets in `root`; None for an orphan.
+    Raises when the node exists somewhere else."""
+    sections = ast.get(root) or []
+    at = next((i for i, node in enumerate(sections) if _matches(node, op.sourceRef)), None)
+    if at is None and _find_by_source_ref(ast, op.sourceRef) is not None:
+        raise InapplicableOverride(f"it is not a {name} section")
+    return at
 
 
 def _op_start_body(ast: dict, op: OverrideOp) -> dict:
-    front = ast.get("frontMatter") or []
-    at = next((i for i, node in enumerate(front) if _matches(node, op.sourceRef)), None)
+    at = _section_at(ast, op, "frontMatter", "front-matter")
     if at is None:
-        if _find_by_source_ref(ast, op.sourceRef) is not None:
-            raise InapplicableOverride("it is not a front-matter section")
         return ast
-    base = _derived_id("ch", op)
-    moved = [_section_as_chapter(section, n, f"{base}-{n}", op)
+    front, base = ast["frontMatter"], _derived_id("ch", op)
+    moved = [_section_as_chapter(section, n, f"{base}-{n}", op, "front matter after it")
              for n, section in enumerate(front[at:], start=1)]
     out = {**ast, "frontMatter": front[:at], "body": moved + (ast.get("body") or [])}
     # The book's existing chapters now follow the moved ones.
     return _shift_chapter_numbers(out, moved[-1]["attrs"]["id"], len(moved))
+
+
+def _op_end_body(ast: dict, op: OverrideOp) -> dict:
+    at = _section_at(ast, op, "backMatter", "back-matter")
+    if at is None:
+        return ast
+    back, base = ast["backMatter"], _derived_id("ch", op)
+    last = max(_chapter_numbers(ast.get("body") or []), default=0)
+    moved = [_section_as_chapter(section, last + n, f"{base}-{n}", op, "back matter before it")
+             for n, section in enumerate(back[:at + 1], start=1)]
+    return {**ast, "body": (ast.get("body") or []) + moved, "backMatter": back[at + 1:]}
+
+
+def _chapter_numbers(nodes: list) -> list[int]:
+    """Every chapter number in `nodes`, parts included."""
+    out: list[int] = []
+    for node in nodes:
+        if node.get("type") == "part":
+            out += _chapter_numbers(node.get("content") or [])
+        elif node.get("type") == "chapter" and isinstance((node.get("attrs") or {}).get("number"), int):
+            out.append(node["attrs"]["number"])
+    return out
 
 
 # ── delete / insert: the list that holds a node changes ────────
@@ -596,6 +628,7 @@ _TRANSFORMS = {
     "promote": _op_promote,
     "demote": _op_demote,
     "start_body": _op_start_body,
+    "end_body": _op_end_body,
 }
 
 # Ops `schemas/overrides/overrides.schema.json` accepts that no transform above
