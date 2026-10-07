@@ -3,7 +3,8 @@ Structure proposals -- `structure-propose` (W4, docs/WIRING_PLAN.md).
 
 Turns what the model said about the chapters ingest was unsure of
 (`classification/1`, from `structure-infer`) into proposals a reviewer can
-accept (`agent-proposal/1`). Nothing here calls a model: the model's decision
+accept (`agent-proposal/1`), against the same `doc-effective/1` the model was
+shown -- so a proposal always names a node in the book as already corrected. Nothing here calls a model: the model's decision
 is already frozen in its CAS artifact, and this is a fixed translation of it,
 so the same classification always gives the same proposals.
 
@@ -164,10 +165,13 @@ def _opening(section: dict, limit: int = 80) -> str:
 
 @stage(
     name="structure-propose",
-    version=4,  # v4: a back-matter section read as a chapter proposes end_body
+    version=5,  # v5: proposes against doc-effective/1, the document structure-infer
+                # classified, so ids match and accepted ops shape what comes next (B0)
+                # v4: a back-matter section read as a chapter proposes end_body
                 # v3: a front-matter section read as a chapter proposes start_body
                 # v2: a verdict on a doubtful front/back-matter section is flagged
-    inputs={"classification": "classification/1", "ast": "ast/1", "api_key": "openrouter-credential/1"},
+    inputs={"classification": "classification/1", "doc_path": "doc-effective/1",
+            "api_key": "openrouter-credential/1"},
     root_inputs=["api_key"],
     optional_root_inputs=["api_key"],  # absent: proposals unreviewed, never unreachable
     outputs={"proposals": "agent-proposal/1"},
@@ -181,12 +185,12 @@ def _opening(section: dict, limit: int = 80) -> str:
                 "proposals a reviewer can accept as override ops.",
 )
 def structure_propose(ctx: StageCtx, classification: str | None = None,
-                      ast: str | None = None, api_key: str | None = None) -> StageResult:
-    for name, value in (("classification", classification), ("ast", ast)):
+                      doc_path: str | None = None, api_key: str | None = None) -> StageResult:
+    for name, value in (("classification", classification), ("doc_path", doc_path)):
         if value is None or not Path(value).exists():
             raise StageError(kind=ErrorKind.BAD_INPUT, message=f"structure-propose requires '{name}'")
     verdicts = json.loads(Path(classification).read_bytes())
-    document_ast = json.loads(Path(ast).read_bytes())
+    document_ast = json.loads(Path(doc_path).read_bytes())
     proposals = proposals_for(verdicts, document_ast)
     warnings: list[Diagnostic] = []
     made = len(proposals)

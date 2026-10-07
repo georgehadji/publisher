@@ -107,13 +107,28 @@ def test_every_accepted_proposal_applies_to_the_ast_it_was_made_from():
     assert [s["sourceRef"]["docxId"] for s in out["backMatter"]] == ["b1", "b2"]
 
 
+def test_proposing_against_the_corrected_book_converges():
+    """B0: structure-propose reads doc-effective/1. Once every proposal is
+    accepted, the same verdicts against the corrected book propose nothing new:
+    a section start_body or end_body moved is a chapter now, so its verdict
+    agrees, and what is left (a flag) is the proposal already accepted."""
+    first = proposals_for(VERDICTS, AST)
+    ops = [OverrideOp(id=f"ov-{p['id']}", sourceRef=p["sourceRef"]["docxId"],
+                      op=PROPOSAL_OPS[p["type"]], actor="user:test", rationale=p["rationale"])
+           for p in first]
+    corrected = apply_overrides(AST, ops)
+    again = proposals_for(VERDICTS, corrected)
+    assert {p["id"] for p in again} <= {p["id"] for p in first}
+    assert not {p["type"] for p in again} & {"start_body", "end_body", "merge_chapters"}
+
+
 def _run_stage(tmp_path, api_key=None):
     (tmp_path / "c.json").write_text(json.dumps(VERDICTS), encoding="utf-8")
     (tmp_path / "a.json").write_text(json.dumps(AST), encoding="utf-8")
     ctx = StageCtx(build_id="b", deterministic_seed="t", deadline=datetime.now(timezone.utc),
                    memory_budget_mb=128, work_dir=str(tmp_path), cas_root=str(tmp_path / "cas"))
     result = structure_propose(ctx, classification=str(tmp_path / "c.json"),
-                               ast=str(tmp_path / "a.json"), api_key=api_key)
+                               doc_path=str(tmp_path / "a.json"), api_key=api_key)
     blob = next((tmp_path / "cas").rglob(result.artifacts[0].hash))
     return result, json.loads(blob.read_text(encoding="utf-8"))
 

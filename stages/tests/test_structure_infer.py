@@ -129,8 +129,8 @@ def test_structure_infer_is_unreachable_without_credentials():
 
 
 def test_structure_infer_is_reachable_once_a_key_is_supplied():
-    """Supplying the root input -- and ONLY the root input; ast/1 is produced
-    by `ast-assemble`, itself reachable from the ingested manuscript -- is
+    """Supplying the root input -- and ONLY the root input; doc-effective/1 is
+    produced by `resolve`, itself reachable from the ingested manuscript -- is
     what flips reachability. Worker.py does this precisely when
     OPENROUTER_API_KEY is configured."""
     # `extract` needs `ingest` reachable first (raw-source/1), which needs
@@ -144,13 +144,16 @@ def test_structure_infer_is_reachable_once_a_key_is_supplied():
     # Its declared non-root input's producer must also be reachable, or this
     # assertion would be vacuous -- confirms the fixpoint pulled in the
     # dependency, not just the stage that happened to have a root input.
-    assert "ast-assemble" in reachable
+    assert "resolve" in reachable
+    # B0: it classifies the document with accepted overrides applied, so it
+    # runs after resolve, never on the raw AST.
+    assert reachable.index("resolve") < reachable.index("structure-infer")
 
 
-def test_structure_infer_requires_an_ast():
+def test_structure_infer_requires_a_document():
     with tempfile.TemporaryDirectory() as td:
         with pytest.raises(StageError) as exc_info:
-            structure_infer(_ctx(Path(td)), ast=None, api_key="sk-test-fake")
+            structure_infer(_ctx(Path(td)), doc_path=None, api_key="sk-test-fake")
         assert exc_info.value.kind == ErrorKind.BAD_INPUT
 
 
@@ -161,7 +164,7 @@ def test_structure_infer_rejects_empty_api_key():
     with tempfile.TemporaryDirectory() as td:
         tmp_dir = Path(td)
         with pytest.raises(StageError) as exc_info:
-            structure_infer(_ctx(tmp_dir), ast=_write_ast(tmp_dir), api_key="")
+            structure_infer(_ctx(tmp_dir), doc_path=_write_ast(tmp_dir), api_key="")
         assert exc_info.value.kind == ErrorKind.BAD_INPUT
 
 
@@ -171,7 +174,7 @@ def test_structure_infer_writes_a_classification_artifact(monkeypatch):
 
     with tempfile.TemporaryDirectory() as td:
         tmp_dir = Path(td)
-        result = structure_infer(_ctx(tmp_dir), ast=_write_ast(tmp_dir), api_key="sk-test-fake")
+        result = structure_infer(_ctx(tmp_dir), doc_path=_write_ast(tmp_dir), api_key="sk-test-fake")
 
         assert len(result.artifacts) == 1
         artifact = result.artifacts[0]
@@ -198,5 +201,5 @@ def test_nothing_doubtful_means_no_model_is_asked(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         tmp_dir = Path(td)
         certain = {"schema": "ast/1", "body": [_chapter(1, "CHAPTER ONE", 0.95, "c1")]}
-        result = structure_infer(_ctx(tmp_dir), ast=_write_ast(tmp_dir, certain), api_key="sk-test-fake")
+        result = structure_infer(_ctx(tmp_dir), doc_path=_write_ast(tmp_dir, certain), api_key="sk-test-fake")
         assert result.metrics["low_confidence_nodes"] == 0

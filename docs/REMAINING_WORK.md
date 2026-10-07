@@ -226,7 +226,9 @@ stage bumped to v3. `query_nodes` now filters only types that can carry a score.
 not `[]` — when the AST carries no scores or no build has run. The web contract
 (`packages/web/src/types.ts`) and panel were brought in line.
 
-**Consumed (W3/W4, docs/WIRING_PLAN.md):** `structure-infer` now reads `ast/1` and sends
+**Consumed (W3/W4, docs/WIRING_PLAN.md):** `structure-infer` now reads `ast/1` (since
+2026-10-07 `doc-effective/1`, so accepted ops shape what is asked next:
+`STRUCTURE_REPAIR_PLAN.md` B0) and sends
 only the chapters ingest scored below 0.8, keyed by `sourceRef.docxId` -- the id an op
 targets. `structure-propose` (`classification/1 + ast/1 -> agent-proposal/1`, no model call)
 turns each verdict into a proposal: prose -> `merge`, a section heading -> `demote`,

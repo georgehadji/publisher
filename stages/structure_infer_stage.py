@@ -10,17 +10,20 @@ a build whose initial_inputs never supplies one is simply never reachable --
 is configured. No env-var-gated escape hatch inside this stage decides
 anything; the DAG's own reachability fixpoint does.
 
-Consumes `ast/1` (W3, docs/WIRING_PLAN.md) and sends the model exactly the
-chapters and front/back-matter sections ingest scored below the review line
-(`rules.ESCALATE_BELOW`), each under its `sourceRef.docxId` -- the id an
-override op targets, so whatever the
-model says about a node can become a proposal about that node. It used to
-re-run the rules pass over typescript HTML and label nodes `block-<i>`, ids no
-op can aim at, from a second classifier whose scores nothing else used.
+Consumes `doc-effective/1` -- the book with every accepted override applied --
+and sends the model exactly the chapters and front/back-matter sections ingest
+scored below the review line (`rules.ESCALATE_BELOW`), each under its
+`sourceRef.docxId` -- the id an override op targets, so whatever the model says
+about a node can become a proposal about that node. Reading the effective
+document, not `ast/1` (B0, docs/STRUCTURE_REPAIR_PLAN.md), is what lets a fix
+that takes two steps surface its second once the first is accepted: a section
+`start_body` turned into a chapter is no longer asked about as a section, and a
+node an op created can be asked about at all. A node an op made carries no
+score, so it is never sent: a person already decided it.
 
-Runs in parallel with `resolve`, never feeding it or `paginate`: an LLM
-classification is advisory input for a human decision, never a live value a
-deterministic stage trusts (D9). Terminal output, `classification/1`.
+Runs after `resolve`, never feeding it or `paginate`: an LLM classification is
+advisory input for a human decision, never a live value a deterministic stage
+trusts (D9). Terminal output, `classification/1`.
 """
 
 from __future__ import annotations
@@ -79,7 +82,9 @@ def _doubtful_nodes(ast: dict) -> list[dict]:
 
 @stage(
     name="structure-infer",
-    version=4,   # v4: front/back-matter sections ingest was unsure of are sent too,
+    version=5,   # v5: reads doc-effective/1, so accepted overrides shape what is
+                 # asked next (B0, docs/STRUCTURE_REPAIR_PLAN.md).
+                 # v4: front/back-matter sections ingest was unsure of are sent too,
                  # under their own docxId, with their type's label as `current`.
                  # v3: answers cached under cas_root/inference-cache, keyed on what
                  # is sent -- an edit elsewhere in the book no longer buys the
@@ -87,7 +92,7 @@ def _doubtful_nodes(ast: dict) -> list[dict]:
                  # v2: reads ast/1, sends ingest's low-confidence chapters by docxId
                  # (was: rules over typescript-html/1, `block-<i>` ids); strict
                  # structured output, pinned provider, real prompt (W3).
-    inputs={"ast": "ast/1", "api_key": "openrouter-credential/1"},
+    inputs={"doc_path": "doc-effective/1", "api_key": "openrouter-credential/1"},
     root_inputs=["api_key"],
     outputs={"classification": "classification/1"},
     terminal_outputs=["classification"],
@@ -100,20 +105,20 @@ def _doubtful_nodes(ast: dict) -> list[dict]:
                 "inference cascade -- reachable only when OpenRouter credentials "
                 "are supplied as this stage's api_key root input.",
 )
-def structure_infer(ctx: StageCtx, ast: str | None = None, api_key: str | None = None) -> StageResult:
-    if ast is None:
-        raise StageError(kind=ErrorKind.BAD_INPUT, message="structure-infer requires 'ast' (from ast-assemble)")
+def structure_infer(ctx: StageCtx, doc_path: str | None = None, api_key: str | None = None) -> StageResult:
+    if doc_path is None:
+        raise StageError(kind=ErrorKind.BAD_INPUT, message="structure-infer requires 'doc_path' (from resolve)")
     if not api_key:
         # Reachability already keeps this stage out of any build that never
         # supplied the root input at all; a build that DOES supply the key
         # as an empty string is exactly as much a bad input as a missing file.
         raise StageError(kind=ErrorKind.BAD_INPUT, message="structure-infer requires a non-empty api_key")
 
-    ast_path = Path(ast)
-    if not ast_path.exists():
-        raise StageError(kind=ErrorKind.BAD_INPUT, message=f"AST input not found: {ast}")
+    path = Path(doc_path)
+    if not path.exists():
+        raise StageError(kind=ErrorKind.BAD_INPUT, message=f"effective document not found: {doc_path}")
 
-    nodes = _doubtful_nodes(json.loads(ast_path.read_bytes()))
+    nodes = _doubtful_nodes(json.loads(path.read_bytes()))
     if nodes:
         # Inside cas_root: the only path the worker's read-only container can write
         # that outlives the build. Shard dirs are two hex chars, so no collision.
