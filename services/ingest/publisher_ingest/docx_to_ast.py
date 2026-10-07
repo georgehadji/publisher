@@ -140,6 +140,25 @@ BACK_MATTER_ABSORBED = 0.5    # ...and then swallowed a later heading with real 
                               # the match was sure, what it folded in may be chapters
 NUMBERED_BOLD_HEADING = 0.85  # a typed section number AND the whole line bold
 NAMED_BOLD_HEADING = 0.85     # a known section name ("Πρόλογος") AND the whole line bold
+# Blocks (B6, docs/STRUCTURE_REPAIR_PLAN.md) are scored only where ingest doubts
+# its reading; an unscored heading or paragraph raised no doubt.
+FOLDED_HEADING = 0.5          # a heading back matter absorbed, real prose under it (B1)
+TITLE_LIKE_PARAGRAPH = 0.5    # reads like a chapter title, but neither styled nor upper-case
+
+# Chapter-title shapes: publisher_structure.rules.CHAPTER_PATTERNS, restated
+# because .importlinter keeps the services independent, and pinned equal to it
+# by tests/test_single_source.py.
+CHAPTER_TITLE_PATTERNS = [
+    re.compile(r'^chapter\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)$', re.IGNORECASE),
+    re.compile(r'^chapter\s+(\d+)$', re.IGNORECASE),
+    re.compile(r'^(\d+)\s*\.\s*$'),  # "7."
+    re.compile(r'^(part|book)\s+(\d+|one|two|three|four|five|six)$', re.IGNORECASE),
+    re.compile(r'^prologue$', re.IGNORECASE),
+    re.compile(r'^epilogue$', re.IGNORECASE),
+    re.compile(r'^preface$', re.IGNORECASE),
+    re.compile(r'^introduction$', re.IGNORECASE),
+    re.compile(r'^foreword$', re.IGNORECASE),
+]
 
 # A caption the author typed as the paragraph under a picture (W9), matched on
 # `_fold` text: "Εικόνα 6: ...", "Figure 3.", "Πίνακας 2". Only directly after
@@ -342,7 +361,13 @@ def read_blocks(
             elif depth and nodes[0].get("type") == "paragraph":
                 # A section inside a chapter: kept in place, as a heading node.
                 nodes = [{"type": "heading", "attrs": {"level": min(depth, 6)},
-                          "content": nodes[0]["content"]}, *nodes[1:]]
+                          "content": nodes[0]["content"], "confidence": bold_confidence}, *nodes[1:]]
+        if (not is_heading and not toc_entry and short and len(nodes) == 1
+                and nodes[0].get("type") == "paragraph"
+                and any(p.match(text.strip()) for p in CHAPTER_TITLE_PATTERNS)):
+            # A chapter title nobody styled ("Chapter 3" in body text). Scored
+            # wherever it stands, front and back matter included (B6).
+            nodes = [{**nodes[0], "confidence": TITLE_LIKE_PARAGRAPH}]
         blocks.append(Block(text, style, is_heading, tuple(nodes), confidence))
 
     return blocks, sources
@@ -713,14 +738,15 @@ def docx_to_ast(
             # entries its author had styled `Heading 1`/`Heading 3` -- so it stays
             # inside that section as the paragraph it is, rather than opening a
             # chapter titled with a citation.
-            back_matter[-1]["content"].extend([*title_paragraphs, *content])
             # A citation has no prose under it; a chapter does. A heading that
             # brings real prose in may be a chapter the pattern swallowed (a
             # mid-book "Appendix"), so the section goes to review, where
             # end_body can give the body its chapters back (B1,
-            # docs/STRUCTURE_REPAIR_PLAN.md).
+            # docs/STRUCTURE_REPAIR_PLAN.md) -- and so does its folded title (B6).
             if section_title and _is_substantive(content):
                 back_matter[-1]["confidence"] = BACK_MATTER_ABSORBED
+                title_paragraphs = [{**p, "confidence": FOLDED_HEADING} for p in title_paragraphs]
+            back_matter[-1]["content"].extend([*title_paragraphs, *content])
             continue
 
         chapter_number += 1

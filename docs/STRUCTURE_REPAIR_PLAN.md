@@ -1,6 +1,6 @@
 # Structure repair plan — misfiled sections and block-level verdicts
 
-**Status:** B0–B5 done (2026-10-07). B6–B9 open. Planned 2026-10-07 against `fac9254`.
+**Status:** B0–B6 done (2026-10-08). B7–B9 open. Planned 2026-10-07 against `fac9254`.
 **Scope:** the two items `REMAINING_WORK.md` §1.3 still lists as open:
 
 1. a front/back-matter section the classifier reads as belonging somewhere else can only
@@ -236,6 +236,8 @@ tests via `./scripts/test.ps1 -k`, the full suite, the CI lints listed in `CLAUD
 ### B6 — blocks carry confidence
 
 *Closes:* F4's first gap. Schema and ingest only; nothing reads it yet.
+
+*As built:* one reader did exist. The agents' `query_nodes` tool mirrors every scorable type (`SCORED_TYPES`, pinned to the schema), so headings and paragraphs joined it, and `DOUBTED_ONLY_TYPES` makes it skip an unscored block: ingest scores a block only where it doubts one. B7 uses the same rule. `reclassify` drops a block's score, since the score belonged to the reading the retype replaces.
 
 - Optional `confidence` (0–1) is added to the `heading` and `paragraph` defs, with the same
   semantics as on chapters: absent means not measured.

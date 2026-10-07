@@ -186,7 +186,10 @@ def _check_zip_limits(source: Path) -> None:
     # verdict on a doubtful one can become a proposal a reviewer accepts.
     # v10: a back-matter section that folded in a heading with prose under it
     # scores 0.5, not 0.9, so it is sent for review (B1, STRUCTURE_REPAIR_PLAN.md).
-    version=10,
+    # v11: a heading or paragraph ingest doubts carries `confidence` -- a
+    # bold sub-heading's, a title back matter folded in, a title-like
+    # paragraph nobody styled (B6).
+    version=11,
     inputs={"docx_path": "raw-docx/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["docx_path"],

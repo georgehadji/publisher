@@ -132,3 +132,14 @@ def test_the_override_route_and_contract_accept_every_schema_op():
     union = re.search(r"\n\s*op:\s*\n(.*?);", _read("packages/api/src/contract.ts"), re.S).group(1)
     assert set(re.findall(r"'(\w+)'", route)) == ops
     assert set(re.findall(r'"(\w+)"', union)) == ops
+
+
+def test_ingest_restates_the_chapter_title_patterns():
+    """Ingest scores a title-like paragraph (B6) by the shapes the structure
+    rules call a chapter title. .importlinter keeps the services apart, so the
+    list is restated, and a pattern on one side only would score paragraphs by
+    a rule the other never applies."""
+    from publisher_ingest.docx_to_ast import CHAPTER_TITLE_PATTERNS
+    from publisher_structure.rules import CHAPTER_PATTERNS
+    assert [(p.pattern, p.flags) for p in CHAPTER_TITLE_PATTERNS] == \
+        [(p.pattern, p.flags) for p in CHAPTER_PATTERNS]

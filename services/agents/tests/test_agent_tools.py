@@ -116,6 +116,16 @@ def test_a_confidence_query_skips_types_that_carry_no_decision():
     assert {n["type"] for n in found} == {"chapter"}
 
 
+def test_a_doubted_block_is_found_and_an_unscored_one_is_not():
+    """B6: ingest scores a heading or paragraph only where it doubts one, so an
+    unscored block raised no doubt -- unlike an unscored chapter."""
+    doubted = {"type": "paragraph", "confidence": 0.5, "content": [{"type": "text", "text": "Prologue"}]}
+    chapter = {**AST["body"][0], "content": [doubted, *AST["body"][0]["content"]]}
+    found = call("query_nodes", ast={**AST, "body": [chapter, *AST["body"][1:]]},
+                 types=["paragraph"], confidence_below=0.8)
+    assert found == [doubted]
+
+
 def test_fixture_is_a_valid_ast():
     jsonschema = pytest.importorskip("jsonschema")
     jsonschema.validate(AST, _ast_schema())

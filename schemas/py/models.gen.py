@@ -380,6 +380,7 @@ class Paragraph(BaseModel):
     attrs: Optional[Paragraph_Attrs] = Field(default=None)
     content: list[InlineNode]
     sourceRef: Optional[SourceRefLink] = Field(default=None)
+    confidence: Optional[Confidence] = Field(default=None)
 
 
 class Heading_Type(str, Enum):
@@ -405,6 +406,7 @@ class Heading(BaseModel):
     attrs: Heading_Attrs
     content: list[InlineNode]
     sourceRef: Optional[SourceRefLink] = Field(default=None)
+    confidence: Optional[Confidence] = Field(default=None)
 
 
 class Blockquote_Type(str, Enum):

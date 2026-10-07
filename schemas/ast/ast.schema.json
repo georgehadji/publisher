@@ -215,7 +215,8 @@
           "items": { "$ref": "#/$defs/inlineNode" },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": { "$ref": "#/$defs/sourceRefLink" },
+        "confidence": { "$ref": "#/$defs/confidence" }
       },
       "required": ["type", "content"],
       "additionalProperties": false
@@ -238,7 +239,8 @@
           "items": { "$ref": "#/$defs/inlineNode" },
           "minItems": 1
         },
-        "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
+        "sourceRef": { "$ref": "#/$defs/sourceRefLink" },
+        "confidence": { "$ref": "#/$defs/confidence" }
       },
       "required": ["type", "attrs", "content"],
       "additionalProperties": false

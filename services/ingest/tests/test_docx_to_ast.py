@@ -12,6 +12,9 @@ import pytest
 docx = pytest.importorskip("docx")
 
 from publisher_ingest.docx_to_ast import (  # noqa: E402
+    FOLDED_HEADING,
+    NUMBERED_BOLD_HEADING,
+    TITLE_LIKE_PARAGRAPH,
     IngestError,
     _find_body_start,
     _group_headings,
@@ -287,6 +290,42 @@ def test_a_bibliography_with_heading_styled_entries_stays_trusted(tmp_path):
     assert [b["confidence"] for b in ast["backMatter"]] == [BACK_MATTER_BY_PATTERN]
 
 
+def _scores(nodes) -> list:
+    """(type, text, confidence) of each scored block, in order."""
+    def text(n):
+        return "".join(c.get("text", "") for c in n.get("content") or [])
+    return [(n["type"], text(n), n["confidence"]) for n in nodes if "confidence" in n]
+
+
+def test_a_title_back_matter_folded_in_is_scored_with_it(tmp_path):
+    """B6: B1's absorbing section goes to review, and so does the heading it
+    folded in -- the block a promote proposal would aim at."""
+    ast = docx_to_ast(_write(tmp_path, [
+        ("ONE", None), (PROSE, None), ("APPENDIX", None), ("Tables.", None),
+        ("TWO", None), (PROSE, None),
+    ]))
+    assert _scores(ast["backMatter"][0]["content"]) == [("paragraph", "TWO", FOLDED_HEADING)]
+
+
+def test_a_title_like_paragraph_in_a_chapter_is_scored(tmp_path):
+    ast = docx_to_ast(_write(tmp_path, [
+        ("ONE", None), (PROSE, None), ("Chapter 3", None), (PROSE, None), ("Chapter three ends", None),
+    ]))
+    assert _scores(ast["body"][0]["content"]) == [("paragraph", "Chapter 3", TITLE_LIKE_PARAGRAPH)]
+
+
+def test_a_bold_numbered_sub_heading_keeps_its_score(tmp_path):
+    document = docx.Document()
+    document.add_paragraph("ONE")
+    document.add_paragraph(PROSE)
+    document.add_paragraph().add_run("1.2 Method").bold = True
+    document.add_paragraph(PROSE)
+    path = tmp_path / "m.docx"
+    document.save(str(path))
+    heading = next(n for n in docx_to_ast(path)["body"][0]["content"] if n["type"] == "heading")
+    assert (heading["attrs"]["level"], heading["confidence"]) == (2, NUMBERED_BOLD_HEADING)
+
+
 def test_scored_ast_is_schema_valid(tmp_path):
     """The schema is `additionalProperties: false` on every node; before
     `confidence` was declared there, emitting it would have failed validation."""
@@ -298,8 +337,10 @@ def test_scored_ast_is_schema_valid(tmp_path):
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     ast = docx_to_ast(_write(tmp_path, [
         ("DEDICATION", None), ("for mum", None), ("CHAPTER ONE", "Heading 1"), (PROSE, None),
+        ("Prologue", None), (PROSE, None),   # a scored paragraph (B6)
         ("COLOPHON", None), ("Set in Garamond", None),
     ]))
+    assert _scores(ast["body"][0]["content"])
     sections = ast["frontMatter"] + ast["body"] + ast["backMatter"]
     assert len(ast["frontMatter"]) == len(ast["body"]) == len(ast["backMatter"]) == 1
     assert all("confidence" in n for n in sections)

@@ -396,7 +396,12 @@ SCORED_TYPES = frozenset({
     "foreword", "preface", "acknowledgments", "prologue",
     "epilogue", "afterword", "appendix", "notes", "bibliography", "index",
     "aboutTheAuthor", "alsoBy", "colophon",
+    "heading", "paragraph",
 })
+# Of those, the types ingest scores only where it doubts one (B6,
+# docs/STRUCTURE_REPAIR_PLAN.md): an unscored heading or paragraph raised no
+# doubt, so a confidence query skips it rather than returning the whole book.
+DOUBTED_ONLY_TYPES = frozenset({"heading", "paragraph"})
 
 
 def _walk_nodes(ast: dict):
@@ -457,12 +462,14 @@ def _init_default_tools():
                 continue
             if confidence_below is not None:
                 # Only types whose structure a heuristic DECIDED can carry a score
-                # (ast.schema.json's `confidence`). A paragraph or a text run has
-                # no decision to doubt; counting it as unscored would return the
-                # whole book.
+                # (ast.schema.json's `confidence`). A text run has no decision to
+                # doubt, and an unscored block raised none; counting either as
+                # unscored would return the whole book.
                 if node.get("type") not in SCORED_TYPES:
                     continue
                 confidence = node.get("confidence")
+                if confidence is None and node.get("type") in DOUBTED_ONLY_TYPES:
+                    continue
                 # A scorable node carrying no score is UNSCORED, not perfectly
                 # confident. Reading a missing score as 1.0 would hide exactly the
                 # nodes a confidence query exists to surface.

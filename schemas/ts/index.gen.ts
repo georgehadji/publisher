@@ -262,6 +262,7 @@ export const ParagraphSchema = z.object({
   "attrs": z.lazy(() => Paragraph_AttrsSchema).optional(),
   "content": z.array(z.lazy(() => InlineNodeSchema)).min(1),
   "sourceRef": SourceRefLinkSchema.optional(),
+  "confidence": ConfidenceSchema.optional(),
 });
 export type Paragraph = z.infer<typeof ParagraphSchema>;
 
@@ -282,6 +283,7 @@ export const HeadingSchema = z.object({
   "attrs": z.lazy(() => Heading_AttrsSchema),
   "content": z.array(z.lazy(() => InlineNodeSchema)).min(1),
   "sourceRef": SourceRefLinkSchema.optional(),
+  "confidence": ConfidenceSchema.optional(),
 });
 export type Heading = z.infer<typeof HeadingSchema>;
 

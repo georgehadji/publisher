@@ -174,11 +174,12 @@ def _reshape(node: dict, to: str, level: Optional[int] = None) -> dict:
     reclassifies undo each other. A heading takes `level` when given (B3), so
     a paragraph read as a level-2 heading is one op, not a reclassify and a demote."""
     kind = node.get("type")
-    keep = {k: v for k, v in node.items() if k not in ("type", "attrs", "content")}
+    # `confidence` scored ingest's reading, which the retype replaces (B6).
+    keep = {k: v for k, v in node.items() if k not in ("type", "attrs", "content", "confidence")}
     content = node.get("content")
     attrs = {k: v for k, v in (node.get("attrs") or {}).items() if k in _attrs_of(to)}
     if kind == "paragraph" and to in _PARAGRAPH_WRAPPERS:
-        content, attrs = [{k: v for k, v in node.items() if k != "sourceRef"}], {}
+        content, attrs = [{k: v for k, v in node.items() if k not in ("sourceRef", "confidence")}], {}
     elif kind in _PARAGRAPH_WRAPPERS and to == "paragraph":
         if len(content or []) != 1 or content[0].get("type") != "paragraph":
             raise InapplicableOverride(f"the {kind} holds more than one paragraph")

@@ -109,6 +109,15 @@ def test_reclassify_to_a_shape_the_schema_rejects_is_refused():
     _refused(_op("reclassify", "p1", from_value="paragraph", to_value="chapter"), "cannot become a chapter")
 
 
+def test_a_scored_paragraph_drops_its_score_when_retyped():
+    """B6: the score was ingest's reading; a blockquote has no `confidence`."""
+    scored = {**AST, "body": [_chapter(1, "One", "c1", {**_p("Prologue", "p1"), "confidence": 0.5})]}
+    for to in ("blockquote", "heading"):
+        out = apply_overrides(scored, [_op("reclassify", "p1", from_value="paragraph", to_value=to)])
+        assert not list(Draft202012Validator(SCHEMA).iter_errors(_public(out)))
+        assert "confidence" not in str(_public(out["body"][0]["content"]))
+
+
 def test_a_paragraph_reclassified_into_a_blockquote_and_back_is_unchanged():
     wrapped = apply_overrides(AST, [_op("reclassify", "p1", from_value="paragraph", to_value="blockquote")])
     assert _node(wrapped, "p1")["type"] == "blockquote"
