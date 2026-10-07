@@ -33,7 +33,9 @@ from publisher_structure.overrides import (
 
 @stage(
     name="resolve",
-    version=6,   # v6: reclassify retypes a front/back-matter section, checked
+    version=7,   # v7: ast/1 lets alsoBy/aboutTheAuthor open the book (B4), so a
+                 # reclassify to either in the front matter, refused before, applies.
+                 # v6: reclassify retypes a front/back-matter section, checked
                  # against its root's union, and sets a heading's level from
                  # `value` (B3). A logged op it used to refuse now applies.
                  # v5: every overrides/1 op applies (promote, demote, insert,

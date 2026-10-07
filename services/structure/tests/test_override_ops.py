@@ -353,6 +353,12 @@ def test_reclassify_retypes_a_front_matter_section_keeping_what_it_holds():
     assert _text_in_order(out) == _text_in_order(BACK)
 
 
+def test_reclassify_can_put_an_also_by_at_the_front():  # B4: valid at either end
+    out = apply_overrides(BACK, [_op("reclassify", "f1", from_value="dedication", to_value="alsoBy")])
+    assert not list(Draft202012Validator(SCHEMA).iter_errors(_public(out)))
+    assert out["frontMatter"][0]["type"] == "alsoBy"
+
+
 def test_reclassify_retypes_a_back_matter_section():
     out = apply_overrides(BACK, [_op("reclassify", "e1", from_value="epilogue", to_value="afterword")])
     assert [s["type"] for s in out["backMatter"]] == ["afterword", "afterword", "colophon"]

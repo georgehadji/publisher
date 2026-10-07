@@ -10,7 +10,7 @@
     "frontMatter": {
       "type": "array",
       "items": { "$ref": "#/$defs/frontMatterNode" },
-      "description": "Half-title, title, copyright, dedication, epigraph, TOC, foreword, preface, acknowledgments, prologue"
+      "description": "Half-title, title, copyright, dedication, epigraph, TOC, foreword, preface, acknowledgments, prologue; also-by and about-the-author may sit at either end"
     },
     "body": {
       "type": "array",
@@ -821,14 +821,14 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "endnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak", "halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue"] }
+        "type": { "type": "string", "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "endnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak", "halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue", "alsoBy", "aboutTheAuthor"] }
       },
       "allOf": [
         { "if": { "properties": { "type": { "enum": ["paragraph", "heading", "blockquote", "verse", "list", "table", "figure", "footnote", "endnote", "epigraph", "sceneBreak", "dialogue", "sidebar", "code", "equation", "pageBreak"] } } }, "then": { "$ref": "#/$defs/blockNode" } },
-        { "if": { "properties": { "type": { "enum": ["halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue"] } } }, "then": {
+        { "if": { "properties": { "type": { "enum": ["halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue", "alsoBy", "aboutTheAuthor"] } } }, "then": {
           "type": "object",
           "properties": {
-            "type": { "type": "string", "enum": ["halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue"] },
+            "type": { "type": "string", "enum": ["halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface", "acknowledgments", "prologue", "alsoBy", "aboutTheAuthor"] },
             "content": {
               "type": "array",
               "items": { "$ref": "#/$defs/blockNode" },

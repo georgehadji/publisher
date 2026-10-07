@@ -407,7 +407,7 @@ Two fixes to existing ops:
   back-matter type in the front matter is refused), and a reclassify to `heading` takes
   its level from `value`.
 
-`resolve` is at v6.
+`resolve` is at v7.
 
 The earlier work on this section, kept for its detail:
 

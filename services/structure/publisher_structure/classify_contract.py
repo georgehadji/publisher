@@ -44,6 +44,9 @@ def labels() -> list[str]:
 
 # A front/back-matter section's AST type, as the label that names it: what
 # ingest made it (`current`), and what a verdict agreeing with ingest says.
+# `front-`/`back-` is part of a label's name, not a rule about where the section
+# sits: `alsoBy` and `aboutTheAuthor` are valid in either list (B4), and keep
+# their one label wherever they are.
 SECTION_LABELS = {
     "halfTitle": "front-half-title", "titlePage": "front-title-page",
     "copyrightPage": "front-copyright", "dedication": "front-dedication", "toc": "front-toc",

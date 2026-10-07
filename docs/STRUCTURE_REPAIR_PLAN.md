@@ -1,6 +1,6 @@
 # Structure repair plan — misfiled sections and block-level verdicts
 
-**Status:** B0–B3 done (2026-10-07). B4–B9 open. Planned 2026-10-07 against `fac9254`.
+**Status:** B0–B4 done (2026-10-07). B5–B9 open. Planned 2026-10-07 against `fac9254`.
 **Scope:** the two items `REMAINING_WORK.md` §1.3 still lists as open:
 
 1. a front/back-matter section the classifier reads as belonging somewhere else can only
