@@ -467,6 +467,11 @@ export const OVERRIDE_OP_SCHEMA = {
   additionalProperties: false,
   allOf: [
     { if: { properties: { op: { const: 'reclassify' } } }, then: { required: ['from', 'to'] } },
+    {
+      $comment: 'Reclassifying to a heading may set its level in `value` (B3).',
+      if: { properties: { op: { const: 'reclassify' }, to: { const: 'heading' } }, required: ['to'] },
+      then: { properties: { value: { type: 'integer', minimum: 1, maximum: 6 } } },
+    },
     { if: { properties: { op: { const: 'retitle' } } }, then: { required: ['value'] } },
     { if: { properties: { op: { const: 'flag_ambiguity' } } }, then: { required: ['rationale'] } },
     { if: { properties: { op: { const: 'set_attr' } } }, then: { required: ['path'] } },

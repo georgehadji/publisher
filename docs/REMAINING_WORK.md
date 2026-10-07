@@ -402,9 +402,12 @@ Two fixes to existing ops:
 - **`reclassify` and `retitle` are checked against `ast.schema.json`.** A result the schema
   rejects is reported as inapplicable instead of reaching the renderers. A reclassify
   between a paragraph and a blockquote, epigraph, dialogue or sidebar wraps or unwraps the
-  paragraph, so the two reclassifies undo each other.
+  paragraph, so the two reclassifies undo each other. Since `STRUCTURE_REPAIR_PLAN.md` B3
+  it also retypes a front- or back-matter section, checked against its list's union (so a
+  back-matter type in the front matter is refused), and a reclassify to `heading` takes
+  its level from `value`.
 
-`resolve` is at v5.
+`resolve` is at v6.
 
 The earlier work on this section, kept for its detail:
 

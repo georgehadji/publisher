@@ -340,6 +340,51 @@ def test_end_body_refuses_what_it_cannot_turn_into_chapters(book, ref, reason):
     assert skipped and reason in skipped[0][1], skipped
 
 
+# ── reclassify on sections and heading levels (B3) ─────────────
+
+def test_reclassify_retypes_a_front_matter_section_keeping_what_it_holds():
+    out = apply_overrides(BACK, [_op("reclassify", "f2", from_value="preface", to_value="foreword")])
+    errors = sorted(Draft202012Validator(SCHEMA).iter_errors(_public(out)), key=str)
+    assert not errors, errors[0].message
+    retyped = out["frontMatter"][1]
+    assert retyped["type"] == "foreword"
+    assert {k: v for k, v in _public(retyped).items() if k != "type"} == \
+        {k: v for k, v in BACK["frontMatter"][1].items() if k != "type"}   # content, sourceRef, confidence
+    assert _text_in_order(out) == _text_in_order(BACK)
+
+
+def test_reclassify_retypes_a_back_matter_section():
+    out = apply_overrides(BACK, [_op("reclassify", "e1", from_value="epilogue", to_value="afterword")])
+    assert [s["type"] for s in out["backMatter"]] == ["afterword", "afterword", "colophon"]
+
+
+@pytest.mark.parametrize("ref, from_, to, reason", [
+    # The front matter's own union refuses a back-matter type: no per-type rule needed.
+    ("f2", "preface", "epilogue", "a preface cannot become a epilogue in the frontMatter"),
+    ("e1", "epilogue", "dedication", "a epilogue cannot become a dedication in the backMatter"),
+    ("f2", "preface", "blockquote", "a section only becomes another kind of section"),
+    ("f2", "foreword", "dedication", "it is a preface, not the foreword the op expected"),
+])
+def test_reclassify_refuses_a_section_type_its_list_does_not_hold(ref, from_, to, reason):
+    skipped: list = []
+    assert apply_overrides(BACK, [_op("reclassify", ref, from_value=from_, to_value=to)], skipped) is BACK
+    assert skipped and reason in skipped[0][1], skipped
+
+
+def test_reclassify_to_a_heading_can_set_its_level():
+    out = _apply(_op("reclassify", "p1", from_value="paragraph", to_value="heading", value=2))
+    assert _node(out, "p1")["attrs"] == {"level": 2}
+    assert _node(_apply(_op("reclassify", "p1", from_value="paragraph", to_value="heading")),
+                 "p1")["attrs"] == {"level": 1}
+
+
+def test_a_level_is_refused_off_a_heading_or_out_of_range():
+    _refused(_op("reclassify", "p1", from_value="paragraph", to_value="blockquote", value=2),
+             "only a heading takes a level")
+    _refused(_op("reclassify", "p1", from_value="paragraph", to_value="heading", value=7),
+             "cannot become a heading")
+
+
 def test_ops_on_nothing_are_orphans_left_to_the_api():
     for name in ("promote", "demote", "delete", "insert", "set_attr", "resolve_ambiguity",
                  "start_body", "end_body"):

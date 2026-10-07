@@ -167,11 +167,12 @@ def _derived_id(prefix: str, op: OverrideOp) -> str:
 _PARAGRAPH_WRAPPERS = ("blockquote", "epigraph", "dialogue", "sidebar")
 
 
-def _reshape(node: dict, to: str) -> dict:
+def _reshape(node: dict, to: str, level: Optional[int] = None) -> dict:
     """`node` as a `to`, carrying what the new type can hold. A paragraph
     becomes the one paragraph of a blockquote, epigraph, dialogue or sidebar,
     and comes back out of one; the wrapper keeps the sourceRef, so the two
-    reclassifies undo each other."""
+    reclassifies undo each other. A heading takes `level` when given (B3), so
+    a paragraph read as a level-2 heading is one op, not a reclassify and a demote."""
     kind = node.get("type")
     keep = {k: v for k, v in node.items() if k not in ("type", "attrs", "content")}
     content = node.get("content")
@@ -183,19 +184,51 @@ def _reshape(node: dict, to: str) -> dict:
             raise InapplicableOverride(f"the {kind} holds more than one paragraph")
         content, attrs = content[0].get("content"), dict(content[0].get("attrs") or {})
     if to == "heading":
-        attrs.setdefault("level", 1)
+        attrs["level"] = level if level is not None else attrs.get("level", 1)
     out = {**keep, "type": to, **({"content": content} if content is not None else {})}
     return {**out, "attrs": attrs} if attrs else out
 
 
+def _check_from(node: dict, op: OverrideOp) -> None:
+    kind = node.get("type")
+    if op.from_value and kind != op.from_value:
+        raise InapplicableOverride(f"it is a {kind}, not the {op.from_value} the op expected")
+    if op.value is not None and op.to_value != "heading":
+        raise InapplicableOverride(f"only a heading takes a level, not a {op.to_value}")
+
+
 def _t_reclassify(op: OverrideOp):
     def t(node: dict) -> dict:
-        kind = node.get("type")
-        if op.from_value and kind != op.from_value:
-            raise InapplicableOverride(f"it is a {kind}, not the {op.from_value} the op expected")
-        return _valid_node({**_reshape(node, op.to_value), "_override": op.id},
-                           f"a {kind} cannot become a {op.to_value}")
+        _check_from(node, op)
+        return _valid_node({**_reshape(node, op.to_value, op.value), "_override": op.id},
+                           f"a {node.get('type')} cannot become a {op.to_value}")
     return t
+
+
+# A section is not a $defs type of its own: it is a branch of its root's union,
+# so a retyped one is checked against that union. That same check refuses a
+# back-matter type in the front matter, and the reverse (B3).
+_SECTION_UNIONS = (("frontMatter", "frontMatterNode"), ("backMatter", "backMatterNode"))
+
+
+def _op_reclassify(ast: dict, op: OverrideOp) -> dict:
+    for root, union in _SECTION_UNIONS:
+        sections = ast.get(root) or []
+        at = next((i for i, node in enumerate(sections) if _matches(node, op.sourceRef)), None)
+        if at is None or sections[at].get("type") not in _section_types():
+            continue
+        section = sections[at]
+        _check_from(section, op)
+        why = f"a {section['type']} cannot become a {op.to_value}"
+        if op.to_value not in _section_types():
+            raise InapplicableOverride(f"{why}: a section only becomes another kind of section")
+        # Content, sourceRef, confidence and attrs are kept; the union decides.
+        retyped = {**section, "type": op.to_value, "_override": op.id}
+        error = _schema_error(f"#/$defs/{union}", retyped)
+        if error:
+            raise InapplicableOverride(f"{why} in the {root}: {error}")
+        return {**ast, root: sections[:at] + [retyped] + sections[at + 1:]}
+    return _rewrite(ast, op.sourceRef, _t_reclassify(op))
 
 
 def _t_retitle(op: OverrideOp):
@@ -616,7 +649,7 @@ def _node_op(make_transform):
 
 # Every op this layer applies: `(document, op) -> document`.
 _TRANSFORMS = {
-    "reclassify": _node_op(_t_reclassify),
+    "reclassify": _op_reclassify,
     "retitle": _node_op(_t_retitle),
     "set_attr": _node_op(_t_set_attr),
     "flag_ambiguity": _node_op(_t_flag_ambiguity),

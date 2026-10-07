@@ -134,8 +134,10 @@ def test_required_fields_are_the_schemas():
 
 
 def test_per_op_requirements_are_the_schemas():
+    # Only the rules that require fields; reclassify-to-heading's `value` range
+    # (B3) is a type rule, which the op enforces through the AST schema.
     declared = {
         rule["if"]["properties"]["op"]["const"]: tuple(rule["then"]["required"])
-        for rule in OP_SCHEMA["allOf"]
+        for rule in OP_SCHEMA["allOf"] if "required" in rule["then"]
     }
     assert _OP_REQUIRES == declared

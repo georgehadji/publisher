@@ -83,6 +83,8 @@ describe('PATCH overrides validation', () => {
     ['an insert with no value', { ops: [op({ op: 'insert', value: undefined })] }],
     ['rename, which the schema dropped', { ops: [op({ op: 'rename' })] }],
     ['a field beside ops', { ops: [op()], extra: true }],
+    ['a heading level that is not 1-6 (B3)',
+      { ops: [op({ op: 'reclassify', from: 'paragraph', to: 'heading', value: 7 })] }],
   ])('rejects %s with 400', async (_label, body) => {
     const res = await patch(body);
     expect(res.statusCode).toBe(400);
@@ -91,7 +93,8 @@ describe('PATCH overrides validation', () => {
 
   it('accepts every op the schema declares: resolve applies them all', async () => {
     const ops = (OVERRIDE_OP_SCHEMA.properties.op.enum as string[]).map((name, i) =>
-      op({ id: `ov-${i}`, op: name, from: 'paragraph', to: 'heading', path: '/attrs/role',
+      // `to` is not `heading`: the shared `value` 'One' would not be a level (B3).
+      op({ id: `ov-${i}`, op: name, from: 'paragraph', to: 'blockquote', path: '/attrs/role',
            rationale: 'why' }));
     const res = await patch({ ops });
     expect(res.statusCode).toBe(500);   // past validation, into loadOwned

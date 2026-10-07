@@ -81,6 +81,11 @@
           "then": { "required": ["from", "to"] }
         },
         {
+          "$comment": "Reclassifying to a heading may set its level in `value` (B3).",
+          "if": { "properties": { "op": { "const": "reclassify" }, "to": { "const": "heading" } }, "required": ["to"] },
+          "then": { "properties": { "value": { "type": "integer", "minimum": 1, "maximum": 6 } } }
+        },
+        {
           "if": { "properties": { "op": { "const": "retitle" } } },
           "then": { "required": ["value"] }
         },

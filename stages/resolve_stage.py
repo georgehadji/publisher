@@ -33,7 +33,10 @@ from publisher_structure.overrides import (
 
 @stage(
     name="resolve",
-    version=5,   # v5: every overrides/1 op applies (promote, demote, insert,
+    version=6,   # v6: reclassify retypes a front/back-matter section, checked
+                 # against its root's union, and sets a heading's level from
+                 # `value` (B3). A logged op it used to refuse now applies.
+                 # v5: every overrides/1 op applies (promote, demote, insert,
                  # set_attr, resolve_ambiguity; delete REMOVES the node, where it
                  # used to set a mark nothing read). A matched op that cannot act
                  # (a retitle of a paragraph, a stale reclassify) and an op that
