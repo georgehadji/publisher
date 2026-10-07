@@ -249,7 +249,9 @@ let model output change a build on its own.
   ones after it move with it. **Done (2026-10-05):** its mirror, `end_body`, for the last
   back-matter section read as a chapter title (`structure-propose` v4). Still open: no op
   moves a section to the other end of the book (an epilogue filed as front matter), so
-  such a section is only flagged.
+  such a section is only flagged. **Planned in `STRUCTURE_REPAIR_PLAN.md`**, which also
+  found that `end_body`'s proposal can't fire yet: ingest scores every back-matter section
+  0.9, above the 0.8 line (its F1, fixed by B1).
 - `split_chapter`, `reclassify` and promote proposals are not produced: a chapter-level
   verdict has no block to split at, and a chapter is already the top level.
 
