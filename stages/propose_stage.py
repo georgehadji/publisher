@@ -20,8 +20,10 @@ Each proposal is one implemented override op, named by its type:
 A doubtful front/back-matter section's own type's label is agreement. The
 earliest front-matter section read as a `chapter-title` becomes `start_body`
 (the body really starts there; later ones move with it, so get nothing), and
-the last back-matter one becomes `end_body` (its mirror). Any other label
-becomes `flag_ambiguity`.
+the last back-matter one becomes `end_body` (its mirror). A label naming
+another section type its list may hold becomes `reclassify` (`from`/`to`);
+any other label -- a type only the other end holds, or no section at all --
+becomes `flag_ambiguity`. `section_decision` is that table (B5).
 
 The API builds the op from a proposal only when a reviewer accepts it
 (`POST /v1/manuscripts/:id/proposals/:pid/accept`); until then nothing reaches
@@ -48,6 +50,7 @@ from publisher_stages import (
 )
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 from publisher_structure.classify_contract import SECTION_LABELS
+from publisher_structure.overrides import section_types
 
 AGENT_ID = "structure-propose"
 AGENT_VERSION = "1"
@@ -134,28 +137,53 @@ def proposals_for(classification: dict, ast: dict) -> list[dict]:
         for index, (verdict, own) in disagreeing.items():
             section, ref = sections[index], sections[index]["sourceRef"]["docxId"]
             label, score = verdict["classification"], verdict["confidence"]
+            decided = section_decision(label, section["type"], root, index == boundary)
+            if decided is None:
+                continue
+            kind, params = decided
             opening = _opening(section)
-            if label in _AGREES:
-                if index != boundary:
-                    continue
+            if kind in ("start_body", "end_body"):
                 if front:
-                    kind, edge, others = "start_body", "starts", f"{len(sections) - index - 1} front-matter section(s) after it"
+                    edge, others = "starts", f"{len(sections) - index - 1} front-matter section(s) after it"
                 else:
-                    kind, edge, others = "end_body", "ends", f"{index} back-matter section(s) before it"
+                    edge, others = "ends", f"{index} back-matter section(s) before it"
                 why = (f"reads the {section['type']} section opening “{opening}” as a chapter "
                        f"title: the body {edge} here, so it and the {others} become chapters")
+            elif kind == "reclassify":
+                why = f"reads the {section['type']} section opening “{opening}” as {label}: it is a {params['to']}"
             else:
-                kind = "flag_ambiguity"
                 why = f"reads the {section['type']} section opening “{opening}” as {label}, not {own}"
             proposals.append({
-                "id": _proposal_id(ref, kind),
+                # A retype's target is part of the change: a different one is a different proposal.
+                "id": _proposal_id(ref, f"{kind}:{params['to']}" if params else kind),
                 "type": kind,
                 "sourceRef": {"docxId": ref},
+                **params,
                 "rationale": f"The model ({model}) {why} (confidence {score:.2f}).",
                 "confidence": score,
                 "evidence": [f"label: {label}", f"model: {model}"],
             })
     return proposals
+
+
+# The section type each section label names (the inverse of SECTION_LABELS).
+_LABELLED_TYPE = {label: kind for kind, label in SECTION_LABELS.items()}
+
+
+def section_decision(label: str, kind: str, root: str, at_boundary: bool):
+    """The section decision table (B5): what the model reading a `kind` section
+    in `root` as `label` proposes -- `(proposal type, its parameters)`, or None.
+    `at_boundary`: it is the earliest front / last back section read as a chapter."""
+    if label == SECTION_LABELS.get(kind):
+        return None                                          # agrees
+    if label in _AGREES:
+        if not at_boundary:
+            return None                                      # moves with the boundary
+        return ("start_body" if root == "frontMatter" else "end_body"), {}
+    target = _LABELLED_TYPE.get(label)
+    if target in section_types(root):
+        return "reclassify", {"from": kind, "to": target}
+    return "flag_ambiguity", {}                              # another end's type, or not a section
 
 
 def _opening(section: dict, limit: int = 80) -> str:
@@ -171,7 +199,8 @@ def _opening(section: dict, limit: int = 80) -> str:
 
 @stage(
     name="structure-propose",
-    version=6,  # v6: PROPOSAL_PARAMS, and reclassify is acceptable (B2)
+    version=7,  # v7: a section read as another type its list holds is a reclassify proposal (B5)
+                # v6: PROPOSAL_PARAMS, and reclassify is acceptable (B2)
                 # v5: proposes against doc-effective/1, the document structure-infer
                 # classified, so ids match and accepted ops shape what comes next (B0)
                 # v4: a back-matter section read as a chapter proposes end_body

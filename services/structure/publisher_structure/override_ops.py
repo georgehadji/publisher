@@ -508,13 +508,17 @@ def _section_as_chapter(section: dict, number: int, chapter_id: str, op: Overrid
     return {**chapter, "sourceRef": section["sourceRef"]} if "sourceRef" in section else chapter
 
 
-@functools.lru_cache(maxsize=1)
-def _section_types() -> frozenset:
-    """The front- and back-matter section types (the section branches of
-    ast.schema.json's frontMatterNode and backMatterNode)."""
-    return frozenset(kind for union in ("frontMatterNode", "backMatterNode")
-                     for branch in _ast_defs()[union]["allOf"] if "$ref" not in branch["then"]
+@functools.lru_cache(maxsize=None)
+def section_types(root: str) -> frozenset:
+    """The section types `root` ("frontMatter" or "backMatter") may hold: the
+    section branch of ast.schema.json's frontMatterNode or backMatterNode."""
+    return frozenset(kind for branch in _ast_defs()[f"{root}Node"]["allOf"] if "$ref" not in branch["then"]
                      for kind in branch["then"]["properties"]["type"]["enum"])
+
+
+def _section_types() -> frozenset:
+    """The section types valid at either end."""
+    return section_types("frontMatter") | section_types("backMatter")
 
 
 def _section_at(ast: dict, op: OverrideOp, root: str, name: str) -> Optional[int]:

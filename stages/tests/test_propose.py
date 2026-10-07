@@ -10,13 +10,16 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 from jsonschema import validate
 
 import stages  # noqa: F401 -- registers every stage
 from publisher_exec import plan
 from publisher_stages import RegistryConfig, StageCtx, build_registry
 from publisher_structure.overrides import OverrideOp, UNIMPLEMENTED_OPS, _TRANSFORMS, apply_overrides
-from stages.propose_stage import PROPOSAL_OPS, proposals_for, structure_propose
+from publisher_structure.classify_contract import SECTION_LABELS, labels
+from publisher_structure.overrides import section_types
+from stages.propose_stage import PROPOSAL_OPS, PROPOSAL_PARAMS, proposals_for, section_decision, structure_propose
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = json.loads((ROOT / "schemas/agent-proposal/agent-proposal.schema.json").read_text(encoding="utf-8"))
@@ -42,6 +45,9 @@ AST = {"schema": "ast/1", "body": [
         _chapter(5, "Odd", "c5")]},  # prose, but first in its part -> only a flag
 ], "frontMatter": [
     _section("dedication", "f0", "For mum", "x"),       # its own label -> agrees, nothing
+    _section("preface", "f3", "Foreword", "x"),         # another front type -> reclassify (B5)
+    _section("dedication", "f4", "Also by her", "x"),   # alsoBy, valid at the front (B4) -> reclassify
+    _section("preface", "f5", "Colophon", "x"),         # a back-only type -> only a flag
     _section("dedication", "f1", "PROLOGUE", "It began."),  # read as a chapter -> start_body
     _section("preface", "f2", "THE STORM", "It rained."),   # also a chapter -> moves with f1
 ], "backMatter": [
@@ -49,6 +55,7 @@ AST = {"schema": "ast/1", "body": [
     _section("afterword", "e2", "THE END", "Done."),      # the last one read as a chapter -> end_body
     _section("colophon", "b1", "Set in Garamond", "x"),  # its own label -> agrees, nothing
     _section("notes", "b2", "Note one", "x"),             # read as prose -> only a flag
+    _section("appendix", "b3", "Notes", "x"),             # another back type -> reclassify
 ]}
 
 
@@ -64,14 +71,49 @@ VERDICTS = _classification(("c2", "paragraph", 0.8), ("c3", "heading-2", 0.7),
                            ("f0", "front-dedication", 0.9), ("f1", "chapter-title", 0.7),
                            ("f2", "chapter-title", 0.8), ("b1", "back-colophon", 0.9),
                            ("b2", "paragraph", 0.6),
-                           ("e1", "chapter-title", 0.6), ("e2", "chapter-title", 0.7))
+                           ("e1", "chapter-title", 0.6), ("e2", "chapter-title", 0.7),
+                           ("f3", "front-foreword", 0.6), ("f4", "back-also-by", 0.6),
+                           ("f5", "back-colophon", 0.6), ("b3", "back-notes", 0.6))
+
+
+def _accept(p: dict) -> OverrideOp:
+    """The op the API's accept route builds: PROPOSAL_PARAMS' parameters copied (B2)."""
+    names = {"from": "from_value", "to": "to_value", "value": "value"}
+    return OverrideOp(id=f"ov-{p['id']}", sourceRef=p["sourceRef"]["docxId"], op=PROPOSAL_OPS[p["type"]],
+                      actor="user:test", rationale=p["rationale"],
+                      **{names[k]: p[k] for k in PROPOSAL_PARAMS[p["type"]]})
 
 
 def test_each_label_becomes_the_proposal_its_mapping_says():
     got = {p["sourceRef"]["docxId"]: p["type"] for p in proposals_for(VERDICTS, AST)}
     assert got == {"c2": "merge_chapters", "c3": "adjust_heading_level", "c5": "flag_ambiguity",
                    "f1": "start_body", "b2": "flag_ambiguity",
-                   "e2": "end_body"}
+                   "e2": "end_body", "f3": "reclassify", "f4": "reclassify",
+                   "f5": "flag_ambiguity", "b3": "reclassify"}
+
+
+def test_a_retype_names_both_types():
+    by_ref = {p["sourceRef"]["docxId"]: p for p in proposals_for(VERDICTS, AST)}
+    assert [(by_ref[r]["from"], by_ref[r]["to"]) for r in ("f3", "f4", "b3")] == \
+        [("preface", "foreword"), ("dedication", "alsoBy"), ("appendix", "notes")]
+
+
+@pytest.mark.parametrize("root", ["frontMatter", "backMatter"])
+@pytest.mark.parametrize("label", labels())
+def test_the_section_decision_table_is_total(label, root):
+    """B5: every label at either end lands in exactly one row of the table."""
+    kind = "preface" if root == "frontMatter" else "appendix"
+    at_boundary, inside = (section_decision(label, kind, root, b) for b in (True, False))
+    target = {lb: t for t, lb in SECTION_LABELS.items()}.get(label)
+    if label == SECTION_LABELS[kind]:
+        expected = (None, None)                                        # agrees
+    elif label == "chapter-title":
+        expected = (("start_body" if root == "frontMatter" else "end_body", {}), None)
+    elif target in section_types(root):
+        expected = (("reclassify", {"from": kind, "to": target}),) * 2
+    else:
+        expected = (("flag_ambiguity", {}),) * 2                       # other end's type, or no section
+    assert (at_boundary, inside) == expected
 
 
 def test_section_proposals_quote_the_opening_and_say_what_moves():
@@ -95,16 +137,16 @@ def test_every_proposal_type_maps_to_an_implemented_op():
 
 def test_every_accepted_proposal_applies_to_the_ast_it_was_made_from():
     """What the API's accept route builds, applied the way `resolve` applies it."""
-    ops = [OverrideOp(id=f"ov-{p['id']}", sourceRef=p["sourceRef"]["docxId"],
-                      op=PROPOSAL_OPS[p["type"]], actor="user:test", rationale=p["rationale"])
-           for p in proposals_for(VERDICTS, AST)]
+    ops = [_accept(p) for p in proposals_for(VERDICTS, AST)]
     inapplicable, orphaned = [], []
     out = apply_overrides(AST, ops, inapplicable=inapplicable, orphaned=orphaned)
     assert inapplicable == [] and orphaned == []
     assert [c["attrs"]["title"] for c in out["body"] if c["type"] == "chapter"] == \
         ["PROLOGUE", "THE STORM", "ONE", "FOUR", "EPILOGUE", "THE END"]
-    assert [s["sourceRef"]["docxId"] for s in out["frontMatter"]] == ["f0"]
-    assert [s["sourceRef"]["docxId"] for s in out["backMatter"]] == ["b1", "b2"]
+    assert [s["sourceRef"]["docxId"] for s in out["frontMatter"]] == ["f0", "f3", "f4", "f5"]
+    assert [s["sourceRef"]["docxId"] for s in out["backMatter"]] == ["b1", "b2", "b3"]
+    assert [s["type"] for s in out["frontMatter"]] == ["dedication", "foreword", "alsoBy", "preface"]
+    assert out["backMatter"][-1]["type"] == "notes"
 
 
 def test_proposing_against_the_corrected_book_converges():
@@ -113,9 +155,7 @@ def test_proposing_against_the_corrected_book_converges():
     a section start_body or end_body moved is a chapter now, so its verdict
     agrees, and what is left (a flag) is the proposal already accepted."""
     first = proposals_for(VERDICTS, AST)
-    ops = [OverrideOp(id=f"ov-{p['id']}", sourceRef=p["sourceRef"]["docxId"],
-                      op=PROPOSAL_OPS[p["type"]], actor="user:test", rationale=p["rationale"])
-           for p in first]
+    ops = [_accept(p) for p in first]
     corrected = apply_overrides(AST, ops)
     again = proposals_for(VERDICTS, corrected)
     assert {p["id"] for p in again} <= {p["id"] for p in first}
@@ -147,7 +187,7 @@ def _wrangler_keeps(monkeypatch, keep: list[str]):
 def test_the_stage_writes_a_valid_agent_proposal(tmp_path):
     result, document = _run_stage(tmp_path)
     validate(document, SCHEMA)
-    assert result.metrics["proposals"] == 6 and document["modelId"] == "m/x"
+    assert result.metrics["proposals"] == 10 and document["modelId"] == "m/x"
     assert result.warnings == []
 
 
@@ -156,14 +196,14 @@ def test_with_a_key_the_wrangler_may_drop_and_reorder(tmp_path, monkeypatch):
     _wrangler_keeps(monkeypatch, [ids[2], ids[0]])
     result, document = _run_stage(tmp_path, api_key="sk-fake")
     assert [p["id"] for p in document["proposals"]] == [ids[2], ids[0]]
-    assert result.metrics["proposals_dropped"] == 4 and result.warnings == []
+    assert result.metrics["proposals_dropped"] == 8 and result.warnings == []
     validate(document, SCHEMA)
 
 
 def test_a_failed_review_keeps_every_proposal_and_says_so(tmp_path, monkeypatch):
     _wrangler_keeps(monkeypatch, ["pr-invented"])
     result, document = _run_stage(tmp_path, api_key="sk-fake")
-    assert len(document["proposals"]) == 6
+    assert len(document["proposals"]) == 10
     assert [w.code for w in result.warnings] == ["proposal-review-failed"]
 
 
@@ -174,7 +214,7 @@ def test_without_a_key_no_agent_is_built(tmp_path, monkeypatch):
         raise AssertionError("a Wrangler was built with no key")
     monkeypatch.setattr(propose_stage, "_wrangler", no_agent)
     result, document = _run_stage(tmp_path)
-    assert len(document["proposals"]) == 6 and result.warnings == []
+    assert len(document["proposals"]) == 10 and result.warnings == []
 
 
 def test_reachable_exactly_when_structure_infer_is():

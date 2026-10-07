@@ -17,6 +17,7 @@ from .rules import normalize_text
 from .override_ops import (  # noqa: F401 -- re-exported: tests and callers import them from here
     UNIMPLEMENTED_OPS,
     InapplicableOverride,
+    section_types,
     _TRANSFORMS,
     _find_by_source_ref,
     _public,
