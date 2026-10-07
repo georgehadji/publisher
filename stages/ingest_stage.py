@@ -184,7 +184,9 @@ def _check_zip_limits(source: Path) -> None:
     # the shapes and objects ingest cannot keep are counted and warned about.
     # v9: front/back-matter sections carry a `sourceRef.docxId` too, so a model's
     # verdict on a doubtful one can become a proposal a reviewer accepts.
-    version=9,
+    # v10: a back-matter section that folded in a heading with prose under it
+    # scores 0.5, not 0.9, so it is sent for review (B1, STRUCTURE_REPAIR_PLAN.md).
+    version=10,
     inputs={"docx_path": "raw-docx/1"},
     outputs={"source": "raw-source/1"},
     root_inputs=["docx_path"],

@@ -201,6 +201,7 @@ def test_grouping_keeps_leading_matter_untitled():
 # decision rested on, and the AST that carries it is still schema-valid.
 
 from publisher_ingest.docx_to_ast import (  # noqa: E402
+    BACK_MATTER_ABSORBED,
     BACK_MATTER_BY_PATTERN,
     BODY_SPLIT_BY_PROSE,
     BODY_SPLIT_FALLBACK,
@@ -256,6 +257,33 @@ def test_front_matter_confidence_is_the_body_boundarys(tmp_path):
 
 def test_back_matter_confidence(tmp_path):
     ast = docx_to_ast(_write(tmp_path, [("ONE", None), (PROSE, None), ("COLOPHON", None), ("Set in Garamond", None)]))
+    assert [b["confidence"] for b in ast["backMatter"]] == [BACK_MATTER_BY_PATTERN]
+
+
+def test_back_matter_that_swallowed_a_chapter_goes_to_review(tmp_path):
+    """B1: nothing after back matter becomes a chapter, so a mid-book
+    "APPENDIX" folds every later chapter into itself. Prose under a folded
+    heading is the evidence: the section is sent for review instead of being
+    trusted at 0.9, so end_body can be proposed."""
+    ast = docx_to_ast(_write(tmp_path, [
+        ("ONE", None), (PROSE, None), ("APPENDIX", None), ("Tables.", None),
+        ("TWO", None), (PROSE, None),
+    ]))
+    assert [c["attrs"]["title"] for c in ast["body"]] == ["ONE"]
+    assert [b["confidence"] for b in ast["backMatter"]] == [BACK_MATTER_ABSORBED]
+    assert BACK_MATTER_ABSORBED < 0.8
+
+
+def test_a_bibliography_with_heading_styled_entries_stays_trusted(tmp_path):
+    """The case the fold exists for: entries an author styled `Heading 1`
+    carry no prose, so folding them in is not evidence of a lost chapter."""
+    ast = docx_to_ast(_write(tmp_path, [
+        # A line between the title and the first entry: consecutive headings
+        # merge into one title, which would no longer match the pattern.
+        ("ONE", None), (PROSE, None), ("BIBLIOGRAPHY", None), ("Works cited.", None),
+        ("Smith, J. (2001). A Book.", "Heading 1"), ("Short note.", None),
+        ("Jones, K. (1999). Another.", "Heading 1"),
+    ]))
     assert [b["confidence"] for b in ast["backMatter"]] == [BACK_MATTER_BY_PATTERN]
 
 

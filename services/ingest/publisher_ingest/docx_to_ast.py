@@ -136,6 +136,8 @@ UNTITLED_SECTION = 0.5        # prose that no heading introduced, made a chapter
 BODY_SPLIT_BY_PROSE = 0.85    # front/body boundary found by the prose threshold
 BODY_SPLIT_FALLBACK = 0.5     # nothing cleared that bar; the first heading was taken
 BACK_MATTER_BY_PATTERN = 0.9  # the title matched an explicit back-matter string
+BACK_MATTER_ABSORBED = 0.5    # ...and then swallowed a later heading with real prose under it:
+                              # the match was sure, what it folded in may be chapters
 NUMBERED_BOLD_HEADING = 0.85  # a typed section number AND the whole line bold
 NAMED_BOLD_HEADING = 0.85     # a known section name ("Πρόλογος") AND the whole line bold
 
@@ -712,6 +714,13 @@ def docx_to_ast(
             # inside that section as the paragraph it is, rather than opening a
             # chapter titled with a citation.
             back_matter[-1]["content"].extend([*title_paragraphs, *content])
+            # A citation has no prose under it; a chapter does. A heading that
+            # brings real prose in may be a chapter the pattern swallowed (a
+            # mid-book "Appendix"), so the section goes to review, where
+            # end_body can give the body its chapters back (B1,
+            # docs/STRUCTURE_REPAIR_PLAN.md).
+            if section_title and _is_substantive(content):
+                back_matter[-1]["confidence"] = BACK_MATTER_ABSORBED
             continue
 
         chapter_number += 1
