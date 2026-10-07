@@ -111,6 +111,18 @@ def test_proposal_ops_are_one_mapping_in_two_languages():
     assert dict(re.findall(r'(\w+): "(\w+)"', body)) == PROPOSAL_OPS
 
 
+def test_the_api_copies_the_parameters_the_stage_declares():
+    """Accepting a proposal copies exactly the parameters PROPOSAL_PARAMS names
+    for its type (B2). A parameter only one side knows is either dropped on
+    accept or refused for a proposal the stage meant to send."""
+    from stages.propose_stage import PROPOSAL_OPS, PROPOSAL_PARAMS
+    assert set(PROPOSAL_PARAMS) == set(PROPOSAL_OPS)
+    body = _read("packages/api/src/contract.ts").split("export const PROPOSAL_PARAMS = {", 1)[1].split("}", 1)[0]
+    restated = {kind: tuple(re.findall(r'"(\w+)"', names))
+                for kind, names in re.findall(r"(\w+): \[(.*?)\]", body)}
+    assert restated == PROPOSAL_PARAMS
+
+
 def test_the_override_route_and_contract_accept_every_schema_op():
     """The API restates the op enum twice (the PATCH route's JSON schema and
     contract.ts's union). An op missing there is one no reviewer can log."""

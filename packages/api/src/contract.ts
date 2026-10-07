@@ -49,7 +49,22 @@ export const PROPOSAL_OPS = {
   flag_ambiguity: "flag_ambiguity",
   start_body: "start_body",
   end_body: "end_body",
+  reclassify: "reclassify",
 } as const satisfies Record<string, OverrideOp["op"]>;
+
+/**
+ * The parameters each proposal type carries into its op: accepting copies
+ * exactly these, and refuses a proposal carrying any other or lacking one (B2).
+ * Pinned to stages/propose_stage.py PROPOSAL_PARAMS by tests/test_single_source.py.
+ */
+export const PROPOSAL_PARAMS = {
+  merge_chapters: [],
+  adjust_heading_level: [],
+  flag_ambiguity: [],
+  start_body: [],
+  end_body: [],
+  reclassify: ["from", "to"],
+} as const satisfies Record<keyof typeof PROPOSAL_OPS, readonly ("from" | "to" | "value")[]>;
 
 /** One proposal awaiting a reviewer. Accepting it logs op `ov-<id>`. */
 export interface ProposalReview {

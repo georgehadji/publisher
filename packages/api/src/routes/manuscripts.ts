@@ -14,7 +14,7 @@ import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { CAS_ROOT, UPLOAD_MAX_BYTES, casPath, loadOwned, readCasFile, withTenant } from '../db.js';
-import { BLOCK_EXCERPT_CHARS, LOW_CONFIDENCE_BELOW, PROPOSAL_OPS } from '../contract.js';
+import { BLOCK_EXCERPT_CHARS, LOW_CONFIDENCE_BELOW, PROPOSAL_OPS, PROPOSAL_PARAMS } from '../contract.js';
 import type {
   BlockReview, ChapterReview, OrphanedOp, OverrideOp, ProposalReview, StructureReview,
 } from '../contract.js';
@@ -260,18 +260,10 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
       if (!proposal) {
         return reply.code(404).send({ error: 'no such proposal in the latest build' });
       }
-      const kind = PROPOSAL_OPS[proposal.type as keyof typeof PROPOSAL_OPS];
-      if (!kind) {
-        return reply.code(422).send({ error: `proposal type ${proposal.type} has no op to become` });
+      const op = proposalOp(proposal, actor, new Date().toISOString());
+      if (typeof op === 'string') {
+        return reply.code(422).send({ error: op });
       }
-      const op: OverrideOp = {
-        id: `ov-${proposal.id}`,
-        sourceRef: { docxId: proposal.sourceRef.docxId },
-        op: kind,
-        actor,
-        at: new Date().toISOString(),
-        rationale: proposal.rationale,
-      };
       if (await appendOps(request.tenantId, request.params.id, [op]) === 'conflict') {
         return reply.code(409).send({ error: 'this proposal is already accepted' });
       }
@@ -387,6 +379,37 @@ async function appendOps(tenantId: string, manuscriptId: string, ops: OverrideOp
     if (err?.code === '23505') return 'conflict';
     throw err;
   }
+}
+
+/**
+ * The op accepting `proposal` logs, or why it cannot become one. Its parameters
+ * are exactly the ones PROPOSAL_PARAMS declares for its type (B2): one it does
+ * not declare is refused rather than trimmed, and one it lacks is refused too,
+ * since nothing validates the op on its way into the log.
+ */
+export function proposalOp(proposal: any, actor: string, at: string): OverrideOp | string {
+  if (!Object.hasOwn(PROPOSAL_OPS, proposal.type)) {
+    return `proposal type ${proposal.type} has no op to become`;
+  }
+  const type = proposal.type as keyof typeof PROPOSAL_OPS;
+  const declared: readonly string[] = PROPOSAL_PARAMS[type];
+  const stray = ['from', 'to', 'value'].filter((name) => name in proposal && !declared.includes(name));
+  if (stray.length) {
+    return `a ${type} proposal does not take ${stray.join(', ')}`;
+  }
+  const missing = declared.filter((name) => !(name in proposal));
+  if (missing.length) {
+    return `a ${type} proposal needs ${missing.join(', ')}`;
+  }
+  return {
+    id: `ov-${proposal.id}`,
+    sourceRef: { docxId: proposal.sourceRef.docxId },
+    op: PROPOSAL_OPS[type],
+    ...Object.fromEntries(declared.map((name) => [name, proposal[name]])),
+    actor,
+    at,
+    rationale: proposal.rationale,
+  };
 }
 
 /** The proposals no logged op has accepted, in the order the stage wrote them. */

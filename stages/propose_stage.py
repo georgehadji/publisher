@@ -61,7 +61,13 @@ _AGREES = {"chapter-title"}
 # tests/test_single_source.py); every value is an implemented op.
 PROPOSAL_OPS = {"merge_chapters": "merge", "adjust_heading_level": "demote",
                 "flag_ambiguity": "flag_ambiguity", "start_body": "start_body",
-                "end_body": "end_body"}
+                "end_body": "end_body", "reclassify": "reclassify"}
+# The parameters each proposal type carries into its op (contract.ts
+# PROPOSAL_PARAMS, pinned the same way). The API copies exactly these: one the
+# type does not declare, or one it declares and the proposal lacks, is a 422 (B2).
+PROPOSAL_PARAMS = {"merge_chapters": (), "adjust_heading_level": (),
+                   "flag_ambiguity": (), "start_body": (), "end_body": (),
+                   "reclassify": ("from", "to")}
 
 
 def _proposal_id(docx_id: str, kind: str) -> str:
@@ -165,7 +171,8 @@ def _opening(section: dict, limit: int = 80) -> str:
 
 @stage(
     name="structure-propose",
-    version=5,  # v5: proposes against doc-effective/1, the document structure-infer
+    version=6,  # v6: PROPOSAL_PARAMS, and reclassify is acceptable (B2)
+                # v5: proposes against doc-effective/1, the document structure-infer
                 # classified, so ids match and accepted ops shape what comes next (B0)
                 # v4: a back-matter section read as a chapter proposes end_body
                 # v3: a front-matter section read as a chapter proposes start_body

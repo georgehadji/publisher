@@ -7,7 +7,7 @@
  * and "not measured" (null) stays distinct from "measured, nothing low" ([]).
  */
 import { describe, expect, it } from 'vitest';
-import { LOW_CONFIDENCE_BELOW, orphanedOps, pendingProposals, structureView } from './manuscripts.js';
+import { LOW_CONFIDENCE_BELOW, orphanedOps, pendingProposals, proposalOp, structureView } from './manuscripts.js';
 import { BLOCK_EXCERPT_CHARS } from '../contract.js';
 import type { OverrideOp } from '../contract.js';
 
@@ -190,5 +190,33 @@ describe('pendingProposals', () => {
   it('drops a proposal once its op is in the log', () => {
     const accepted = op('ov-pr-a', 'c2');
     expect(pendingProposals(document, [accepted]).map((p) => p.id)).toEqual(['pr-b']);
+  });
+});
+
+describe('proposalOp (B2)', () => {
+  const at = '2026-10-07T00:00:00.000Z';
+  const reclassify = { id: 'pr-r', type: 'reclassify', sourceRef: { docxId: 'p9' }, rationale: 'a heading', from: 'paragraph', to: 'heading' };
+
+  it("carries the parameters a type declares into its op", () => {
+    expect(proposalOp(reclassify, 'user:ada', at)).toEqual({
+      id: 'ov-pr-r', sourceRef: { docxId: 'p9' }, op: 'reclassify',
+      from: 'paragraph', to: 'heading', actor: 'user:ada', at, rationale: 'a heading',
+    });
+  });
+
+  it('refuses a parameter the type does not declare, rather than trimming it', () => {
+    expect(proposalOp({ ...reclassify, value: 2 }, 'user:ada', at)).toBe('a reclassify proposal does not take value');
+    expect(proposalOp({ ...reclassify, type: 'merge_chapters' }, 'user:ada', at))
+      .toBe('a merge_chapters proposal does not take from, to');
+  });
+
+  it('refuses a declared parameter the proposal lacks: nothing validates the op later', () => {
+    const { to, ...partial } = reclassify;
+    expect(proposalOp(partial, 'user:ada', at)).toBe('a reclassify proposal needs to');
+  });
+
+  it('a type with no op, even an Object.prototype name, becomes none', () => {
+    expect(proposalOp({ ...reclassify, type: 'suggest_title' }, 'user:ada', at)).toMatch(/has no op/);
+    expect(proposalOp({ ...reclassify, type: 'constructor' }, 'user:ada', at)).toMatch(/has no op/);
   });
 });
