@@ -19,7 +19,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import type { Route } from "next";
-import type { OverrideOp } from "../types";
+import { SECTION_TYPES, type OverrideOp } from "../types";
 import { acceptProposal, appendOverrides, whoami } from "./server";
 import { SESSION_COOKIE, endSession, localDevToken, safeNext, startSession } from "./session";
 
@@ -39,12 +39,15 @@ type Text = "required" | "optional" | "none";
 
 /**
  * The ops this UI can write: whether each takes the form's text, its limit, and
- * the fields the op is built with. `reclassify` stays out (it needs a type
- * picker), and so does `delete` of author text: the log has no undo. `delete`
- * appears only for a break the reviewer inserted (`ins-` ids), which is how an
- * insert is taken back. `merge`/`demote` need no text; any given is the rationale.
+ * the fields the op is built with. `reclassify` is offered for front/back-matter
+ * sections only, through a closed select of section types (B9); `delete` of
+ * author text stays out: the log has no undo. `delete` appears only for a break
+ * the reviewer inserted (`ins-` ids), which is how an insert is taken back.
+ * `merge`/`demote` need no text; any given is the rationale.
  */
-const FORM_OPS: Record<string, { text: Text; max: number; fields: (text: string, flag: string) => Partial<OverrideOp> }> = {
+const FORM_OPS: Record<string, {
+  text: Text; max: number; fields: (text: string, flag: string, form: FormData) => Partial<OverrideOp>;
+}> = {
   retitle: { text: "required", max: 256, fields: (text) => ({ value: text }) },
   flag_ambiguity: { text: "required", max: 4096, fields: (text) => ({ rationale: text }) },
   resolve_ambiguity: { text: "none", max: 0, fields: (_t, flag) => (flag ? { value: flag } : {}) },
@@ -54,7 +57,16 @@ const FORM_OPS: Record<string, { text: Text; max: number; fields: (text: string,
   demote: { text: "optional", max: 4096, fields: (text) => (text ? { rationale: text } : {}) },
   insert: { text: "none", max: 0, fields: () => ({ value: "sceneBreak" }) },
   delete: { text: "none", max: 0, fields: () => ({}) },
+  start_body: { text: "none", max: 0, fields: () => ({}) },
+  end_body: { text: "none", max: 0, fields: () => ({}) },
+  // Which end may hold which type is the op's own check, against the schema.
+  reclassify: {
+    text: "none", max: 0,
+    fields: (_t, _f, form) => ({ from: String(form.get("from") ?? ""), to: String(form.get("to") ?? "") }),
+  },
 };
+
+const SECTION_TYPE_NAMES = new Set<string>([...SECTION_TYPES.frontMatter, ...SECTION_TYPES.backMatter]);
 
 const INSERTED = /^ins-[0-9a-f]{12}$/;
 const OP_ID = /^ov-[a-zA-Z0-9_-]{1,61}$/;
@@ -82,6 +94,12 @@ export async function submitOverride(
   if (op === "delete" && !INSERTED.test(docxId)) {
     return { ok: false, message: "Only an inserted break can be deleted here." };
   }
+  if (op === "reclassify") {
+    const from = String(formData.get("from") ?? ""), to = String(formData.get("to") ?? "");
+    if (!SECTION_TYPE_NAMES.has(from) || !SECTION_TYPE_NAMES.has(to) || from === to) {
+      return { ok: false, message: "Pick a different section type." };
+    }
+  }
   if (flag && !OP_ID.test(flag)) {
     return { ok: false, message: "Invalid flag." };
   }
@@ -100,7 +118,7 @@ export async function submitOverride(
     id: `ov-${randomUUID()}`,
     sourceRef: { docxId },
     op,
-    ...spec.fields(text, flag),
+    ...spec.fields(text, flag, formData),
     actor,
     at: new Date().toISOString(),
   } as OverrideOp;

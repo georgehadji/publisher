@@ -2,7 +2,7 @@
 
 import React, { useActionState, useState } from "react";
 import { acceptProposalAction, signOut, submitOverride } from "./actions";
-import { LOW_CONFIDENCE_BELOW } from "../types";
+import { LOW_CONFIDENCE_BELOW, SECTION_TYPES } from "../types";
 import type {
   StructureReview,
   ChapterReview,
@@ -83,7 +83,7 @@ export function StructureReviewPanel({ review }: { review: StructureReview }) {
             This build's structure was not scored, so nothing here has been checked.
           </p>
         ) : review.lowConfidenceNodes.length > 0 && (
-          <LowConfidenceSection nodes={review.lowConfidenceNodes} />
+          <LowConfidenceSection manuscriptId={review.manuscriptId} nodes={review.lowConfidenceNodes} />
         )}
         {review.proposals !== null && review.proposals.length > 0 && (
           <ProposalSection manuscriptId={review.manuscriptId} proposals={review.proposals} />
@@ -279,7 +279,7 @@ function OpLine({ op }: { op: OverrideOp }) {
   );
 }
 
-function LowConfidenceSection({ nodes }: { nodes: LowConfidenceNode[] }) {
+function LowConfidenceSection({ manuscriptId, nodes }: { manuscriptId: string; nodes: LowConfidenceNode[] }) {
   return (
     <div style={styles.lowConfSection}>
       <h3>Low-Confidence Nodes ({nodes.length})</h3>
@@ -290,8 +290,39 @@ function LowConfidenceSection({ nodes }: { nodes: LowConfidenceNode[] }) {
             Read as <strong>{node.type}</strong> in {node.root} (confidence:{" "}
             {(node.confidence * 100).toFixed(0)}%) · <TargetId docxId={node.docxId} />
           </p>
+          {node.root !== "body" && node.docxId && (
+            <SectionActions manuscriptId={manuscriptId} docxId={node.docxId} root={node.root} type={node.type} />
+          )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * What a reviewer can log on a front/back-matter section (B9): the body's
+ * boundary, and a retype to another section type that end may hold -- the
+ * same reach the model's proposals have.
+ */
+function SectionActions({ manuscriptId, docxId, root, type }: {
+  manuscriptId: string; docxId: string; root: "frontMatter" | "backMatter"; type: string;
+}) {
+  const [state, action, pending] = useActionState(submitOverride.bind(null, manuscriptId, docxId), null);
+  const others = SECTION_TYPES[root].filter((t) => t !== type);
+  return (
+    <div style={styles.inlineForm}>
+      {root === "frontMatter"
+        ? <OpButton manuscriptId={manuscriptId} docxId={docxId} op="start_body" label="The body starts here" />
+        : <OpButton manuscriptId={manuscriptId} docxId={docxId} op="end_body" label="The body ends here" />}
+      <form action={action} style={styles.inlineForm}>
+        <input type="hidden" name="op" value="reclassify" />
+        <input type="hidden" name="from" value={type} />
+        <select name="to" aria-label="Retype as" defaultValue={others[0]}>
+          {others.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <button type="submit" disabled={pending}>{pending ? "…" : state?.ok ? "Retype ✓" : "Retype as…"}</button>
+        {state && !state.ok && <span role="status" style={{ color: "#c62828" }}>{state.message}</span>}
+      </form>
     </div>
   );
 }

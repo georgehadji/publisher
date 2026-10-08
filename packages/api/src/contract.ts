@@ -122,7 +122,7 @@ export interface LowConfidenceNode {
   index: number;
   type: string;
   title: string | null;
-  /** `null` for a front/back-matter section wrapper: the schema gives it no sourceRef. */
+  /** The id an op targets; `null` for a node with no sourceRef, which no op can reach. */
   docxId: string | null;
   text: string;
   confidence: number;

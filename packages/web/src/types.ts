@@ -24,6 +24,19 @@ export type {
  */
 export const LOW_CONFIDENCE_BELOW = 0.8;
 
+/**
+ * The section types each end of a book may hold: what "Retype as…" offers
+ * (B9, docs/STRUCTURE_REPAIR_PLAN.md). ast.schema.json's frontMatterNode and
+ * backMatterNode section branches; a value, so restated like the line above,
+ * and pinned to the schema by tests/test_single_source.py.
+ */
+export const SECTION_TYPES = {
+  frontMatter: ["halfTitle", "titlePage", "copyrightPage", "dedication", "toc", "foreword", "preface",
+    "acknowledgments", "prologue", "alsoBy", "aboutTheAuthor"],
+  backMatter: ["epilogue", "afterword", "appendix", "notes", "bibliography", "index", "aboutTheAuthor",
+    "alsoBy", "colophon"],
+} as const;
+
 /** A quality review item. */
 export interface QualityIssue {
   type: "widow" | "orphan" | "runt" | "river" | "hyphen-stack" | "short-chapter-end";

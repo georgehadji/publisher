@@ -143,3 +143,15 @@ def test_ingest_restates_the_chapter_title_patterns():
     from publisher_structure.rules import CHAPTER_PATTERNS
     assert [(p.pattern, p.flags) for p in CHAPTER_TITLE_PATTERNS] == \
         [(p.pattern, p.flags) for p in CHAPTER_PATTERNS]
+
+
+def test_the_review_ui_offers_the_section_types_the_schema_allows():
+    """B9: "Retype as..." offers, per end, the section types ast/1 lets that
+    end hold. The web restates them (a value cannot cross the type-only
+    re-export); a type on one side only is an option the op refuses, or a
+    retype nobody can pick."""
+    from publisher_structure.overrides import section_types
+    body = _read("packages/web/src/types.ts").split("export const SECTION_TYPES = {", 1)[1].split("} as const", 1)[0]
+    for root in ("frontMatter", "backMatter"):
+        listed = re.search(root + r": \[(.*?)\]", body, re.S).group(1)
+        assert set(re.findall(r'"(\w+)"', listed)) == section_types(root), root

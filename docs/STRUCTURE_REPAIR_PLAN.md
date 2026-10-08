@@ -1,6 +1,6 @@
 # Structure repair plan — misfiled sections and block-level verdicts
 
-**Status:** B0–B8 done (2026-10-08). B9 open. Planned 2026-10-07 against `fac9254`.
+**Status:** B0–B9 done (2026-10-08). Planned 2026-10-07 against `fac9254`.
 **Scope:** the two items `REMAINING_WORK.md` §1.3 still lists as open:
 
 1. a front/back-matter section the classifier reads as belonging somewhere else can only
@@ -325,6 +325,8 @@ tests via `./scripts/test.ps1 -k`, the full suite, the CI lints listed in `CLAUD
 ### B9 — the review panel can log every boundary and retype by hand
 
 *Closes:* F5, and gives a person the same reach the proposals have.
+
+*As built:* the select's options are `SECTION_TYPES` in `packages/web/src/types.ts`, not an import from the API contract: the web re-exports the contract type-only, so a value cannot cross, the same reason `LOW_CONFIDENCE_BELOW` is restated there. `tests/test_single_source.py` pins both lists to the schema's unions. The controls sit on the low-confidence section rows, which are the sections the panel lists. The Playwright gate was not run: the compose stack was down.
 
 - **Front-matter sections:** "The body starts here" (`start_body`) and "Retype as…", a
   closed `<select>` built from the types valid at that end.

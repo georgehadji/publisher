@@ -62,7 +62,10 @@ describe("submitOverride refuses", () => {
     ["an empty manuscript id", "", "p1", { op: "retitle", text: "T" }, "Invalid target."],
     ["an empty target id", "m1", "", { op: "retitle", text: "T" }, "Invalid target."],
     ["an over-long target id", "m1", "x".repeat(129), { op: "retitle", text: "T" }, "Invalid target."],
-    ["an op the form does not offer", "m1", "p1", { op: "reclassify" }, "Unsupported operation."],
+    ["an op the form does not offer", "m1", "p1", { op: "set_attr" }, "Unsupported operation."],
+    ["a retype to no section type", "m1", "f1", { op: "reclassify", from: "preface", to: "paragraph" }, "Pick a different section type."],
+    ["a retype from no section type", "m1", "f1", { op: "reclassify", from: "chapter", to: "preface" }, "Pick a different section type."],
+    ["a retype to itself", "m1", "f1", { op: "reclassify", from: "preface", to: "preface" }, "Pick a different section type."],
     ["a prototype key as an op", "m1", "p1", { op: "constructor" }, "Unsupported operation."],
     ["deleting author text", "m1", "p1", { op: "delete" }, "Only an inserted break can be deleted here."],
     ["a malformed flag", "m1", "p1", { op: "resolve_ambiguity", flag: "not-a-flag" }, "Invalid flag."],
@@ -107,6 +110,9 @@ describe("every op a form builds is a valid overrides/1 op", () => {
     ["demote", "p1", { op: "demote" }],
     ["insert", "p1", { op: "insert" }],
     ["delete of an inserted break", "ins-0123456789ab", { op: "delete" }],
+    ["start_body", "f1", { op: "start_body" }],
+    ["end_body", "b1", { op: "end_body" }],
+    ["a section retype", "f1", { op: "reclassify", from: "preface", to: "foreword" }],
   ])("%s", async (_name, docxId, fields) => {
     const result = await submitOverride("m1", docxId, null, form(fields));
     expect(result?.ok).toBe(true);

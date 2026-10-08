@@ -84,4 +84,16 @@ describe("StructureReviewPanel", () => {
   it("shows no chapter detail until one is chosen", () => {
     expect(render(review())).toContain("Select a chapter");
   });
+
+  it("offers a front section the body's start and a retype to its own end's types (B9)", () => {
+    const html = render(review({ lowConfidenceNodes: [
+      { root: "frontMatter", index: 0, type: "preface", title: null, docxId: "f1", text: "THE STORM", confidence: 0.5 },
+      { root: "backMatter", index: 0, type: "epilogue", title: null, docxId: "e1", text: "AFTER", confidence: 0.5 },
+    ] }));
+    expect(html).toContain("The body starts here");
+    expect(html).toContain("The body ends here");
+    expect(html).toContain('<option value="foreword">');
+    expect(html).not.toContain('<option value="preface">');        // not its own type
+    expect(html).toContain('<option value="colophon">');          // back types for the back row
+  });
 });
