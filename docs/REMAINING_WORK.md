@@ -249,11 +249,12 @@ let model output change a build on its own.
   for the reviewer. **Done (2026-10-05):** a front-matter section read as a chapter title
   now proposes `start_body` (`structure-propose` v3) — the earliest one only, since the
   ones after it move with it. **Done (2026-10-05):** its mirror, `end_body`, for the last
-  back-matter section read as a chapter title (`structure-propose` v4). Still open: no op
-  moves a section to the other end of the book (an epilogue filed as front matter), so
-  such a section is only flagged. **Done in `STRUCTURE_REPAIR_PLAN.md` B0–B9 (2026-10-08)**, which also
-  found that `end_body`'s proposal can't fire yet: ingest scores every back-matter section
-  0.9, above the 0.8 line (its F1, fixed by B1).
+  back-matter section read as a chapter title (`structure-propose` v4). **Declined:** an op
+  that moves a section to the other end of the book (an epilogue filed as front matter); it
+  would reorder words after the integrity gate, so such a section is still only flagged
+  (`STRUCTURE_REPAIR_PLAN.md` §4 says what would reopen it). That plan (B0–B9, done
+  2026-10-08) also found `end_body`'s proposal could not fire: ingest scored every
+  back-matter section 0.9, above the 0.8 line (its F1, fixed by B1).
 - `split_chapter`, `reclassify` and `promote_heading` proposals are produced since B8:
   `structure-infer` sends doubted headings and paragraphs (B6, B7), and their verdicts go
   through `block_decision`. A section retype is `reclassify` (B3, B5).
@@ -988,7 +989,8 @@ On the real book: 0 widows, 0 orphans, 0 runts, notes in order, 821 pages.
    - The proof takes about 2.5 s a page.
    - The author must re-save one EMF figure as PNG.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
-   API reports them without defaulting. What's left there is consuming `classification/1`.
-3. **§1.1 — authenticate reviewers.** The loop closes: a reviewer can open
-   `/manuscripts/[id]/review`, log a retitle or flag, and see it applied on the next build.
-   But it's localhost-only by convention, with one shared actor.
+   API reports them without defaulting. `classification/1` is consumed: `structure-propose`
+   turns verdicts into proposals a reviewer accepts (W4, `STRUCTURE_REPAIR_PLAN.md` B0–B9).
+3. **§1.1 — done (W2).** Reviewers sign in with their own token and their ops carry
+   their name; the review loop closes. What's left across the tiers is a live run against
+   the real API (§3.5, §1.2) and the Compositor, which needs rendered pages (W11).
