@@ -71,6 +71,7 @@ def test_the_request_pins_schema_provider_reasoning_and_prompt():
     assert body["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False, "require_parameters": True,
                                 "data_collection": "deny", "zdr": True}
     assert body["reasoning"] == {"effort": "none"}
+    assert body["max_tokens"] == ROUTE.max_tokens == 4096
     assert body["messages"][0]["content"] == system_prompt(ROUTE.route, ROUTE.prompt_version)
     assert "Route:" not in body["messages"][0]["content"], "the placeholder prompt is gone"
 

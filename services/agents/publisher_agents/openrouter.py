@@ -42,6 +42,8 @@ class OpenRouterAgentProvider:
             body["provider"] = route.provider
         if route.reasoning is not None:
             body["reasoning"] = route.reasoning
+        if route.max_tokens is not None:
+            body["max_tokens"] = route.max_tokens
         message, usage = self._http.chat(body, route)
         calls = [ToolCall(id=c["id"], name=c["function"]["name"],
                           arguments=json.loads(c["function"].get("arguments") or "{}"))

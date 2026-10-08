@@ -92,6 +92,10 @@ class RouteConfig:
     # model under an unchanged cache key) and how much the model may reason.
     provider: dict = field(default_factory=dict)
     reasoning: Optional[dict] = None
+    # The most output tokens one call may produce. Unset, OpenRouter reserves
+    # the model's whole output window against the balance and refuses (402)
+    # a call the account could easily pay for.
+    max_tokens: Optional[int] = None
 
 
 @dataclass
@@ -238,6 +242,7 @@ def load_routes_from_policy(
             cost_per_call=float(spec.get("cost_per_call", 0.0)),
             provider=dict(spec.get("provider") or {}),
             reasoning=dict(spec["reasoning"]) if isinstance(spec.get("reasoning"), dict) else None,
+            max_tokens=int(spec["max_tokens"]) if spec.get("max_tokens") is not None else None,
         )
     return routes
 
@@ -359,6 +364,8 @@ class OpenRouterProvider:
             body["provider"] = route.provider
         if route.reasoning is not None:
             body["reasoning"] = route.reasoning
+        if route.max_tokens is not None:
+            body["max_tokens"] = route.max_tokens
         return body
 
     def _call(self, body: dict[str, Any]) -> dict[str, Any]:

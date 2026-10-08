@@ -183,6 +183,8 @@ def test_the_openrouter_provider_sends_tools_schema_and_pins():
     body = sent[0]
     assert body["response_format"]["json_schema"]["strict"] is True
     assert body["provider"]["allow_fallbacks"] is False and body["tools"] == [{"type": "function"}]
+    # Capped: without it OpenRouter reserves the whole output window and 402s.
+    assert body["max_tokens"] == route.max_tokens == 4096
 
 
 # ── Tool registry and surfaces (D7) ──────────────────────────────────────

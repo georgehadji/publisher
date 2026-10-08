@@ -90,6 +90,7 @@ routes:
                             # <= 400 a build, so a full build is ~10 calls (~$0.03) and at
                             # most 21 ($0.063); cached batches cost nothing. Measured volume
                             # 2026-10-08: the local real book sends 0 doubted blocks.
+    max_tokens: 4096   # 40 nodes x ~40 tokens of JSON is ~1.6K; 4096 leaves room; unset, OpenRouter reserves the whole window (402)
     fallback_route: structure-classify-deep
     reasoning:
       effort: none                          # closed-enum classification; reasoning buys
@@ -109,6 +110,7 @@ routes:
     prompt_version: "1.0"
     schema_version: agent-proposal/1
     cost_per_call: 0.03
+    max_tokens: 4096   # one turn: tool calls or a list of proposal ids; unset, OpenRouter reserves the whole window (402)
     fallback_route: null
     reasoning:
       effort: none
@@ -126,6 +128,7 @@ routes:
     prompt_version: "1.1"   # 1.1: a real system prompt (classify_contract.py); 1.0 was a placeholder line
     schema_version: classification/1
     cost_per_call: 0.015
+    max_tokens: 4096   # same answer shape as structure-classify; unset, OpenRouter reserves the whole window (402)
     fallback_route: null
     reasoning:
       effort: none
