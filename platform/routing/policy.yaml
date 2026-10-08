@@ -79,7 +79,10 @@ routes:
     tier: fast
     prompt_version: "1.1"   # 1.1: a real system prompt (classify_contract.py); 1.0 was a placeholder line
     schema_version: classification/1
-    cost_per_call: 0.003
+    cost_per_call: 0.003    # per batch (B7): structure-infer sends <= 40 nodes a call and
+                            # <= 400 a build, so a full build is ~10 calls (~$0.03) and at
+                            # most 21 ($0.063); cached batches cost nothing. Measured volume
+                            # 2026-10-08: the local real book sends 0 doubted blocks.
     fallback_route: structure-classify-deep
     reasoning:
       effort: none                          # closed-enum classification; reasoning buys

@@ -186,10 +186,11 @@ def test_structure_infer_writes_a_classification_artifact(monkeypatch):
         assert fake.requests[0].route == "structure-classify"
         # Only what ingest was unsure of, by the id an op can target.
         sent = fake.requests[0].inputs["nodes"]
-        assert [n["sourceRef"] for n in sent] == ["c2", "c3", "f1"]
-        assert sent[0]["text"] == "NO!" and sent[0]["context"].startswith("Prose of NO!")
+        # In book order: the front matter first (B7).
+        assert [n["sourceRef"] for n in sent] == ["f1", "c2", "c3"]
+        assert sent[1]["text"] == "NO!" and sent[1]["context"].startswith("Prose of NO!")
         # A section has no title: its first block stands in, under its type's label.
-        assert sent[2] == {"sourceRef": "f1", "current": "front-dedication",
+        assert sent[0] == {"sourceRef": "f1", "current": "front-dedication",
                            "text": "DEDICATION", "context": "For mum."}
 
 
@@ -203,3 +204,79 @@ def test_nothing_doubtful_means_no_model_is_asked(monkeypatch):
         certain = {"schema": "ast/1", "body": [_chapter(1, "CHAPTER ONE", 0.95, "c1")]}
         result = structure_infer(_ctx(tmp_dir), doc_path=_write_ast(tmp_dir, certain), api_key="sk-test-fake")
         assert result.metrics["low_confidence_nodes"] == 0
+
+
+# ── B7: doubted blocks, chapter-aligned batches, a per-build cap ──
+
+def _para(text, ref=None, confidence=None):
+    node = {"type": "paragraph", "content": [{"type": "text", "text": text}]}
+    if ref:
+        node["sourceRef"] = {"docxId": ref}
+    if confidence is not None:
+        node["confidence"] = confidence
+    return node
+
+
+def _book(*doubted_per_chapter, word="x"):
+    """One chapter per count, holding that many doubted paragraphs."""
+    return {"schema": "ast/1", "body": [
+        {"type": "chapter", "attrs": {"number": n, "id": f"ch{n}", "title": f"C{n}"},
+         "sourceRef": {"docxId": f"c{n}"}, "confidence": 0.95,
+         "content": [_para(f"{word} {n}.{i}", f"p{n}.{i}", 0.5) for i in range(count)] or [_para("prose")]}
+        for n, count in enumerate(doubted_per_chapter, start=1)]}
+
+
+def _run(tmp_dir, ast, fake):
+    ctx = StageCtx(build_id="b", deterministic_seed="t", deadline=datetime.now(timezone.utc),
+                   memory_budget_mb=128, work_dir=str(tmp_dir), cas_root=str(tmp_dir / "cas"))
+    return structure_infer(ctx, doc_path=_write_ast(tmp_dir, ast), api_key="sk-test-fake")
+
+
+def test_doubted_blocks_are_sent_with_what_ingest_made_them(monkeypatch, tmp_path):
+    fake = _FakeProvider()
+    monkeypatch.setattr(structure_infer_stage, "OpenRouterProvider", lambda api_key: fake)
+    chapter = {"type": "chapter", "attrs": {"number": 1, "id": "ch1", "title": "One"},
+               "sourceRef": {"docxId": "c1"}, "confidence": 0.95, "content": [
+                   _para("Chapter 3", "p1", 0.5), _para("Then it rained.", "p2"),
+                   {"type": "heading", "attrs": {"level": 2}, "sourceRef": {"docxId": "h1"},
+                    "confidence": 0.85, "content": [{"type": "text", "text": "1.2 Method"}]},
+                   {"type": "heading", "attrs": {"level": 5}, "sourceRef": {"docxId": "h2"},
+                    "confidence": 0.5, "content": [{"type": "text", "text": "Deep"}]}]}
+    _run(tmp_path, {"schema": "ast/1", "body": [chapter]}, fake)
+    sent = fake.requests[0].inputs["nodes"]
+    assert [(n["sourceRef"], n["current"]) for n in sent] == [("p1", "paragraph"), ("h2", "heading-3")]
+    assert sent[0]["text"] == "Chapter 3" and sent[0]["context"].startswith("Then it rained.")
+
+
+def test_batches_follow_chapters_and_split_only_an_oversized_one(monkeypatch, tmp_path):
+    monkeypatch.setattr(structure_infer_stage, "MAX_NODES_PER_CALL", 2)
+    fake = _FakeProvider()
+    monkeypatch.setattr(structure_infer_stage, "OpenRouterProvider", lambda api_key: fake)
+    result = _run(tmp_path, _book(1, 2, 1, 3), fake)
+    sizes = [[n["sourceRef"] for n in r.inputs["nodes"]] for r in fake.requests]
+    assert sizes == [["p1.0"], ["p2.0", "p2.1"], ["p3.0"], ["p4.0", "p4.1"], ["p4.2"]]
+    assert result.metrics["batches"] == 5 and result.warnings == []
+
+
+def test_an_edit_in_one_chapter_re_buys_only_its_batch(monkeypatch, tmp_path):
+    monkeypatch.setattr(structure_infer_stage, "MAX_NODES_PER_CALL", 2)
+    fake = _FakeProvider()
+    monkeypatch.setattr(structure_infer_stage, "OpenRouterProvider", lambda api_key: fake)
+    _run(tmp_path, _book(2, 2, 2), fake)
+    first = len(fake.requests)
+    edited = _book(2, 2, 2)
+    edited["body"][1]["content"][0]["content"][0]["text"] = "changed"
+    _run(tmp_path, edited, fake)
+    assert first == 3 and len(fake.requests) == 4
+    assert fake.requests[-1].inputs["nodes"][0]["text"] == "changed"
+
+
+def test_the_build_cap_warns_with_what_it_left_out(monkeypatch, tmp_path):
+    monkeypatch.setattr(structure_infer_stage, "MAX_NODES_PER_BUILD", 3)
+    fake = _FakeProvider()
+    monkeypatch.setattr(structure_infer_stage, "OpenRouterProvider", lambda api_key: fake)
+    result = _run(tmp_path, _book(2, 3), fake)
+    assert [n["sourceRef"] for r in fake.requests for n in r.inputs["nodes"]] == ["p1.0", "p1.1", "p2.0"]
+    assert [w.code for w in result.warnings] == ["classification-truncated"]
+    assert result.warnings[0].human_message.startswith("2 doubtful node(s)")
+    assert result.metrics["nodes_truncated"] == 2
