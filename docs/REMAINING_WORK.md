@@ -245,6 +245,9 @@ let model output change a build on its own.
   book and thesis as scored with nothing below 0.8, and `word/word-doubtful.docx` (typed
   chapter titles, a mid-book APPENDIX) as F1: chapter, appendix and the two titles it
   swallowed all below 0.8. `test_structure_infer.py` sends exactly those four to the model.
+  Run live (2026-10-09) the model got all four right, and `structure-propose` (v10) now
+  recovers the book in one build: a `split` at each folded title, which moves the appendix
+  into the body as a chapter first (STRUCTURE_REPAIR_PLAN B8, as built).
 - **Done (2026-10-04): front/back-matter sections are sent too.** Each section carries a
   `sourceRef.docxId` (schema; `ingest` v9), keyed by its own text. `structure-infer` (v4)
   sends the ones scored below 0.8 (in practice the 0.5 fallback when ingest found no

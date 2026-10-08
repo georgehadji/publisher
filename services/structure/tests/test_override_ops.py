@@ -349,6 +349,46 @@ def test_end_body_refuses_what_it_cannot_turn_into_chapters(book, ref, reason):
     assert skipped and reason in skipped[0][1], skipped
 
 
+# ── split on a chapter ingest folded into back matter (F1) ─────
+
+FOLDED = {**BOOK, "backMatter": [
+    _section("appendix", "a1", _p("APPENDIX", "ap1"), _p("Tables.", "ap2"),
+             _p("TWO", "ap3"), _p("Rain.", "ap4"), _p("THREE", "ap5"), _p("Sea.", "ap6")),
+    *BOOK["backMatter"],
+]}
+
+
+@pytest.mark.parametrize("log", [
+    ["ap3", "ap5"], ["ap5", "ap3"],
+    ["end_body", "ap3", "ap5"], ["ap3", "end_body", "ap5"], ["ap5", "ap3", "end_body"],
+])
+def test_a_split_on_a_folded_title_moves_its_section_first_in_any_order(log):
+    """A chapter starts at the title, so the body reaches it: the appendix
+    (and back matter before it) becomes a chapter, then the split applies.
+    An end_body on the same section, before or after, changes nothing more."""
+    ops = [_op("end_body", "a1") if r == "end_body" else _op("split", r) for r in log]
+    skipped: list = []
+    out = apply_overrides(FOLDED, ops, skipped)
+    assert skipped == []
+    errors = sorted(Draft202012Validator(SCHEMA).iter_errors(_public(out)), key=str)
+    assert not errors, errors[0].message
+    assert [c["attrs"]["title"] for c in out["body"]][-3:] == ["APPENDIX", "TWO", "THREE"]
+    assert [c["attrs"]["number"] for c in out["body"]] == list(range(1, len(out["body"]) + 1))
+    assert len({c["attrs"]["id"] for c in out["body"]}) == len(out["body"])
+    assert [s["sourceRef"]["docxId"] for s in out["backMatter"]] == ["b1"]
+    assert _text_in_order(out) == _text_in_order(FOLDED)
+
+
+@pytest.mark.parametrize("book, ref, reason", [
+    (FOLDED, "ap1", "opens a back-matter section; end_body there instead"),
+    (BOOK, "fp4", "not directly inside a chapter"),      # front matter has no fold
+])
+def test_a_split_outside_a_chapter_refuses_what_it_cannot_reach(book, ref, reason):
+    skipped: list = []
+    assert apply_overrides(book, [_op("split", ref)], skipped) is book
+    assert skipped and reason in skipped[0][1], skipped
+
+
 # ── reclassify on sections and heading levels (B3) ─────────────
 
 def test_reclassify_retypes_a_front_matter_section_keeping_what_it_holds():

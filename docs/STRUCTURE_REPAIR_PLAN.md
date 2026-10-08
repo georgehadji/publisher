@@ -1,6 +1,6 @@
 # Structure repair plan — misfiled sections and block-level verdicts
 
-**Status:** B0–B9 done (2026-10-08). Planned 2026-10-07 against `fac9254`.
+**Status:** B0–B9 done (2026-10-08); F1's recovery redone after the live runs (2026-10-09, B8 as-built). Planned 2026-10-07 against `fac9254`.
 **Scope:** the two items `REMAINING_WORK.md` §1.3 still lists as open:
 
 1. a front/back-matter section the classifier reads as belonging somewhere else can only
@@ -315,6 +315,25 @@ tests via `./scripts/test.ps1 -k`, the full suite, the CI lints listed in `CLAUD
 - F1 closes here end to end. The folded titles that B6 scores are `chapter-title` verdicts
   on paragraphs. Once the reviewer accepts `end_body` (B1), the next build (B0) proposes a
   `split` at each one.
+- *As built, after the first live runs (2026-10-09):* both halves of the line above were
+  wrong for the common case.
+  - The live model read the absorbing section correctly (an APPENDIX as `back-appendix`,
+    0.92), so no section row fired, and the folded titles sat in a section the block table
+    never read: zero proposals.
+  - Proposing `end_body` there instead, the second step never came: re-asked inside the
+    chapter the appendix became, the live model called TWO and THREE `heading-1` (0.75),
+    having called them `chapter-title` (0.85) beside the section. A second step that waits
+    on the model's next reading of a changed context is not a recovery.
+  - So it is one step (`structure-propose` v10, `resolve` v8): each folded title is a
+    `split_chapter` proposal from this build's verdict, and the `split` op, aimed at a
+    block inside a back-matter section, moves that section and the back matter before it
+    into the body first, then splits. Reading order forces that move: the body prints
+    before the back matter, so the appendix becomes a chapter for TWO to stay after it.
+    `end_body` on a section a split already moved is a no-op, so the log applies in any
+    acceptance order. The moved titles carry no score, so the next build asks nothing.
+  - Front matter has no fold, so a title-like front block is only flagged.
+  - Pinned on `corpus/word/word-doubtful.docx` with the live verdicts, in both acceptance
+    orders, every word in order.
 - **Gates:**
   - Exhaustive table test over `labels()` × {paragraph, heading levels 1–6, first block
     of a chapter}.

@@ -393,9 +393,20 @@ def _op_split(ast: dict, op: OverrideOp) -> dict:
 
     out = _in_chapter_lists(ast, edit)
     if out is None:
-        if _find_by_source_ref(ast, op.sourceRef) is not None:
-            raise InapplicableOverride("its block is not directly inside a chapter")
-        return ast   # matches nothing: an orphan, which the API reports
+        folded = _in_back_section(ast, op.sourceRef)
+        if folded is not None:
+            # A chapter ingest folded into back matter (F1). A chapter starts
+            # here, so the body reaches here: the section, and the back matter
+            # before it, become chapters first -- what end_body does -- and the
+            # split then applies inside the chapter that section became.
+            at, index = folded
+            if index == 0:
+                raise InapplicableOverride("its block opens a back-matter section; end_body there instead")
+            out = _in_chapter_lists(_body_ends_at(ast, at, op), edit)
+        if out is None:
+            if _find_by_source_ref(ast, op.sourceRef) is not None:
+                raise InapplicableOverride("its block is not directly inside a chapter")
+            return ast   # matches nothing: an orphan, which the API reports
     before = new["attrs"]["id"]
     # The new chapter took the next number; everything after it moves up one.
     return _shift_chapter_numbers(out, before, 1)
@@ -545,14 +556,34 @@ def _op_start_body(ast: dict, op: OverrideOp) -> dict:
 
 
 def _op_end_body(ast: dict, op: OverrideOp) -> dict:
+    moved = next((c for c in ast.get("body") or [] if _matches(c, op.sourceRef) and c.get("_fromBack")), None)
+    if moved is not None:
+        return ast   # a split on a title folded into it moved it already: the body ends here
     at = _section_at(ast, op, "backMatter", "back-matter")
     if at is None:
         return ast
+    return _body_ends_at(ast, at, op)
+
+
+def _body_ends_at(ast: dict, at: int, op: OverrideOp) -> dict:
+    """The back-matter section at `at`, and every one before it, moved to the
+    end of the body as chapters, numbered on from its last."""
     back, base = ast["backMatter"], _derived_id("ch", op)
     last = max(_chapter_numbers(ast.get("body") or []), default=0)
-    moved = [_section_as_chapter(section, last + n, f"{base}-{n}", op, "back matter before it")
+    moved = [{**_section_as_chapter(section, last + n, f"{base}-{n}", op, "back matter before it"), "_fromBack": True}
              for n, section in enumerate(back[:at + 1], start=1)]
     return {**ast, "body": (ast.get("body") or []) + moved, "backMatter": back[at + 1:]}
+
+
+def _in_back_section(ast: dict, source_ref: str) -> Optional[tuple[int, int]]:
+    """(section index, block index) of a block directly inside a back-matter
+    section, or None."""
+    for at, section in enumerate(ast.get("backMatter") or []):
+        if section.get("type") in _section_types():
+            for index, block in enumerate(section.get("content") or []):
+                if _matches(block, source_ref):
+                    return at, index
+    return None
 
 
 def _chapter_numbers(nodes: list) -> list[int]:

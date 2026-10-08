@@ -149,30 +149,60 @@ def test_every_accepted_proposal_applies_to_the_ast_it_was_made_from():
     assert out["backMatter"][-1]["type"] == "notes"
 
 
-def test_a_chapter_folded_into_a_section_is_flagged_not_dropped():
-    """F1 as Word writes it (corpus/word/word-doubtful.docx), with the verdicts
-    the live model returned on 2026-10-08: the appendix IS an appendix, so no
-    section row fires; the chapters folded into it are flagged, and the flag
-    applies. A section block whose verdict agrees gets nothing."""
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_chapters_folded_into_a_back_section_are_recovered_in_one_build(order):
+    """F1 end to end on corpus/word/word-doubtful.docx, with the verdicts the
+    live model returned on 2026-10-08. The appendix IS an appendix; the
+    chapters ingest folded into it are what the model calls chapter titles.
+    One split per title, from this build's verdicts: re-asked inside a chapter
+    the live model called the same titles headings, so a second step that
+    waits for the next build's answer never came."""
     from publisher_ingest import docx_to_ast
+    from stages.structure_infer_stage import _doubtful_units
+
+    def words(ast):
+        return _words({"body": [*ast.get("frontMatter", []), *ast["body"], *ast.get("backMatter", [])]})
+
     ast = docx_to_ast(ROOT / "corpus/word/word-doubtful.docx")
     (appendix,) = ast["backMatter"]
-    ref = lambda b: b["sourceRef"]["docxId"]
     folded = [b for b in appendix["content"] if b.get("confidence") is not None]
-    prose = appendix["content"][1]
     verdicts = _classification((ast["body"][0]["sourceRef"]["docxId"], "chapter-title", 0.95),
                                (appendix["sourceRef"]["docxId"], "back-appendix", 0.92),
-                               *((ref(b), "chapter-title", 0.88) for b in folded),
-                               (ref(prose), "paragraph", 0.9))
-    proposals = proposals_for(verdicts, ast)
-    assert [(p["type"], p["sourceRef"]["docxId"]) for p in proposals] ==         [("flag_ambiguity", ref(b)) for b in folded]
-    assert "“TWO” inside the appendix section as a chapter title" in proposals[0]["rationale"]
-    for p in proposals:
-        validate({"schema": "agent-proposal/1", "agentId": "a", "agentVersion": "1",
-                  "modelId": "m/x", "proposals": [p]}, SCHEMA)
+                               *((b["sourceRef"]["docxId"], "chapter-title", 0.88) for b in folded))
+
+    first = proposals_for(verdicts, ast)
+    assert [(p["type"], p["sourceRef"]["docxId"]) for p in first] ==         [("split_chapter", b["sourceRef"]["docxId"]) for b in folded]
+    assert "reads “TWO” inside the appendix section “APPENDIX” as a chapter title" in first[0]["rationale"]
+    validate({"schema": "agent-proposal/1", "agentId": "a", "agentVersion": "1",
+              "modelId": "m/x", "proposals": first}, SCHEMA)
     inapplicable, orphaned = [], []
-    apply_overrides(ast, [_accept(p) for p in proposals], inapplicable=inapplicable, orphaned=orphaned)
+    recovered = apply_overrides(ast, [_accept(first[i]) for i in order],
+                                inapplicable=inapplicable, orphaned=orphaned)
     assert inapplicable == [] and orphaned == []
+    assert [c["attrs"]["title"] for c in recovered["body"]] == ["ONE", "APPENDIX", "TWO", "THREE"]
+    assert [c["attrs"]["number"] for c in recovered["body"]] == [1, 2, 3, 4]
+    assert recovered["backMatter"] == []
+    assert words(recovered) == words(ast)
+    # The next build asks about nothing the recovery decided.
+    assert [n["text"] for unit in _doubtful_units(recovered) for n in unit] == ["ONE"]
+
+
+def test_a_title_inside_a_front_section_is_only_flagged():
+    """Ingest has no front-matter fold; a title-like front block (a contents
+    line, say) must not move the body boundary. It is flagged."""
+    ast = {"schema": "ast/1", "body": [_chapter(1, "ONE", "c1")],
+           "frontMatter": [_section("toc", "t1", "CONTENTS", "ONE")]}
+    ast["frontMatter"][0]["content"][1]["sourceRef"] = {"docxId": "t1-1"}
+    proposals = proposals_for(_classification(("t1-1", "chapter-title", 0.7)), ast)
+    assert [(p["type"], p["sourceRef"]["docxId"]) for p in proposals] == [("flag_ambiguity", "t1-1")]
+
+
+def test_a_back_block_read_as_something_else_is_still_flagged():
+    ast = {"schema": "ast/1", "body": [_chapter(1, "ONE", "c1")],
+           "backMatter": [_section("appendix", "a1", "APPENDIX", "A quoted letter.")]}
+    ast["backMatter"][0]["content"][1]["sourceRef"] = {"docxId": "a1-1"}
+    proposals = proposals_for(_classification(("a1-1", "blockquote", 0.7)), ast)
+    assert [(p["type"], p["sourceRef"]["docxId"]) for p in proposals] == [("flag_ambiguity", "a1-1")]
 
 
 def test_proposing_against_the_corrected_book_converges():

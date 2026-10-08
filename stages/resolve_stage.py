@@ -33,7 +33,10 @@ from publisher_structure.overrides import (
 
 @stage(
     name="resolve",
-    version=7,   # v7: ast/1 lets alsoBy/aboutTheAuthor open the book (B4), so a
+    version=8,   # v8: a split on a block inside a back-matter section moves that section
+                 # (and the back matter before it) into the body first; end_body on a
+                 # section a split already moved is a no-op (F1). Logged ops apply now.
+                 # v7: ast/1 lets alsoBy/aboutTheAuthor open the book (B4), so a
                  # reclassify to either in the front matter, refused before, applies.
                  # v6: reclassify retypes a front/back-matter section, checked
                  # against its root's union, and sets a heading's level from

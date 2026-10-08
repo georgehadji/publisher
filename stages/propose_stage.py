@@ -179,11 +179,42 @@ def proposals_for(classification: dict, ast: dict) -> list[dict]:
             own = SECTION_LABELS.get(section.get("type"))
             if verdict is not None and own is not None and verdict["classification"] != own:
                 disagreeing[index] = (verdict, own)
+        # F1: ingest folds the chapters after a back-matter title into that
+        # section, so the model reads the section rightly (an appendix is an
+        # appendix) and the chapters as titles among its blocks. Each title is
+        # a split: the op moves the section into the body first (reading order
+        # puts the body first, so the appendix becomes a chapter too). One step
+        # per title, from this build's verdicts: re-asked inside a chapter, the
+        # live model called the same titles headings. Ingest has no front-matter
+        # fold, so a title-like front block stays a flag.
+        folded = {} if front else {
+            index: hits for index, section in enumerate(sections)
+            if (hits := [(block, verdicts[ref]) for block in (section.get("content") or [])[1:]
+                         if block.get("type") in ("heading", "paragraph")
+                         and (ref := (block.get("sourceRef") or {}).get("docxId")) in verdicts
+                         and verdicts[ref]["classification"] in _AGREES])}
+        for index, hits in folded.items():
+            section = sections[index]
+            for block, verdict in hits:
+                ref, text = block["sourceRef"]["docxId"], _opening({"content": [block]})
+                proposals.append({
+                    "id": _proposal_id(ref, _change("split_chapter", {})),
+                    "type": "split_chapter",
+                    "sourceRef": {"docxId": ref},
+                    "rationale": f"The model ({model}) reads “{text}” inside the {section['type']} section "
+                                 f"“{_opening(section)}” as a chapter title folded into it: a new chapter starts "
+                                 f"there, and the {section['type']} becomes a chapter before it, so the text "
+                                 f"keeps its order (confidence {verdict['confidence']:.2f}).",
+                    "confidence": verdict["confidence"],
+                    "evidence": [f"label: {verdict['classification']}", f"model: {model}"],
+                })
         chapters = [i for i, (v, _) in disagreeing.items() if v["classification"] in _AGREES]
         # The body boundary: the first such front section, the last such back one.
         # The others move with it, so they get no proposal of their own.
         boundary = (min if front else max)(chapters, default=None)
         for index, (verdict, own) in disagreeing.items():
+            if index in folded and index != boundary:
+                continue                                     # its splits move it; a retype is moot
             section, ref = sections[index], sections[index]["sourceRef"]["docxId"]
             label, score = verdict["classification"], verdict["confidence"]
             decided = section_decision(label, section["type"], root, index == boundary)
@@ -211,15 +242,17 @@ def proposals_for(classification: dict, ast: dict) -> list[dict]:
                 "confidence": score,
                 "evidence": [f"label: {label}", f"model: {model}"],
             })
-        # A section's own blocks: a chapter ingest folded into it (F1) comes back
-        # as a chapter-title verdict on a paragraph. No op lifts a block out of
-        # a section yet, so it is flagged -- a correct verdict is never dropped.
-        for section in sections:
+        # A section's own blocks the model disagrees with, and no proposal above
+        # covers, are flagged: no op retypes a block inside a section, and a
+        # correct verdict is never dropped.
+        for index, section in enumerate(sections):
             for block in section.get("content") or []:
                 ref = (block.get("sourceRef") or {}).get("docxId")
                 verdict = verdicts.get(ref) if block.get("type") in ("heading", "paragraph") else None
                 if verdict is None or block_decision(verdict["classification"], block, "middle") is None:
                     continue
+                if index in folded and verdict["classification"] in _AGREES:
+                    continue                                 # its split is above
                 label, score = verdict["classification"], verdict["confidence"]
                 text = _opening({"content": [block]})
                 where = f"inside the {section['type']} section"
@@ -300,7 +333,8 @@ def _opening(section: dict, limit: int = 80) -> str:
 
 @stage(
     name="structure-propose",
-    version=9,  # v9: a disagreeing verdict on a block inside a front/back section is flagged (F1)
+    version=10,  # v10: a chapter title folded into a back section proposes a split there (F1)
+                # v9: a disagreeing verdict on a block inside a front/back section is flagged (F1)
                 # v8: a chapter's doubted headings and paragraphs get proposals --
                 # split_chapter, promote_heading (new), demote, reclassify (B8)
                 # v7: a section read as another type its list holds is a reclassify proposal (B5)
