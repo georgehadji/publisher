@@ -384,8 +384,9 @@ async function appendOps(tenantId: string, manuscriptId: string, ops: OverrideOp
 /**
  * The op accepting `proposal` logs, or why it cannot become one. Its parameters
  * are exactly the ones PROPOSAL_PARAMS declares for its type (B2): one it does
- * not declare is refused rather than trimmed, and one it lacks is refused too,
- * since nothing validates the op on its way into the log.
+ * not declare is refused rather than trimmed, and so is one the op's schema
+ * requires that it lacks, since nothing validates the op on its way into the log.
+ * A declared parameter the op does not require (reclassify's `value`) is optional (B8).
  */
 export function proposalOp(proposal: any, actor: string, at: string): OverrideOp | string {
   if (!Object.hasOwn(PROPOSAL_OPS, proposal.type)) {
@@ -397,7 +398,7 @@ export function proposalOp(proposal: any, actor: string, at: string): OverrideOp
   if (stray.length) {
     return `a ${type} proposal does not take ${stray.join(', ')}`;
   }
-  const missing = declared.filter((name) => !(name in proposal));
+  const missing = requiredParams(PROPOSAL_OPS[type]).filter((name) => declared.includes(name) && !(name in proposal));
   if (missing.length) {
     return `a ${type} proposal needs ${missing.join(', ')}`;
   }
@@ -405,11 +406,18 @@ export function proposalOp(proposal: any, actor: string, at: string): OverrideOp
     id: `ov-${proposal.id}`,
     sourceRef: { docxId: proposal.sourceRef.docxId },
     op: PROPOSAL_OPS[type],
-    ...Object.fromEntries(declared.map((name) => [name, proposal[name]])),
+    ...Object.fromEntries(declared.filter((name) => name in proposal).map((name) => [name, proposal[name]])),
     actor,
     at,
     rationale: proposal.rationale,
   };
+}
+
+/** The fields overrides/1 requires of `op` (its allOf `required` rules): the one record of them. */
+function requiredParams(op: string): string[] {
+  return (OVERRIDE_OP_SCHEMA.allOf as readonly any[])
+    .filter((rule) => rule.if.properties.op.const === op && Array.isArray(rule.then.required))
+    .flatMap((rule) => rule.then.required);
 }
 
 /** The proposals no logged op has accepted, in the order the stage wrote them. */

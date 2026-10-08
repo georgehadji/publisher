@@ -50,11 +50,14 @@ export const PROPOSAL_OPS = {
   start_body: "start_body",
   end_body: "end_body",
   reclassify: "reclassify",
+  split_chapter: "split",
+  promote_heading: "promote",
 } as const satisfies Record<string, OverrideOp["op"]>;
 
 /**
- * The parameters each proposal type carries into its op: accepting copies
- * exactly these, and refuses a proposal carrying any other or lacking one (B2).
+ * The parameters each proposal type may carry into its op: accepting copies
+ * these, and refuses a proposal carrying any other (B2) or lacking one the op's
+ * schema requires; reclassify's `value` (a heading level) is optional (B8).
  * Pinned to stages/propose_stage.py PROPOSAL_PARAMS by tests/test_single_source.py.
  */
 export const PROPOSAL_PARAMS = {
@@ -63,7 +66,9 @@ export const PROPOSAL_PARAMS = {
   flag_ambiguity: [],
   start_body: [],
   end_body: [],
-  reclassify: ["from", "to"],
+  reclassify: ["from", "to", "value"],
+  split_chapter: [],
+  promote_heading: [],
 } as const satisfies Record<keyof typeof PROPOSAL_OPS, readonly ("from" | "to" | "value")[]>;
 
 /** One proposal awaiting a reviewer. Accepting it logs op `ov-<id>`. */

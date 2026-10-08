@@ -962,7 +962,7 @@ export const TrimSizeSuggestionSchema = z.object({
 });
 export type TrimSizeSuggestion = z.infer<typeof TrimSizeSuggestionSchema>;
 
-export const Proposal_TypeSchema: z.ZodTypeAny = z.enum(["reclassify", "merge_chapters", "split_chapter", "adjust_heading_level", "identify_front_matter", "identify_back_matter", "flag_ambiguity", "suggest_title", "start_body", "end_body"]);
+export const Proposal_TypeSchema: z.ZodTypeAny = z.enum(["reclassify", "merge_chapters", "split_chapter", "adjust_heading_level", "identify_front_matter", "identify_back_matter", "flag_ambiguity", "suggest_title", "start_body", "end_body", "promote_heading"]);
 export type Proposal_Type = z.infer<typeof Proposal_TypeSchema>;
 
 export const Proposal_SourceRefSchema: z.ZodTypeAny = z.object({

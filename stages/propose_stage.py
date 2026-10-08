@@ -25,6 +25,18 @@ another section type its list may hold becomes `reclassify` (`from`/`to`);
 any other label -- a type only the other end holds, or no section at all --
 becomes `flag_ambiguity`. `section_decision` is that table (B5).
 
+A doubted heading or paragraph directly in a chapter goes through
+`block_decision` (B8): read as a `chapter-title` mid-chapter it is a
+`split_chapter` (at either end, a flag -- split cannot open a chapter there);
+a heading read one level up or down is `promote_heading` / `adjust_heading_level`
+(one level a build); a paragraph read as `heading-m` is `reclassify` to a
+heading with `value` m, a heading read as prose is `reclassify` to a paragraph,
+and a paragraph read as a blockquote, epigraph, dialogue or sidebar is
+`reclassify` into one. Agreement is with the label structure-infer sent
+(`block_label`); a paragraph's prose roles agree. Everything else is a flag. A
+block inside a front/back-matter section gets nothing: the section's own
+proposal (end_body) moves it into a chapter first.
+
 The API builds the op from a proposal only when a reviewer accepts it
 (`POST /v1/manuscripts/:id/proposals/:pid/accept`); until then nothing reaches
 `resolve`. That is D9: no LLM output enters a deterministic stage on its own.
@@ -49,7 +61,7 @@ from publisher_stages import (
     stage, StageCtx, StageResult, StageError, ErrorKind, Diagnostic, ArtifactRef as StageArtifactRef,
 )
 from publisher_cas import ContentAddressedStore, CasConfig, MediaType
-from publisher_structure.classify_contract import SECTION_LABELS
+from publisher_structure.classify_contract import SECTION_LABELS, block_label
 from publisher_structure.overrides import section_types
 
 AGENT_ID = "structure-propose"
@@ -64,13 +76,22 @@ _AGREES = {"chapter-title"}
 # tests/test_single_source.py); every value is an implemented op.
 PROPOSAL_OPS = {"merge_chapters": "merge", "adjust_heading_level": "demote",
                 "flag_ambiguity": "flag_ambiguity", "start_body": "start_body",
-                "end_body": "end_body", "reclassify": "reclassify"}
-# The parameters each proposal type carries into its op (contract.ts
-# PROPOSAL_PARAMS, pinned the same way). The API copies exactly these: one the
-# type does not declare, or one it declares and the proposal lacks, is a 422 (B2).
+                "end_body": "end_body", "reclassify": "reclassify",
+                "split_chapter": "split", "promote_heading": "promote"}
+# The parameters each proposal type may carry into its op (contract.ts
+# PROPOSAL_PARAMS, pinned the same way). The API copies these: one the type
+# does not declare is a 422 (B2), and so is one the op's schema requires that
+# the proposal lacks. reclassify's `value` (a heading level) is optional (B8).
 PROPOSAL_PARAMS = {"merge_chapters": (), "adjust_heading_level": (),
                    "flag_ambiguity": (), "start_body": (), "end_body": (),
-                   "reclassify": ("from", "to")}
+                   "reclassify": ("from", "to", "value"),
+                   "split_chapter": (), "promote_heading": ()}
+
+
+def _change(kind: str, params: dict) -> str:
+    """What a proposal changes, for its id: the type and every parameter but
+    `from` (which the node already is). A different target is a different proposal."""
+    return ":".join([kind, *(str(v) for k, v in params.items() if k != "from")])
 
 
 def _proposal_id(docx_id: str, kind: str) -> str:
@@ -121,6 +142,34 @@ def proposals_for(classification: dict, ast: dict) -> list[dict]:
             "confidence": score,
             "evidence": [f"label: {label}", f"model: {model}"],
         })
+    for chapter, _ in _chapters_in_order(ast):
+        blocks = chapter.get("content") or []
+        for index, block in enumerate(blocks):
+            ref = (block.get("sourceRef") or {}).get("docxId")
+            verdict = verdicts.get(ref) if block.get("type") in ("heading", "paragraph") else None
+            if verdict is None:
+                continue
+            label, score = verdict["classification"], verdict["confidence"]
+            position = "first" if index == 0 else "last" if index == len(blocks) - 1 else "middle"
+            decided = block_decision(label, block, position)
+            if decided is None:
+                continue
+            kind, params = decided
+            text = _opening({"content": [block]})   # the whole block, not its first run
+            why = {"split_chapter": f"reads “{text}” as a chapter title: a new chapter starts there",
+                   "promote_heading": f"reads the {block_label(block)} “{text}” as {label}: one level up",
+                   "adjust_heading_level": f"reads the {block_label(block)} “{text}” as {label}: one level down",
+                   "reclassify": f"reads the {block_label(block)} “{text}” as {label}"}.get(
+                kind, f"reads the {block_label(block)} “{text}” as {label}")
+            proposals.append({
+                "id": _proposal_id(ref, _change(kind, params)),
+                "type": kind,
+                "sourceRef": {"docxId": ref},
+                **params,
+                "rationale": f"The model ({model}) {why} (confidence {score:.2f}).",
+                "confidence": score,
+                "evidence": [f"label: {label}", f"model: {model}"],
+            })
     for root in ("frontMatter", "backMatter"):
         front = root == "frontMatter"
         sections = ast.get(root) or []
@@ -154,8 +203,7 @@ def proposals_for(classification: dict, ast: dict) -> list[dict]:
             else:
                 why = f"reads the {section['type']} section opening “{opening}” as {label}, not {own}"
             proposals.append({
-                # A retype's target is part of the change: a different one is a different proposal.
-                "id": _proposal_id(ref, f"{kind}:{params['to']}" if params else kind),
+                "id": _proposal_id(ref, _change(kind, params)),
                 "type": kind,
                 "sourceRef": {"docxId": ref},
                 **params,
@@ -164,6 +212,37 @@ def proposals_for(classification: dict, ast: dict) -> list[dict]:
                 "evidence": [f"label: {label}", f"model: {model}"],
             })
     return proposals
+
+
+_WRAPPERS = {"blockquote", "epigraph", "dialogue", "sidebar"}   # override_ops._reshape wraps these
+
+
+def block_decision(label: str, block: dict, position: str):
+    """The block decision table (B8): what the model reading a chapter's
+    heading or paragraph as `label` proposes -- `(proposal type, its
+    parameters)`, or None. `position` is "first", "middle" or "last" in the
+    chapter: `split` can open a chapter at neither end."""
+    kind, current = block.get("type"), block_label(block)
+    # Agreement is with what was SENT: a level-5 heading went as heading-3. A
+    # paragraph's prose roles are still a paragraph.
+    if label == current or (kind == "paragraph" and label in _AS_PROSE):
+        return None
+    if label in _AGREES:
+        return ("split_chapter", {}) if position == "middle" else ("flag_ambiguity", {})
+    if label in _AS_HEADING:
+        level = int(label[-1])
+        if kind == "paragraph":
+            return "reclassify", {"from": "paragraph", "to": "heading", "value": level}
+        # One level at a time; the next build (B0) proposes the next step.
+        own = (block.get("attrs") or {}).get("level") or 1
+        return ("promote_heading", {}) if level < own else ("adjust_heading_level", {})
+    if kind == "heading" and label in _AS_PROSE:
+        return "reclassify", {"from": "heading", "to": "paragraph"}
+    if kind == "paragraph" and label in _WRAPPERS:
+        return "reclassify", {"from": "paragraph", "to": label}
+    # verse (no _reshape case yet), breaks (the op would drop the words),
+    # front/back-matter labels (no op fits a body block), uncertain, the rest.
+    return "flag_ambiguity", {}
 
 
 # The section type each section label names (the inverse of SECTION_LABELS).
@@ -199,7 +278,9 @@ def _opening(section: dict, limit: int = 80) -> str:
 
 @stage(
     name="structure-propose",
-    version=7,  # v7: a section read as another type its list holds is a reclassify proposal (B5)
+    version=8,  # v8: a chapter's doubted headings and paragraphs get proposals --
+                # split_chapter, promote_heading (new), demote, reclassify (B8)
+                # v7: a section read as another type its list holds is a reclassify proposal (B5)
                 # v6: PROPOSAL_PARAMS, and reclassify is acceptable (B2)
                 # v5: proposes against doc-effective/1, the document structure-infer
                 # classified, so ids match and accepted ops shape what comes next (B0)

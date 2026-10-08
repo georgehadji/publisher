@@ -205,9 +205,16 @@ describe('proposalOp (B2)', () => {
   });
 
   it('refuses a parameter the type does not declare, rather than trimming it', () => {
-    expect(proposalOp({ ...reclassify, value: 2 }, 'user:ada', at)).toBe('a reclassify proposal does not take value');
     expect(proposalOp({ ...reclassify, type: 'merge_chapters' }, 'user:ada', at))
       .toBe('a merge_chapters proposal does not take from, to');
+    expect(proposalOp({ ...reclassify, type: 'split_chapter', value: 2 }, 'user:ada', at))
+      .toBe('a split_chapter proposal does not take from, to, value');
+  });
+
+  it("carries an optional parameter only when the proposal has it (B8)", () => {
+    const withLevel = proposalOp({ ...reclassify, value: 2 }, 'user:ada', at) as OverrideOp;
+    expect(withLevel.value).toBe(2);
+    expect('value' in (proposalOp(reclassify, 'user:ada', at) as OverrideOp)).toBe(false);
   });
 
   it('refuses a declared parameter the proposal lacks: nothing validates the op later', () => {

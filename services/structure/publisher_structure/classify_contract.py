@@ -44,6 +44,15 @@ def labels() -> list[str]:
 
 # A front/back-matter section's AST type, as the label that names it: what
 # ingest made it (`current`), and what a verdict agreeing with ingest says.
+def block_label(block: dict) -> str:
+    """A heading's or paragraph's label as ingest made it: what structure-infer
+    sends as `current` and what structure-propose reads agreement against. The
+    labels stop at heading-3, so a deeper heading is sent as one (B7, B8)."""
+    if block.get("type") == "heading":
+        return f"heading-{min((block.get('attrs') or {}).get('level') or 1, 3)}"
+    return "paragraph"
+
+
 # `front-`/`back-` is part of a label's name, not a rule about where the section
 # sits: `alsoBy` and `aboutTheAuthor` are valid in either list (B4), and keep
 # their one label wherever they are.

@@ -40,7 +40,7 @@ from publisher_cas import ContentAddressedStore, CasConfig, MediaType
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "structure"))
 from publisher_structure.rules import ESCALATE_BELOW
-from publisher_structure.classify_contract import SECTION_LABELS
+from publisher_structure.classify_contract import SECTION_LABELS, block_label
 from publisher_structure.inference import InferenceGateway, InferenceRequest, OpenRouterProvider
 
 # What the model sees of a node: its text, and the opening of what follows it.
@@ -103,10 +103,8 @@ def _doubtful_units(ast: dict) -> list[list[dict]]:
                 unit.append(_input_node(ref, SECTION_LABELS[node["type"]], _text(blocks[:1]).strip(), blocks[1:]))
         for index, block in enumerate(blocks):
             if block.get("type") in ("heading", "paragraph") and _doubted(block):
-                level = (block.get("attrs") or {}).get("level") or 1
-                current = f"heading-{min(level, 3)}" if block["type"] == "heading" else "paragraph"
-                unit.append(_input_node(block["sourceRef"]["docxId"], current, _text(block).strip(),
-                                        blocks[index + 1:]))
+                unit.append(_input_node(block["sourceRef"]["docxId"], block_label(block),
+                                        _text(block).strip(), blocks[index + 1:]))
         if unit:
             units.append(unit)
     return units
@@ -140,7 +138,9 @@ def _batches(units: list[list[dict]]) -> list[list[dict]]:
 
 @stage(
     name="structure-infer",
-    version=6,   # v6: doubted headings and paragraphs are sent too, in chapter-aligned
+    version=7,   # v7: a block's `current` comes from classify_contract.block_label,
+                 # the label structure-propose reads agreement against (B8). Same output.
+                 # v6: doubted headings and paragraphs are sent too, in chapter-aligned
                  # batches, one call and cache entry each; past MAX_NODES_PER_BUILD a
                  # classification-truncated warning (B7). Nodes go in book order.
                  # v5: reads doc-effective/1, so accepted overrides shape what is

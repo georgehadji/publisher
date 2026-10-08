@@ -1,6 +1,6 @@
 # Structure repair plan — misfiled sections and block-level verdicts
 
-**Status:** B0–B7 done (2026-10-08). B8–B9 open. Planned 2026-10-07 against `fac9254`.
+**Status:** B0–B8 done (2026-10-08). B9 open. Planned 2026-10-07 against `fac9254`.
 **Scope:** the two items `REMAINING_WORK.md` §1.3 still lists as open:
 
 1. a front/back-matter section the classifier reads as belonging somewhere else can only
@@ -291,6 +291,8 @@ tests via `./scripts/test.ps1 -k`, the full suite, the CI lints listed in `CLAUD
 ### B8 — block decision table: split, promote, demote, reclassify
 
 *Closes:* item 2.
+
+*As built:* four points the table left open. Agreement is with the label `structure-infer` sent (`classify_contract.block_label`), so a level-5 heading sent as `heading-3` and read as one agrees. `split` cannot open a chapter at its first or its last block, so a `chapter-title` verdict at either end is a flag. A paragraph's prose roles (`first-paragraph`, `chapter-opening`) agree. Blocks inside a front/back-matter section get no proposal; the section's own `end_body` moves them into a chapter first. `reclassify` declares `value` as optional: the accept route requires only the parameters overrides/1 requires.
 
 - One new proposal type, `promote_heading → promote`, joins the agent-proposal enum,
   `PROPOSAL_OPS`, `contract.ts` and the route.

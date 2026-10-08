@@ -19,7 +19,7 @@ from publisher_stages import RegistryConfig, StageCtx, build_registry
 from publisher_structure.overrides import OverrideOp, UNIMPLEMENTED_OPS, _TRANSFORMS, apply_overrides
 from publisher_structure.classify_contract import SECTION_LABELS, labels
 from publisher_structure.overrides import section_types
-from stages.propose_stage import PROPOSAL_OPS, PROPOSAL_PARAMS, proposals_for, section_decision, structure_propose
+from stages.propose_stage import PROPOSAL_OPS, PROPOSAL_PARAMS, block_decision, proposals_for, section_decision, structure_propose
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = json.loads((ROOT / "schemas/agent-proposal/agent-proposal.schema.json").read_text(encoding="utf-8"))
@@ -81,7 +81,7 @@ def _accept(p: dict) -> OverrideOp:
     names = {"from": "from_value", "to": "to_value", "value": "value"}
     return OverrideOp(id=f"ov-{p['id']}", sourceRef=p["sourceRef"]["docxId"], op=PROPOSAL_OPS[p["type"]],
                       actor="user:test", rationale=p["rationale"],
-                      **{names[k]: p[k] for k in PROPOSAL_PARAMS[p["type"]]})
+                      **{names[k]: p[k] for k in PROPOSAL_PARAMS[p["type"]] if k in p})
 
 
 def test_each_label_becomes_the_proposal_its_mapping_says():
@@ -223,3 +223,77 @@ def test_reachable_exactly_when_structure_infer_is():
     assert "structure-propose" not in plan(registry, ingest).order
     with_key = plan(registry, {**ingest, "structure-infer": {"api_key": "sk-fake"}}).order
     assert "structure-propose" in with_key
+
+
+# ── B8: the block decision table ─────────────────────────────
+
+def _target(kind: str, level: int) -> dict:
+    node = {"type": kind, "sourceRef": {"docxId": "t"}, "confidence": 0.5,
+            "content": [{"type": "text", "text": "Target"}]}
+    return {**node, "attrs": {"level": level}} if kind == "heading" else node
+
+
+def _words(ast: dict) -> str:
+    """Every word in order, chapter titles included: what the integrity gate saw."""
+    def walk(node) -> str:
+        if isinstance(node, list):
+            return " ".join(walk(n) for n in node)
+        if not isinstance(node, dict):
+            return ""
+        title = (node.get("attrs") or {}).get("title", "") if node.get("type") == "chapter" else ""
+        own = node.get("text", "") if node.get("type") == "text" else ""
+        return " ".join([title, own, walk(node.get("content"))])
+    return " ".join(walk(ast["body"]).split())
+
+
+BLOCKS = [("paragraph", 0)] + [("heading", n) for n in range(1, 7)]
+
+
+@pytest.mark.parametrize("position", ["first", "middle", "last"])
+@pytest.mark.parametrize("kind, level", BLOCKS)
+@pytest.mark.parametrize("label", labels())
+def test_every_block_row_applies_and_keeps_every_word(label, kind, level, position):
+    """B8: the table is total over every label, block and position, and each
+    proposal it makes, accepted as the API builds it, applies to the real op
+    layer and leaves every word where the integrity gate saw it."""
+    target = _target(kind, level)
+    other = [_chapter(1, "ONE", "c1")["content"][0], {"type": "paragraph", "content": [{"type": "text", "text": "b"}]}]
+    blocks = {"first": [target, *other], "middle": [other[0], target, other[1]], "last": [*other, target]}[position]
+    ast = {"schema": "ast/1", "body": [{**_chapter(1, "ONE", "c1"), "content": blocks}]}
+    decided = block_decision(label, target, position)
+    if decided is None:
+        return
+    proposal_type, params = decided
+    op = _accept({"id": "pr-x", "type": proposal_type, "sourceRef": {"docxId": "t"},
+                  "rationale": "r", **params})
+    inapplicable, orphaned = [], []
+    out = apply_overrides(ast, [op], inapplicable=inapplicable, orphaned=orphaned)
+    assert inapplicable == [] and orphaned == [], (proposal_type, params, inapplicable)
+    assert _words(out) == _words(ast)
+
+
+@pytest.mark.parametrize("label, kind, level, position, expected", [
+    ("chapter-title", "paragraph", 0, "middle", ("split_chapter", {})),
+    ("chapter-title", "paragraph", 0, "last", ("flag_ambiguity", {})),     # split cannot apply
+    ("heading-1", "heading", 2, "middle", ("promote_heading", {})),
+    ("heading-3", "heading", 1, "middle", ("adjust_heading_level", {})),
+    ("heading-3", "heading", 5, "middle", None),                           # sent as heading-3
+    ("heading-2", "paragraph", 0, "middle", ("reclassify", {"from": "paragraph", "to": "heading", "value": 2})),
+    ("first-paragraph", "heading", 2, "middle", ("reclassify", {"from": "heading", "to": "paragraph"})),
+    ("first-paragraph", "paragraph", 0, "middle", None),                   # a prose role agrees
+    ("epigraph", "paragraph", 0, "middle", ("reclassify", {"from": "paragraph", "to": "epigraph"})),
+    ("verse", "paragraph", 0, "middle", ("flag_ambiguity", {})),
+    ("scene-break", "paragraph", 0, "middle", ("flag_ambiguity", {})),
+    ("back-notes", "paragraph", 0, "middle", ("flag_ambiguity", {})),
+])
+def test_the_block_table_rows(label, kind, level, position, expected):
+    assert block_decision(label, _target(kind, level), position) == expected
+
+
+def test_a_chapter_block_verdict_becomes_a_proposal_with_its_parameters():
+    chapter = {**_chapter(1, "ONE", "c1"), "content": [
+        _chapter(1, "ONE", "c1")["content"][0], _target("paragraph", 0),
+        {"type": "paragraph", "content": [{"type": "text", "text": "after"}]}]}
+    got = proposals_for(_classification(("t", "heading-2", 0.7)), {"schema": "ast/1", "body": [chapter]})
+    assert [(p["type"], p.get("to"), p.get("value")) for p in got] == [("reclassify", "heading", 2)]
+    assert "“Target”" in got[0]["rationale"]

@@ -1334,6 +1334,7 @@ class Proposal_Type(str, Enum):
     SUGGEST_TITLE = "suggest_title"
     START_BODY = "start_body"
     END_BODY = "end_body"
+    PROMOTE_HEADING = "promote_heading"
 
 
 class Proposal_SourceRef(BaseModel):
