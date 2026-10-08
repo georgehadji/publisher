@@ -78,7 +78,7 @@ def validator():
     return jsonschema.Draft202012Validator(schema)
 
 
-@pytest.mark.parametrize("name", ["word-novel.docx", "word-technical.docx"])
+@pytest.mark.parametrize("name", ["word-novel.docx", "word-technical.docx", "word-doubtful.docx"])
 def test_a_word_manuscript_is_a_valid_ast_and_validates_fast(name, validator):
     """The AST's unions were `oneOf`, which jsonschema evaluates in full, every
     branch, at every depth: exponential in nesting. The novel took ~5 s and the
@@ -176,6 +176,38 @@ def test_a_word_toc_and_title_page_do_not_join_chapter_one(novel):
     # Word lists every Heading 1, so the colophon too.
     assert [e.split(" ")[-2] for e in entries[1:]] == ["ONE", "TWO", "ΤΡΙΤΟ", "COLOPHON"]
     assert [s["type"] for s in novel["backMatter"]] == ["colophon"]
+
+
+def _scores(ast: dict) -> list[float]:
+    found: list[float] = []
+    if isinstance(ast, dict):
+        if isinstance(ast.get("confidence"), (int, float)):
+            found.append(ast["confidence"])
+        for value in ast.values():
+            found.extend(_scores(value))
+    elif isinstance(ast, list):
+        for item in ast:
+            found.extend(_scores(item))
+    return found
+
+
+@pytest.mark.parametrize("name", ["word-novel.docx", "word-technical.docx", "word-thesis.docx"])
+def test_a_clean_word_manuscript_is_scored_and_nothing_is_doubted(name):
+    """Scored, not unmeasured; and no reading below the review line (0.8)."""
+    scores = _scores(_ingest(name))
+    assert scores and min(scores) >= 0.8
+
+
+def test_a_mid_book_appendix_and_its_swallowed_titles_are_doubted():
+    """STRUCTURE_REPAIR_PLAN F1, as Word writes it: the chapters after APPENDIX
+    are read into it, and ingest says so with a score instead of a certainty."""
+    ast = _ingest("word-doubtful.docx")
+    (chapter,) = ast["body"]
+    assert chapter["attrs"]["title"] == "ONE" and chapter["confidence"] < 0.8
+    (appendix,) = ast["backMatter"]
+    assert appendix["type"] == "appendix" and appendix["confidence"] < 0.8
+    folded = [_text(b) for b in appendix["content"] if b.get("confidence", 1) < 0.8]
+    assert folded == ["TWO", "THREE"]
 
 
 def test_a_title_page_before_a_page_break_is_not_chapter_one(technical):

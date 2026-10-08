@@ -206,6 +206,22 @@ def test_nothing_doubtful_means_no_model_is_asked(monkeypatch):
         assert result.metrics["low_confidence_nodes"] == 0
 
 
+def test_a_word_authored_doubt_reaches_the_model(monkeypatch):
+    """corpus/word/word-doubtful.docx through real ingest: what ingest doubted
+    is exactly what the model is asked about, in book order."""
+    import json
+    from publisher_ingest import docx_to_ast
+    fake = _FakeProvider()
+    monkeypatch.setattr(structure_infer_stage, "OpenRouterProvider", lambda api_key: fake)
+    ast = docx_to_ast(Path(__file__).resolve().parents[2] / "corpus/word/word-doubtful.docx")
+    with tempfile.TemporaryDirectory() as td:
+        tmp_dir = Path(td)
+        structure_infer(_ctx(tmp_dir), doc_path=_write_ast(tmp_dir, ast), api_key="sk-test-fake")
+    sent = [(n["current"], n["text"]) for r in fake.requests for n in r.inputs["nodes"]]
+    assert sent == [("chapter-title", "ONE"), ("back-appendix", "APPENDIX"),
+                    ("paragraph", "TWO"), ("paragraph", "THREE")]
+
+
 # ── B7: doubted blocks, chapter-aligned batches, a per-build cap ──
 
 def _para(text, ref=None, confidence=None):

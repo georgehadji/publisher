@@ -26,9 +26,10 @@ so it exists *before* it is needed rather than after the gate slips.
 | `manuscripts/memoir-illustrated.ast.json` | Embedded images, sidebars, blockquotes. |
 | `manuscripts/stress-test.ast.json` | The everything-at-once case. |
 | `raster-diff/compare.py` | `compute_ssim()` and the comparison harness. **Gate: page-raster SSIM vs golden ≥ 0.995 per template × profile.** |
-| `word/make_word_corpus.py` | Authors the DOCX files beside it **through Word's COM API** (Windows + Word + pywin32 only; CI never runs it). Word's XML, not python-docx's: tracked changes, TOC field, content control, text box (with its VML duplicate), nested table, endnotes, comment, OMML equation. Strips personal info on save. Pass note text via `.Range.Text`, not `Add(Text=...)` — late-bound COM drops the keyword silently. |
+| `word/make_word_corpus.py` | Authors the DOCX files beside it **through Word's COM API** (Windows + Word + pywin32 only; CI never runs it). Name files to rebuild only those -- Word re-stamps every file it saves. Word's XML, not python-docx's: tracked changes, TOC field, content control, text box (with its VML duplicate), nested table, endnotes, comment, OMML equation. Strips personal info on save. Pass note text via `.Range.Text`, not `Add(Text=...)` — late-bound COM drops the keyword silently. |
 | `word/word-novel.docx`, `word/word-technical.docx` | Must ingest; pinned by `services/ingest/tests/test_word_corpus.py`. First contact found five silent text losses. |
 | `word/word-thesis.docx` | The first REAL manuscript's conventions, with synthetic prose: bold Normal-style numbered headings, a typed contents page, a pictured footnote, SmartArt, `Heading`-styled bibliography entries. Must ingest as 4 chapters + contents + bibliography. |
+| `word/word-doubtful.docx` | The corpus's only doubted manuscript (F1): typed chapter titles and a mid-book APPENDIX, so ingest scores the chapter, the appendix and the titles it swallowed below 0.8. What `structure-infer` is pinned to send. |
 | `corpus/*.docx` (top level) | **Authors' real manuscripts, gitignored — never commit one.** The repo is public. Drop a book here to probe ingest locally; reproduce what it teaches in `word/` instead. |
 | `word/word-equation.docx` | Must be **refused** (`IngestError`): nothing renders an equation, so accepting one loses it later. |
 

@@ -12,7 +12,7 @@ exercised any of it.
 The .docx files are committed; this script is how they were made, not a build
 step. It needs Windows, Microsoft Word and pywin32, so CI cannot run it:
 
-    python corpus/word/make_word_corpus.py
+    python corpus/word/make_word_corpus.py [word-novel.docx ...]
 
 Personal information is stripped on save (`RemovePersonalInformation`), so the
 tracked-change and comment authors are Word's anonymous "Author", not whoever
@@ -299,6 +299,18 @@ def thesis(a: Author) -> None:
     a.para("Δημητρίου, Δ. (1980). Το τελευταίο βιβλίο. Αθήνα: Εκδόσεις Δοκιμή.")
 
 
+def doubtful(a: Author) -> None:
+    """The shape ingest cannot decide alone (STRUCTURE_REPAIR_PLAN F1): chapter
+    titles typed as plain lines, and an appendix in the middle of the book. Every
+    chapter after APPENDIX is read into it, so ingest scores the appendix and each
+    title it swallowed below the review line -- the nodes `structure-infer` and
+    `structure-propose` exist for. The other files here score nothing that low."""
+    for title, body in (("ONE", PROSE * 3), ("APPENDIX", "Tables of tides, by month."),
+                        ("TWO", PROSE * 3), ("THREE", PROSE * 3)):
+        a.para(title)
+        a.para(body)
+
+
 def build(name: str, write) -> None:
     word = win32com.client.DispatchEx("Word.Application")
     word.Visible = False
@@ -314,8 +326,17 @@ def build(name: str, write) -> None:
     print("wrote", HERE / name)
 
 
+MANUSCRIPTS = {
+    "word-novel.docx": novel,
+    "word-technical.docx": technical,
+    "word-equation.docx": equation,
+    "word-thesis.docx": thesis,
+    "word-doubtful.docx": doubtful,
+}
+
 if __name__ == "__main__":
-    build("word-novel.docx", novel)
-    build("word-technical.docx", technical)
-    build("word-equation.docx", equation)
-    build("word-thesis.docx", thesis)
+    # Name files to rebuild only those; Word re-stamps every file it saves.
+    import sys
+
+    for name in sys.argv[1:] or MANUSCRIPTS:
+        build(name, MANUSCRIPTS[name])
