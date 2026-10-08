@@ -88,7 +88,7 @@ routes:
       effort: none                          # closed-enum classification; reasoning buys
                                             # nothing and bills as output tokens
     provider:
-      only: [anthropic]
+      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
@@ -106,7 +106,7 @@ routes:
     reasoning:
       effort: none
     provider:
-      only: [anthropic]
+      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
@@ -123,7 +123,7 @@ routes:
     reasoning:
       effort: none
     provider:
-      only: [anthropic]
+      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
@@ -139,7 +139,7 @@ routes:
     reasoning:
       effort: none
     provider:
-      only: [anthropic]
+      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
@@ -170,7 +170,7 @@ routes:
                                                   # control -- reasoning tokens bill as
                                                   # output tokens either way)
     provider:
-      only: [anthropic]
+      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
       allow_fallbacks: false                     # default is TRUE -- a silent failover
                                                   # forges the cache key
       require_parameters: true                   # refuse endpoints that would silently
@@ -278,7 +278,7 @@ routes:
                                     # see reasoning_guard above.
     provider:
       require_parameters: true
-      only: [anthropic]
+      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
       allow_fallbacks: false
       data_collection: deny
       zdr: true
@@ -317,7 +317,7 @@ routes:
                                             # `message.reasoning`, a field the closed-enum
                                             # response schema does not police
     provider:
-      only: [anthropic]
+      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
@@ -372,7 +372,7 @@ routes:
     reasoning: omit
     output_effort: low
     provider:
-      only: [anthropic]
+      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
       require_parameters: true
       data_collection: deny
       zdr: true

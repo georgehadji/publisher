@@ -68,7 +68,7 @@ def test_the_request_pins_schema_provider_reasoning_and_prompt():
     body = sent[0]
     assert body["response_format"]["json_schema"]["strict"] is True
     assert body["response_format"]["json_schema"]["schema"] == response_schema()
-    assert body["provider"] == {"only": ["anthropic"], "allow_fallbacks": False, "require_parameters": True,
+    assert body["provider"] == {"only": ["amazon-bedrock"], "allow_fallbacks": False, "require_parameters": True,
                                 "data_collection": "deny", "zdr": True}
     assert body["reasoning"] == {"effort": "none"}
     assert body["messages"][0]["content"] == system_prompt(ROUTE.route, ROUTE.prompt_version)

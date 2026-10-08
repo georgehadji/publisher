@@ -601,8 +601,12 @@ reasoning enabled, which turned out to have no documented justification.
       (model, provider) pair used by `cover-brief`/`cover-judge`'s text-side calls — the
       interaction is documented nowhere on either side. Record the result in the build
       manifest.
-- [ ] Confirm `provider.only: [anthropic]` + `zdr: true` leaves a live endpoint for each
-      pinned Anthropic slug — ZDR coverage per provider-route isn't stated in the docs.
+- [x] Confirm `provider.only: [anthropic]` + `zdr: true` leaves a live endpoint for each
+      pinned Anthropic slug. **It leaves none** (live, 2026-10-08): OpenRouter 404s with
+      "No endpoints found matching your data policy". Every route but `alttext` now pins
+      `amazon-bedrock` (same weights, ZDR held), verified live on `structure-classify`.
+      `alttext`'s `:batch` slug is served by `anthropic` alone, so it still cannot run
+      under ZDR.
 - [ ] Verify the `:batch` 50% discount empirically via `usage.cost` on a two-request test
       batch before treating it as policy — the docs never print the percentage in prose.
 - [ ] Decide whether `InferenceGateway`'s hardcoded route table (§11.1) migrates to load
