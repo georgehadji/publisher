@@ -211,6 +211,28 @@ def proposals_for(classification: dict, ast: dict) -> list[dict]:
                 "confidence": score,
                 "evidence": [f"label: {label}", f"model: {model}"],
             })
+        # A section's own blocks: a chapter ingest folded into it (F1) comes back
+        # as a chapter-title verdict on a paragraph. No op lifts a block out of
+        # a section yet, so it is flagged -- a correct verdict is never dropped.
+        for section in sections:
+            for block in section.get("content") or []:
+                ref = (block.get("sourceRef") or {}).get("docxId")
+                verdict = verdicts.get(ref) if block.get("type") in ("heading", "paragraph") else None
+                if verdict is None or block_decision(verdict["classification"], block, "middle") is None:
+                    continue
+                label, score = verdict["classification"], verdict["confidence"]
+                text = _opening({"content": [block]})
+                where = f"inside the {section['type']} section"
+                why = (f"reads “{text}” {where} as a chapter title: a chapter may have been folded into it"
+                       if label in _AGREES else f"reads the {block_label(block)} “{text}” {where} as {label}")
+                proposals.append({
+                    "id": _proposal_id(ref, "flag_ambiguity"),
+                    "type": "flag_ambiguity",
+                    "sourceRef": {"docxId": ref},
+                    "rationale": f"The model ({model}) {why} (confidence {score:.2f}).",
+                    "confidence": score,
+                    "evidence": [f"label: {label}", f"model: {model}"],
+                })
     return proposals
 
 
@@ -278,7 +300,8 @@ def _opening(section: dict, limit: int = 80) -> str:
 
 @stage(
     name="structure-propose",
-    version=8,  # v8: a chapter's doubted headings and paragraphs get proposals --
+    version=9,  # v9: a disagreeing verdict on a block inside a front/back section is flagged (F1)
+                # v8: a chapter's doubted headings and paragraphs get proposals --
                 # split_chapter, promote_heading (new), demote, reclassify (B8)
                 # v7: a section read as another type its list holds is a reclassify proposal (B5)
                 # v6: PROPOSAL_PARAMS, and reclassify is acceptable (B2)

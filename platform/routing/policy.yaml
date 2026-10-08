@@ -61,6 +61,13 @@ routes:
   # `-latest` aliases -- a moving alias inside a cache key, the exact failure this
   # file's header warns about. The gateway now loads them from here.
 
+  # PROVIDER (live, 2026-10-08). Every route sets zdr: true, and with it OpenRouter's own
+  # `anthropic` endpoint is filtered out (it is not zero-retention: 404 "No endpoints found
+  # matching your data policy"). Azure is filtered the same way. amazon-bedrock is ZDR but
+  # does not take `response_format: json_schema` for sonnet-5/opus-5 (404 at "Filter by
+  # Parameters"). google-vertex takes json_schema + tools under ZDR for haiku-4.5, sonnet-5
+  # and opus-5, so every route pins it. `alttext` cannot: its `:batch` slug is anthropic-only.
+  # Re-probe on any model or provider change; a 404 here is free, the call never reaches a model.
   structure-classify:
     service: structure   # which gateway owns this route (LLM_STRATEGY.md §3.16)
     model: anthropic/claude-haiku-4.5      # DOT, not hyphen -- verified against live
@@ -88,7 +95,7 @@ routes:
       effort: none                          # closed-enum classification; reasoning buys
                                             # nothing and bills as output tokens
     provider:
-      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
+      only: [google-vertex]   # ZDR + json_schema + tools: see the note at structure-classify
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
@@ -106,7 +113,7 @@ routes:
     reasoning:
       effort: none
     provider:
-      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
+      only: [google-vertex]   # ZDR + json_schema + tools: see the note at structure-classify
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
@@ -123,7 +130,7 @@ routes:
     reasoning:
       effort: none
     provider:
-      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
+      only: [google-vertex]   # ZDR + json_schema + tools: see the note at structure-classify
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
@@ -139,7 +146,7 @@ routes:
     reasoning:
       effort: none
     provider:
-      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
+      only: [google-vertex]   # ZDR + json_schema + tools: see the note at structure-classify
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
@@ -170,7 +177,7 @@ routes:
                                                   # control -- reasoning tokens bill as
                                                   # output tokens either way)
     provider:
-      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
+      only: [google-vertex]   # ZDR + json_schema + tools: see the note at structure-classify
       allow_fallbacks: false                     # default is TRUE -- a silent failover
                                                   # forges the cache key
       require_parameters: true                   # refuse endpoints that would silently
@@ -278,7 +285,7 @@ routes:
                                     # see reasoning_guard above.
     provider:
       require_parameters: true
-      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
+      only: [google-vertex]   # ZDR + json_schema + tools: see the note at structure-classify
       allow_fallbacks: false
       data_collection: deny
       zdr: true
@@ -317,7 +324,7 @@ routes:
                                             # `message.reasoning`, a field the closed-enum
                                             # response schema does not police
     provider:
-      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
+      only: [google-vertex]   # ZDR + json_schema + tools: see the note at structure-classify
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
@@ -372,7 +379,7 @@ routes:
     reasoning: omit
     output_effort: low
     provider:
-      only: [amazon-bedrock]   # ZDR: OpenRouter's own Anthropic endpoint is not
+      only: [google-vertex]   # ZDR + json_schema + tools: see the note at structure-classify
       require_parameters: true
       data_collection: deny
       zdr: true

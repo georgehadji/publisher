@@ -149,6 +149,32 @@ def test_every_accepted_proposal_applies_to_the_ast_it_was_made_from():
     assert out["backMatter"][-1]["type"] == "notes"
 
 
+def test_a_chapter_folded_into_a_section_is_flagged_not_dropped():
+    """F1 as Word writes it (corpus/word/word-doubtful.docx), with the verdicts
+    the live model returned on 2026-10-08: the appendix IS an appendix, so no
+    section row fires; the chapters folded into it are flagged, and the flag
+    applies. A section block whose verdict agrees gets nothing."""
+    from publisher_ingest import docx_to_ast
+    ast = docx_to_ast(ROOT / "corpus/word/word-doubtful.docx")
+    (appendix,) = ast["backMatter"]
+    ref = lambda b: b["sourceRef"]["docxId"]
+    folded = [b for b in appendix["content"] if b.get("confidence") is not None]
+    prose = appendix["content"][1]
+    verdicts = _classification((ast["body"][0]["sourceRef"]["docxId"], "chapter-title", 0.95),
+                               (appendix["sourceRef"]["docxId"], "back-appendix", 0.92),
+                               *((ref(b), "chapter-title", 0.88) for b in folded),
+                               (ref(prose), "paragraph", 0.9))
+    proposals = proposals_for(verdicts, ast)
+    assert [(p["type"], p["sourceRef"]["docxId"]) for p in proposals] ==         [("flag_ambiguity", ref(b)) for b in folded]
+    assert "“TWO” inside the appendix section as a chapter title" in proposals[0]["rationale"]
+    for p in proposals:
+        validate({"schema": "agent-proposal/1", "agentId": "a", "agentVersion": "1",
+                  "modelId": "m/x", "proposals": [p]}, SCHEMA)
+    inapplicable, orphaned = [], []
+    apply_overrides(ast, [_accept(p) for p in proposals], inapplicable=inapplicable, orphaned=orphaned)
+    assert inapplicable == [] and orphaned == []
+
+
 def test_proposing_against_the_corrected_book_converges():
     """B0: structure-propose reads doc-effective/1. Once every proposal is
     accepted, the same verdicts against the corrected book propose nothing new:

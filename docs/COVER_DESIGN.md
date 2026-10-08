@@ -604,7 +604,8 @@ reasoning enabled, which turned out to have no documented justification.
 - [x] Confirm `provider.only: [anthropic]` + `zdr: true` leaves a live endpoint for each
       pinned Anthropic slug. **It leaves none** (live, 2026-10-08): OpenRouter 404s with
       "No endpoints found matching your data policy". Every route but `alttext` now pins
-      `amazon-bedrock` (same weights, ZDR held), verified live on `structure-classify`.
+      `google-vertex` (same weights, ZDR held; `amazon-bedrock` refuses `json_schema` for
+      sonnet-5/opus-5), verified live on `structure-classify` and `structure-wrangle`.
       `alttext`'s `:batch` slug is served by `anthropic` alone, so it still cannot run
       under ZDR.
 - [ ] Verify the `:batch` 50% discount empirically via `usage.cost` on a two-request test
