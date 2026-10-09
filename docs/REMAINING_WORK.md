@@ -190,8 +190,10 @@ failed review keeps every proposal and emits `proposal-review-failed`.
 now readable from the log (`ov-pr-*` ids).
 
 **Still open:** the Compositor runs but nothing calls it (W11: `crop`/`render_range` need
-rendered pages). The Preflight Explainer is a library call. No agent call has been made
-with a real key.
+rendered pages). The Preflight Explainer is a library call. **Done (2026-10-09):** the
+Structure Wrangler ran live (Sonnet 5 via Google Vertex) and reviewed real proposals; it
+needed every route repinned to a zero-retention provider that takes `json_schema` and a
+`max_tokens` cap (see §3.5).
 
 ### 1.3 LLM classification is computed and thrown away
 
@@ -793,9 +795,16 @@ version 4). The reply is still checked: schema, and only sourceRefs that were se
 that reasoned on an `effort: none` route fails, and so does a refusal.
 `PromptCacheManager` returns that same prompt as its prefix.
 
-**Still open:**
-- No call has been made with a real key from this repo; the request shape is pinned by
-  tests (`services/structure/tests/test_classify_contract.py`), not by a live response.
+**Done (2026-10-09): run live.** The first real call 404'd before reaching a model: every
+route paired `provider.only: [anthropic]` with `zdr: true`, and OpenRouter's Anthropic
+endpoint is not zero-retention. Amazon Bedrock is, but refuses `json_schema` for Sonnet 5
+and Opus 5; Google Vertex takes it, with tools, for all three pinned models, so every route
+but `alttext` pins `google-vertex` (the probe results sit beside the routes in
+`policy.yaml`). The Wrangler then 402'd on a low balance: with no `max_tokens`, OpenRouter
+reserves a model's whole output window, so routes now carry one. Over
+`corpus/word/word-doubtful.docx` the model labelled all four doubted nodes correctly
+($0.0018) and the recovery it drove is in §1.3. `alttext`'s `:batch` slug is served by
+Anthropic alone, so it still cannot run under ZDR; nothing calls it yet.
 
 **Done (2026-10-04): the gateway's own cache.** The stage cache keys on the whole AST, so a
 typo fixed anywhere in the book paid for the same classification again. `InferenceGateway`
@@ -999,5 +1008,6 @@ On the real book: 0 widows, 0 orphans, 0 runts, notes in order, 821 pages.
    API reports them without defaulting. `classification/1` is consumed: `structure-propose`
    turns verdicts into proposals a reviewer accepts (W4, `STRUCTURE_REPAIR_PLAN.md` B0–B9).
 3. **§1.1 — done (W2).** Reviewers sign in with their own token and their ops carry
-   their name; the review loop closes. What's left across the tiers is a live run against
-   the real API (§3.5, §1.2) and the Compositor, which needs rendered pages (W11).
+   their name; the review loop closes, and has run against the real API (§3.5, §1.2,
+   2026-10-09). What's left across the tiers is the Compositor, which needs rendered
+   pages (W11).
