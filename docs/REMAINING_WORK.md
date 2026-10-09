@@ -318,9 +318,25 @@ would produce a `false` where the truth is "unknown".
 `ScanResult` carries `unmeasured: ["river: …", "hyphen-stack: …"]`, so a scan no longer
 reads as clean for a defect class it cannot see.
 
+**Done (2026-10-09): measured, from the file.** Neither needs pixels: glyph positions are
+in the press PDF. `publisher_prepress/spacing.py` reads poppler's `pdftotext -bbox-layout`
+word boxes. A hyphen stack is more than two consecutive lines of a block ending in a
+hyphen; a river is a chain of wide gaps (1.5× the block's median) overlapping line to line
+through four lines. Two warn-only preflight checks, `hyphen-stacks` and `rivers` (preflight
+v18), name the pages, and warn "not measured" where poppler is missing (xpdf's
+`pdftotext`, which MiKTeX and Git for Windows ship, has no `-bbox-layout`).
+- Measured against real poppler: it cuts a printed line in two at a wide gap, so the gap
+  that makes a river vanished from the line until the pieces were joined by baseline.
+- 26 pages of unhyphenated justified prose on a narrow measure: no rivers, with chains of
+  two and three lines present (42 and 6), so the four-line threshold decides, not
+  blindness. A partial build of the real book: 7 hyphen stacks, no rivers.
+- `test_spacing_against_poppler` renders a stack, a river and a clean page with
+  weasyprint and reads them with poppler; it runs in CI's python job and skips under xpdf.
+- pagescan still cannot see either (a pagemap has no positions) and still says so.
+
 ### 2.2 Missing preflight checks
 
-`services/prepress/publisher_prepress/preflight.py` implements fifteen checks (inside margin added in W6): trim size
+`services/prepress/publisher_prepress/preflight.py` implements seventeen checks (inside margin added in W6; hyphen stacks and rivers 2026-10-09, §2.1): trim size
 (`:115`), bleed (`:150`), min/max pages (`:175`, `:200`), page multiple (`:225`), colour
 space (`:251`), resolution (`:268`), file size (`:296`), font embedding (`:317`), PDF
 standard (`:335`), interactive content, transparency, ink coverage, rich black text,

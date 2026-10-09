@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional
 from publisher_prepress.geometry import PT_PER_MM
 from publisher_prepress.ghostscript import INK_TIMEOUT_S, GhostscriptError, find_binary, page_colours
 from publisher_prepress.margins import PDFTOTEXT_TIMEOUT_S, measure_inside_margins, required_inside_margin
+from publisher_prepress.spacing import MAX_HYPHEN_RUN, RIVER_MIN_LINES, measure_spacing
 
 # pdfimages lists image placements without decoding them: seconds, even for a
 # large book. The deadline is for a hung process, not a slow one.
@@ -379,6 +380,37 @@ def check_inside_margin(pdf_info: dict, profile: dict) -> PreflightCheck:
         c.sourceRef = f"pdf#page={tight[0]}"
         return c
     return _pass("inside-margin", f"Narrowest inside margin {narrowest:g} mm (needs {required:g} mm)")
+
+
+def _spacing_check(code: str, key: str, pdf_info: dict, defect: str, fix: str) -> PreflightCheck:
+    """A spacing defect read off the press file's word boxes (spacing.py).
+    WARN either way it is not clean: found, or not measured -- unknown is not absent."""
+    measured = pdf_info.get("spacing") or {}
+    if "scan" not in measured:
+        return _warn(code, f"{defect.capitalize()} not measured: {measured.get('unmeasured', 'no word boxes')}",
+                     suggestedFix="Run preflight where poppler-utils (pdftotext) is installed (the worker image).")
+    pages = measured["scan"][key]
+    if pages:
+        c = _warn(code, f"{len(pages)} {defect} on {_pages_phrase(sorted(set(pages)))}",
+                  suggestedFix=fix, value=len(pages))
+        c.sourceRef = f"pdf#page={min(pages)}"
+        return c
+    return _pass(code, f"No {defect} across {measured['scan']['pages']} page(s)")
+
+
+@preflight_check("hyphen-stacks")
+def check_hyphen_stacks(pdf_info: dict, profile: dict) -> PreflightCheck:
+    return _spacing_check("hyphen-stacks", "hyphenStacks", pdf_info,
+                          f"hyphen stack(s) (over {MAX_HYPHEN_RUN} hyphenated line ends in a row)",
+                          "Lower the hyphenation limit (hyphenate-limit-lines) in the DesignSpec, "
+                          "or loosen the measure on those paragraphs.")
+
+
+@preflight_check("rivers")
+def check_rivers(pdf_info: dict, profile: dict) -> PreflightCheck:
+    return _spacing_check("rivers", "rivers", pdf_info,
+                          f"river(s) (a wide word gap aligned through {RIVER_MIN_LINES} lines)",
+                          "Allow hyphenation, or tighten word spacing on those paragraphs.")
 
 
 @preflight_check("file-size")
@@ -785,6 +817,7 @@ def run_preflight(pdf_path: str | Path, profile: dict,
     pdf_info["ink"] = measure_ink(pdf_path)
     pdf_info["images"] = measure_image_ppi(pdf_path)
     pdf_info["margins"] = measure_inside_margins(pdf_path, pdf_info["media_box"], pdf_info["trim_box"])
+    pdf_info["spacing"] = measure_spacing(pdf_path)
 
     checks = []
     for code, check_fn in sorted(_CHECKS.items()):

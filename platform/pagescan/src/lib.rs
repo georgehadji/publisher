@@ -13,8 +13,10 @@
 //!   - Short chapter ends (last page of a chapter has very little text)
 //!
 //! Rivers and hyphen stacks need glyph positions from a rendered page, which a
-//! pagemap does not carry. They are not detected, and every `ScanResult` says
-//! so in `unmeasured`: a scan must not read as clean for what it cannot see.
+//! pagemap does not carry. They are not detected here, and every `ScanResult`
+//! says so in `unmeasured`: a scan must not read as clean for what it cannot
+//! see. The preflight gate measures both from the press PDF's word boxes
+//! (`publisher_prepress.spacing`, checks `hyphen-stacks` and `rivers`).
 //!
 //! Reads `pagemap/1` as the schema spells it (camelCase). The scan of widows,
 //! orphans and runts must agree with `publisher_prepress.preflight.
