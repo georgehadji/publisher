@@ -1,199 +1,98 @@
 #!/usr/bin/env python3
 """
-Raster-diff regression harness.
+Raster-diff regression gate (BUILD_PLAN.md §0: page-raster SSIM >= 0.995).
 
-From BUILD_PLAN.md §0 and §3.14:
-Page-raster SSIM vs golden per template × profile: ≥ 0.995
+Compares two trees of page rasters, one directory per book of
+`page-NNNN.png` (what `tracer_bullet.py --rasters` writes): a baseline and a
+fresh render. A book fails when its page count changed, a page is missing, or
+any page's SSIM falls under the threshold. A book only the new render has is
+reported, not compared; one only the baseline has fails.
+
+SSIM is computed here, in plain Python over Pillow's pixels (8x8 tiles, the
+standard constants), because the version this replaced fell back to a
+file-size ratio when scikit-image was missing and passed anything of a
+similar size.
 """
 
+from __future__ import annotations
+
+import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Optional
+
+from PIL import Image   # a hard dependency: no image library, no comparison
+
+THRESHOLD = 0.995
+BLOCK = 8
+_C1 = (0.01 * 255) ** 2
+_C2 = (0.03 * 255) ** 2
 
 
-def compute_ssim(img1_path: Path, img2_path: Path) -> float:
-    """
-    Compute SSIM between two raster images.
-    
-    In production, uses PyMuPDF/page rendering + structural-similarity from scikit-image.
-    Tracer bullet: returns 1.0 (perfect) for files that exist, 0.0 otherwise.
-    """
-    if not img1_path.exists() or not img2_path.exists():
+def ssim(a: Image.Image, b: Image.Image) -> float:
+    """Mean SSIM over BLOCK x BLOCK tiles of two grayscale images; 0.0 when
+    their sizes differ (a page that changed size has changed)."""
+    a, b = a.convert("L"), b.convert("L")
+    if a.size != b.size:
         return 0.0
-    
-    # Try actual SSIM computation if deps available
-    try:
-        from skimage.metrics import structural_similarity as ssim
-        from skimage.io import imread
-        
-        img1 = imread(str(img1_path))
-        img2 = imread(str(img2_path))
-        
-        if img1.shape != img2.shape:
-            return 0.0
-        
-        # Handle grayscale vs color
-        if len(img1.shape) == 2:
-            return float(ssim(img1, img2))
-        else:
-            return float(ssim(img1, img2, channel_axis=-1))
-    except ImportError:
-        # Fallback: file size comparison as crude proxy
-        s1 = img1_path.stat().st_size
-        s2 = img2_path.stat().st_size
-        ratio = min(s1, s2) / max(s1, s2) if max(s1, s2) > 0 else 0.0
-        return ratio
+    width, height = a.size
+    pa, pb = a.tobytes(), b.tobytes()
+    total = tiles = 0
+    n = BLOCK * BLOCK
+    for top in range(0, height - BLOCK + 1, BLOCK):
+        for left in range(0, width - BLOCK + 1, BLOCK):
+            sa = sb = saa = sbb = sab = 0
+            for row in range(top, top + BLOCK):
+                start = row * width + left
+                for x, y in zip(pa[start:start + BLOCK], pb[start:start + BLOCK]):
+                    sa += x; sb += y; saa += x * x; sbb += y * y; sab += x * y
+            ma, mb = sa / n, sb / n
+            va, vb, cov = saa / n - ma * ma, sbb / n - mb * mb, sab / n - ma * mb
+            total += ((2 * ma * mb + _C1) * (2 * cov + _C2)) / ((ma * ma + mb * mb + _C1) * (va + vb + _C2))
+            tiles += 1
+    return total / tiles if tiles else float(pa == pb)
 
 
-class RasterDiffHarness:
-    """
-    Compare rendered page rasters against golden references.
-    
-    Usage:
-        harness = RasterDiffHarness("corpus/golden/template-literary")
-        result = harness.compare("output/pages/")
-        print(result.report())
-    """
-    
-    def __init__(self, golden_dir: str | Path, threshold: float = 0.995):
-        self.golden_dir = Path(golden_dir)
-        self.threshold = threshold
-        self._golden_pages: dict[int, Path] = {}
-        self._load_golden()
-    
-    def _load_golden(self):
-        """Load golden page rasters from the golden directory."""
-        if not self.golden_dir.exists():
-            return
-        for f in sorted(self.golden_dir.glob("page-*.png")):
-            try:
-                page_num = int(f.stem.replace("page-", ""))
-                self._golden_pages[page_num] = f
-            except ValueError:
-                pass
-    
-    def compare(self, output_dir: str | Path) -> "DiffResult":
-        """Compare rendered pages against golden references."""
-        output_dir = Path(output_dir)
-        results: dict[int, float] = {}
-        failures: list[str] = []
-        
-        for page_num, golden_path in self._golden_pages.items():
-            rendered = output_dir / f"page-{page_num:04d}.png"
-            if not rendered.exists():
-                rendered = output_dir / f"page-{page_num}.png"
-            
-            if not rendered.exists():
-                failures.append(f"Page {page_num}: rendered output not found at {rendered}")
-                continue
-            
-            ssim = compute_ssim(golden_path, rendered)
-            results[page_num] = ssim
-            
-            if ssim < self.threshold:
-                failures.append(
-                    f"Page {page_num}: SSIM {ssim:.4f} < threshold {self.threshold}"
-                )
-        
-        return DiffResult(
-            golden_dir=self.golden_dir,
-            output_dir=output_dir,
-            threshold=self.threshold,
-            results=results,
-            failures=failures,
-            total_pages=len(self._golden_pages),
-        )
+def compare_book(baseline: Path, rendered: Path, threshold: float = THRESHOLD) -> dict:
+    """{"book", "pages", "failures": [...], "minSsim"} for one book's two directories."""
+    old, new = sorted(baseline.glob("page-*.png")), sorted(rendered.glob("page-*.png"))
+    failures, scores = [], {}
+    if len(old) != len(new):
+        failures.append(f"page count changed: {len(old)} -> {len(new)}")
+    for before in old:
+        after = rendered / before.name
+        if not after.exists():
+            failures.append(f"{before.name}: not rendered")
+            continue
+        with Image.open(before) as x, Image.open(after) as y:
+            scores[before.name] = ssim(x, y)
+        if scores[before.name] < threshold:
+            failures.append(f"{before.name}: SSIM {scores[before.name]:.4f} < {threshold}")
+    return {"book": baseline.name, "pages": len(new), "failures": failures,
+            "minSsim": min(scores.values(), default=None)}
 
 
-class DiffResult:
-    """Result of a raster-diff comparison."""
-    
-    def __init__(self, golden_dir: Path, output_dir: Path, threshold: float,
-                 results: dict[int, float], failures: list[str], total_pages: int):
-        self.golden_dir = golden_dir
-        self.output_dir = output_dir
-        self.threshold = threshold
-        self.results = results
-        self.failures = failures
-        self.total_pages = total_pages
-    
-    @property
-    def passed(self) -> bool:
-        return len(self.failures) == 0 and self.total_pages > 0
-    
-    @property
-    def average_ssim(self) -> float:
-        if not self.results:
-            return 0.0
-        return sum(self.results.values()) / len(self.results)
-    
-    def report(self) -> str:
-        lines = [
-            "=" * 60,
-            "RASTER DIFF REPORT",
-            "=" * 60,
-            f"Golden:  {self.golden_dir}",
-            f"Output:  {self.output_dir}",
-            f"Pages:   {len(self.results)}/{self.total_pages} matched",
-            f"Avg SSIM: {self.average_ssim:.4f}",
-            f"Threshold: {self.threshold}",
-            f"Status:   {'PASS' if self.passed else 'FAIL'}",
-            "",
-        ]
-        
-        if self.failures:
-            lines.append(f"Failures ({len(self.failures)}):")
-            for f in self.failures:
-                lines.append(f"  - {f}")
-            lines.append("")
-        
-        # Per-page summary
-        if self.results:
-            lines.append("Per-page SSIM:")
-            for page_num in sorted(self.results):
-                ssim = self.results[page_num]
-                marker = "OK" if ssim >= self.threshold else "FAIL"
-                lines.append(f"  Page {page_num:>4d}: {ssim:.4f}  [{marker}]")
-        
-        return "\n".join(lines)
-    
-    def to_json(self) -> dict:
-        return {
-            "goldenDir": str(self.golden_dir),
-            "outputDir": str(self.output_dir),
-            "threshold": self.threshold,
-            "totalPages": self.total_pages,
-            "matchedPages": len(self.results),
-            "averageSsim": self.average_ssim,
-            "passed": self.passed,
-            "failures": self.failures,
-            "perPageSsim": {str(k): v for k, v in sorted(self.results.items())},
-        }
+def compare_trees(baseline: Path, rendered: Path, threshold: float = THRESHOLD) -> dict:
+    books_old = {p.name for p in baseline.iterdir() if p.is_dir()} if baseline.is_dir() else set()
+    books_new = {p.name for p in rendered.iterdir() if p.is_dir()}
+    results = [compare_book(baseline / name, rendered / name, threshold)
+               for name in sorted(books_old & books_new)]
+    return {"books": results,
+            "unbaselined": sorted(books_new - books_old),   # new books: nothing to compare yet
+            "missing": sorted(books_old - books_new),       # a book that no longer renders
+            "passed": bool(results) and not books_old - books_new
+                      and not any(r["failures"] for r in results)}
 
 
-def main():
-    """CLI for raster-diff harness."""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Raster-diff regression harness")
-    parser.add_argument("golden_dir", help="Directory containing golden page rasters")
-    parser.add_argument("output_dir", help="Directory containing rendered page rasters")
-    parser.add_argument("--threshold", type=float, default=0.995,
-                       help=f"SSIM threshold (default: 0.995)")
-    parser.add_argument("--json", action="store_true", help="Output JSON report")
-    
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Raster-diff regression gate")
+    parser.add_argument("baseline", type=Path)
+    parser.add_argument("rendered", type=Path)
+    parser.add_argument("--threshold", type=float, default=THRESHOLD)
     args = parser.parse_args()
-    
-    harness = RasterDiffHarness(args.golden_dir, threshold=args.threshold)
-    result = harness.compare(args.output_dir)
-    
-    if args.json:
-        print(json.dumps(result.to_json(), indent=2))
-    else:
-        print(result.report())
-    
-    return 0 if result.passed else 1
+    report = compare_trees(args.baseline, args.rendered, args.threshold)
+    print(json.dumps(report, indent=2))
+    return 0 if report["passed"] else 1
 
 
 if __name__ == "__main__":

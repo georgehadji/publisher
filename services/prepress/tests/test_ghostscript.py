@@ -395,3 +395,21 @@ def test_two_conversions_of_one_file_are_byte_identical(tmp_path: Path):
 
     assert outputs[0][0] == outputs[1][0]
     assert outputs[0][1] == outputs[1][1]
+
+
+def test_render_pages_is_one_png_per_page_and_byte_stable(tmp_path: Path):
+    """The page rasterizer the raster-diff gate and the Compositor's crop read
+    through: one grayscale PNG per page, the same bytes every run, and a page
+    range that matches the full render."""
+    import pytest
+    from publisher_prepress.ghostscript import find_binary, render_pages
+    if find_binary() is None:
+        pytest.skip("ghostscript is not installed")
+    weasyprint = pytest.importorskip("weasyprint")
+    pdf = tmp_path / "three.pdf"
+    weasyprint.HTML(string="<style>@page{size:100mm 150mm} p{break-after:page}</style>"
+                           "<p>one</p><p>two</p><p>three</p>").write_pdf(pdf)
+    pages = render_pages(pdf)
+    assert len(pages) == 3 and all(p.startswith(b"\x89PNG") for p in pages)
+    assert render_pages(pdf) == pages
+    assert render_pages(pdf, first=2, last=3) == pages[1:]

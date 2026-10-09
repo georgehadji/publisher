@@ -735,7 +735,18 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
   before. `test_word_corpus.py` pins the timing, a rejected invalid node inside a nested table,
   and that each union's enum equals its branches' types.
 
-`corpus/raster-diff/compare.py` exists; nothing in CI invokes it.
+`corpus/raster-diff/compare.py` exists; nothing in CI invokes it. **Done (2026-10-09):
+the nightly runs it.** `ghostscript.render_pages` is the one page rasterizer (grayscale
+PNG, 72 dpi, byte-identical run to run on one Ghostscript); `tracer_bullet.py --rasters`
+builds each synthetic book and renders its press PDF. The nightly compares every page
+against the last green night's rasters, kept in the Actions cache: never committed, since
+the repo is public and a raster made on another machine differs in its fonts. A changed
+page count, a missing page or book, or any page under SSIM 0.995 fails; a manual run with
+`rebaseline` accepts an intended layout change. The baseline is a regression baseline,
+not the typographer-verified goldens BUILD_PLAN §8 asks for (`corpus/golden/` is still
+empty). The old SSIM fell back to a file-size ratio without scikit-image and passed
+anything of a similar size; it is plain Python over Pillow now (8x8 tiles, standard
+constants; 0.547 vs scikit-image's 0.553 on a 1 px shift of a real page).
 
 ### 3.2 CVE gate is structurally incapable of failing
 

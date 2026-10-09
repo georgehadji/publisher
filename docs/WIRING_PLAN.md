@@ -1,6 +1,6 @@
 # Wiring plan — every open item in `REMAINING_WORK.md`, in build order
 
-**Status:** W0–W10 done (2026-10-02). W11 stays blocked by design.
+**Status:** W0–W10 done (2026-10-02). W11 was blocked by design; on 2026-10-09 the user chose to build the page-raster pipeline, which closed two of its rows (below).
 Planned 2026-10-01 against `ae1a05e` plus the uncommitted split/merge work.
 **Scope:** every item `docs/REMAINING_WORK.md` still lists as open. Each phase below says
 which item it closes, what changes, which gates prove it, and why it sits where it does.
@@ -341,8 +341,8 @@ Each item stays listed with what unblocks it. None is started as a workaround.
 
 | Item | Blocked on |
 |---|---|
-| Rivers and hyphen stacks (§2.1) | A page-raster pipeline with glyph positions. W7 makes them report "unmeasured" meanwhile. |
-| Raster-diff in CI (§3.1) | Typographer-verified goldens in `corpus/golden/`, which is empty. |
+| ~~Rivers and hyphen stacks (§2.1)~~ | **Done (2026-10-09):** no raster needed; measured from the press PDF's word boxes (`spacing.py`, preflight `hyphen-stacks`/`rivers`). |
+| ~~Raster-diff in CI (§3.1)~~ | **Done (2026-10-09)** as a regression gate: the nightly compares against the last green night's rasters. Typographer-verified goldens are still absent. |
 | Compositor agent (§1.2) | The same raster pipeline: a spread patch can't be verified without rendered pages. |
 | Equations (§3.1) | A design choice: an OMML → MathML converter (Microsoft's XSLT isn't redistributable) and a renderer case in both paths. Ingest refuses them loudly now. |
 | The first real book's EMF figure | The author re-saving "Εικόνα 6" as PNG. |

@@ -174,9 +174,51 @@ def run_reproducibility(manuscripts: list[str] | None = None,
     return 0 if report.passed else 1
 
 
+def run_rasters(out_dir: str, manuscripts: list[str] | None = None,
+                profile: str = "Generic 6x9") -> int:
+    """Each synthetic manuscript built once and its press PDF rendered to
+    `out_dir/<manuscript>/page-NNNN.png`, for corpus/raster-diff/compare.py.
+    A build that stops before the press PDF fails: there is nothing to compare."""
+    import tempfile
+    from pathlib import Path
+    from publisher_prepress.ghostscript import render_pages
+
+    corpus = manuscripts or sorted(str(p) for p in Path("corpus/manuscripts").glob("*.ast.json"))
+    failed = 0
+    for manuscript in corpus:
+        label = Path(manuscript).name.removesuffix(".ast.json")
+        executor, initial_inputs = _harness(manuscript, profile, None)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
+            done: dict = {}
+            try:
+                executor.execute(build_id="rasters", initial_inputs=initial_inputs, cas_root=root,
+                                 on_stage_complete=lambda stage, _decl, result, _ms, done=done:
+                                     done.__setitem__(stage, result))
+            except StageError as e:
+                print(f"{label}: build stopped: [{e.kind}] {e.message[:160]}")
+            # The press file (pdfx/1), from whichever finish ran -- not paginate's
+            # raw PDF, whose artifact is also named "pdf".
+            press = next((a for stage in ("finish-gs", "finish") if stage in done
+                          for a in done[stage].artifacts if a.kind == "pdf"), None)
+            if press is None:
+                print(f"{label}: FAILED -- no press PDF to render")
+                failed += 1
+                continue
+            pdf = Path(root) / press.hash[:2] / press.hash[2:4] / press.hash
+            book = Path(out_dir) / label
+            book.mkdir(parents=True, exist_ok=True)
+            pages = render_pages(pdf)
+            for number, png in enumerate(pages, start=1):
+                (book / f"page-{number:04d}.png").write_bytes(png)
+            print(f"{label}: {len(pages)} page(s)")
+    return 1 if failed else 0
+
+
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--reproducibility"]:
         sys.exit(run_reproducibility(sys.argv[2:] or None))
+    if sys.argv[1:2] == ["--rasters"]:
+        sys.exit(run_rasters(sys.argv[2], sys.argv[3:] or None))
     sys.exit(run_tracer_bullet(
         sys.argv[1] if len(sys.argv) > 1 else None,
         sys.argv[2] if len(sys.argv) > 2 else "Generic 6x9",

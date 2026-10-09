@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: "23 3 * * *"
   workflow_dispatch:
+    inputs:
+      rebaseline:
+        description: "Accept today's page rasters as the baseline (after an intended layout change)"
+        type: boolean
+        default: false
 
 env:
   # Same list as ci.yml's PUBLISHER_PKGS.
@@ -42,3 +47,40 @@ jobs:
           pip install --no-deps ${{ env.PUBLISHER_PKGS }}
       - name: Cold, cold again, cached -- byte for byte
         run: python tracer_bullet.py --reproducibility
+
+      # Raster diff (BUILD_PLAN §0: page SSIM >= 0.995): every synthetic book's
+      # press PDF, rendered, against the last green night's rasters -- kept in
+      # the Actions cache, never committed (the repo is public, and a raster made
+      # on another machine differs in its fonts). Catches a layout change from
+      # OUTSIDE the repo; an intended one is accepted with `rebaseline`.
+      - name: Last green night's rasters
+        id: baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: raster-baseline
+          key: rasters-${{ github.run_id }}
+          restore-keys: rasters-
+      - name: Render the press PDFs
+        run: python tracer_bullet.py --rasters raster-new
+      - name: Compare, page by page
+        if: steps.baseline.outputs.cache-matched-key != '' && !inputs.rebaseline
+        run: python corpus/raster-diff/compare.py raster-baseline raster-new
+      - name: No baseline yet
+        if: steps.baseline.outputs.cache-matched-key == '' || inputs.rebaseline
+        run: echo "::warning::No raster baseline compared (first run or rebaseline); today's rasters become it."
+      # A cache restores only to the path it was saved from, so today's
+      # rasters move to the baseline's path before they are saved.
+      - name: Keep today's rasters as the baseline
+        run: rm -rf raster-baseline && mv raster-new raster-baseline
+      - uses: actions/cache/save@v4
+        with:
+          path: raster-baseline
+          key: rasters-${{ github.run_id }}
+      - name: Rasters, for a failed comparison
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rasters
+          path: |
+            raster-new
+            raster-baseline

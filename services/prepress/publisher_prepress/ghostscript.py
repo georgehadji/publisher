@@ -607,6 +607,30 @@ def page_colours(pdf: Path, *, text_only: bool = False, dpi: int = INK_DPI,
                                    f"(exit {proc.returncode}): {errors.read().decode(errors='replace').strip()}")
 
 
+RASTER_DPI = 72        # page rasters for comparison and inspection: layout, not print
+RASTER_TIMEOUT_S = 900
+
+
+def render_pages(pdf: Path, *, dpi: int = RASTER_DPI, first: int | None = None,
+                 last: int | None = None, gs_binary: Optional[str] = None,
+                 timeout: int = RASTER_TIMEOUT_S) -> list[bytes]:
+    """Each page of `pdf` (or pages `first`..`last`, 1-based) as a grayscale
+    PNG, anti-aliased. The one page rasterizer: the raster-diff gate and the
+    Compositor's crop read pages through it. Byte-identical across runs of one
+    Ghostscript (checked on 10.07.1); the PNG names that version, so compare
+    pixels across toolchains, not bytes."""
+    gs = gs_binary or find_binary()
+    if gs is None:
+        raise GhostscriptError("ghostscript binary not found on PATH")
+    with tempfile.TemporaryDirectory() as out:
+        cmd = [gs, "-q", "-dBATCH", "-dNOPAUSE", "-dSAFER", "-sDEVICE=pnggray", f"-r{dpi}",
+               "-dTextAlphaBits=4", "-dGraphicsAlphaBits=4",
+               *([f"-dFirstPage={first}"] if first else []), *([f"-dLastPage={last}"] if last else []),
+               f"-sOutputFile={Path(out) / 'p-%05d.png'}", str(pdf)]
+        _run(cmd, timeout)
+        return [page.read_bytes() for page in sorted(Path(out).glob("p-*.png"))]
+
+
 def _pam_size(stream) -> tuple[int, int] | None:
     """Read one PAM header; (width, height), or None at the end of the stream."""
     fields = {}
