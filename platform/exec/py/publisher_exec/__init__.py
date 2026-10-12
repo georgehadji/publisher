@@ -64,7 +64,6 @@ from publisher_stages import (
     ErrorKind, Diagnostic, get_registry,
 )
 from publisher_stages import ArtifactRef as StageArtifactRef
-from publisher_cas import ContentAddressedStore, CasConfig, Sha256, ArtifactRef, MediaType
 from publisher_cache import CacheStore, SqliteCacheStore, compute_cache_key, compute_toolchain_digest
 
 BuildResult = dict[str, StageResult]
@@ -197,7 +196,7 @@ def _cache_key_for(stage_name: str, decl, stage_inputs: dict) -> str:
 
 
 def _register_artifacts(decl, stage_name: str, result: StageResult,
-                         cas: ContentAddressedStore, cas_root: Path,
+                         cas_root: Path,
                          artifact_paths: dict[str, str]) -> None:
     """
     Store output CAS paths for downstream stages, keyed by schema_id.
@@ -227,26 +226,27 @@ def _register_artifacts(decl, stage_name: str, result: StageResult,
             )
 
         if matched_schema not in artifact_paths:
-            resolved = False
-            try:
-                sha = Sha256(art.hash)
-                art_ref = ArtifactRef(
-                    hash=sha,
-                    media_type=MediaType(art.media_type),
-                    size=art.size,
+            path = _cas_path(art.hash, cas_root)
+            if path is None:
+                # C3 (docs/CONTEXT_ARCHITECTURE.md): this used to register the
+                # bare hash as if it were a path, so an artifact left in
+                # ctx.work_dir (scratch, deleted) failed later in whichever
+                # stage opened it -- or, for a terminal output, never at all.
+                raise StageError(
+                    kind=ErrorKind.ENGINE_BUG,
+                    message=(
+                        f"Stage '{stage_name}' returned artifact '{art.kind}' "
+                        f"({art.hash}), which is not in the CAS at {cas_root}. "
+                        f"Write artifacts through ctx.cas_root, never ctx.work_dir."
+                    ),
                 )
-                artifact_paths[matched_schema] = str(cas.get_path(art_ref))
-                resolved = True
-            except Exception:
-                pass
+            artifact_paths[matched_schema] = str(path)
 
-            if not resolved:
-                h = art.hash
-                candidate = cas_root / h[:2] / h[2:4] / h
-                if candidate.exists():
-                    artifact_paths[matched_schema] = str(candidate)
-                else:
-                    artifact_paths[matched_schema] = art.hash
+
+def _cas_path(h: str, cas_root: Path) -> Path | None:
+    """The blob's path under cas_root's h[:2]/h[2:4]/h sharding, or None."""
+    path = cas_root / h[:2] / h[2:4] / h
+    return path if len(h) == 64 and path.is_file() else None
 
 
 @dataclass(frozen=True)
@@ -394,7 +394,7 @@ def memory_mw(invocation: StageInvocation, next_: Next) -> StageResult:
 
 
 def _make_cache_mw(
-    cache_store: CacheStore, cas: ContentAddressedStore,
+    cache_store: CacheStore,
     cas_root_path: Path, artifact_paths: dict[str, str],
 ) -> StageMiddleware:
     """Builds `cache_mw`, closing over this build's own effectful handles so
@@ -406,7 +406,9 @@ def _make_cache_mw(
         decl = invocation.decl
         cache_key = invocation.ctx.deterministic_seed
         cached = cache_store.get(cache_key)
-        if cached is not None:
+        # A cache entry whose blobs left the CAS is a miss, not a hit.
+        if cached is not None and all(_cas_path(ref["sha256"], cas_root_path)
+                                      for ref in cached["output_refs"].values()):
             # The stage's own report comes back with its artifacts: same inputs,
             # same warnings. Dropping them made a cached rebuild read clean.
             diagnostics = cached.get("diagnostics") or {}
@@ -420,11 +422,11 @@ def _make_cache_mw(
                 warnings=[Diagnostic.from_dict(w) for w in diagnostics.get("warnings") or []],
                 cache_hit=True,
             )
-            _register_artifacts(decl, invocation.stage_name, result, cas, cas_root_path, artifact_paths)
+            _register_artifacts(decl, invocation.stage_name, result, cas_root_path, artifact_paths)
             return result
 
         result = next_(invocation)
-        _register_artifacts(decl, invocation.stage_name, result, cas, cas_root_path, artifact_paths)
+        _register_artifacts(decl, invocation.stage_name, result, cas_root_path, artifact_paths)
         cache_store.put(
             cache_key, invocation.stage_name, decl.version,
             {art.kind: {"sha256": art.hash, "media_type": art.media_type, "size": art.size}
@@ -505,7 +507,6 @@ def run(
         os.environ.get("PUBLISHER_CAS_ROOT", "./.publisher/cas")
     )
     cas_root_path.mkdir(parents=True, exist_ok=True)
-    cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root_path))
     if cache_store is None:
         cache_store = SqliteCacheStore(cas_root_path / "cache_index.sqlite")
 
@@ -519,7 +520,7 @@ def run(
     # watchdog thread never runs memory_mw's own setrlimit/restore -- see
     # the module docstring for why that ordering matters.
     handle: Next = _compose(
-        [_make_cache_mw(cache_store, cas, cas_root_path, artifact_paths), memory_mw, deadline_mw],
+        [_make_cache_mw(cache_store, cas_root_path, artifact_paths), memory_mw, deadline_mw],
         terminal=lambda inv: inv.decl.fn(inv.ctx, **inv.inputs),
     )
 
@@ -624,7 +625,7 @@ def run_single_stage(
     dispatched onto the stage's OWN declared `decl.queue` rather than run in
     the same process as every other stage).
 
-    Deliberately NOT a change to `run()`, which still opens ONE CasConfig/
+    Deliberately NOT a change to `run()`, which still opens ONE
     cache handle and composes ONE middleware chain for the whole ordered
     plan -- that stays exactly as tested. This is a second, independent
     entry point for a caller whose "process running this stage" and "process
@@ -647,10 +648,9 @@ def run_single_stage(
         )
     cas_root_path = Path(cas_root)
     cas_root_path.mkdir(parents=True, exist_ok=True)
-    cas = ContentAddressedStore(CasConfig(local_cache_root=cas_root_path))
     artifact_paths: dict[str, str] = {}
     handle: Next = _compose(
-        [_make_cache_mw(cache_store, cas, cas_root_path, artifact_paths), memory_mw, deadline_mw],
+        [_make_cache_mw(cache_store, cas_root_path, artifact_paths), memory_mw, deadline_mw],
         terminal=lambda inv: inv.decl.fn(inv.ctx, **inv.inputs),
     )
     seed = _cache_key_for(stage_name, decl, resolved_inputs)

@@ -111,3 +111,44 @@ def test_resolved_inputs_are_passed_through_as_stage_kwargs(tmp_path):
         cas_root=tmp_path / "cas", cache_store=_cache(tmp_path),
     )
     assert seen == {"doc_path": "/tmp/x"}
+
+
+def _emit(where: str, calls: list):
+    """A stage writing one blob either into the CAS or into work_dir."""
+    import hashlib
+    from pathlib import Path
+    from publisher_stages import ArtifactRef
+
+    def probe(ctx, **kw):
+        calls.append(1)
+        data = b"artifact"
+        h = hashlib.sha256(data).hexdigest()
+        root = Path(ctx.cas_root if where == "cas" else ctx.work_dir)
+        (root / h[:2] / h[2:4]).mkdir(parents=True, exist_ok=True)
+        (root / h[:2] / h[2:4] / h).write_bytes(data)
+        return StageResult(artifacts=[ArtifactRef(kind="out", hash=h,
+                                                  media_type="application/octet-stream", size=len(data))])
+    return probe
+
+
+def test_an_artifact_left_in_work_dir_fails_the_stage(tmp_path):
+    """C3 (docs/CONTEXT_ARCHITECTURE.md): it used to register as a bare hash."""
+    registry = _registry_with(_emit("work_dir", []))
+    with pytest.raises(StageError) as exc_info:
+        run_single_stage("probe", registry, build_id="b1", resolved_inputs={},
+                         cas_root=tmp_path / "cas", cache_store=_cache(tmp_path))
+    assert exc_info.value.kind == ErrorKind.ENGINE_BUG and "work_dir" in exc_info.value.message
+
+
+def test_a_cache_entry_whose_blob_left_the_cas_is_a_miss(tmp_path):
+    import shutil
+    calls = []
+    registry = _registry_with(_emit("cas", calls))
+    cas_root, cache_store = tmp_path / "cas", _cache(tmp_path)
+    _, paths = run_single_stage("probe", registry, build_id="b1", resolved_inputs={},
+                                cas_root=cas_root, cache_store=cache_store)
+    assert paths["probe-out/1"].startswith(str(cas_root))
+    shutil.rmtree(cas_root)
+    second, _ = run_single_stage("probe", registry, build_id="b2", resolved_inputs={},
+                                 cas_root=cas_root, cache_store=cache_store)
+    assert second.cache_hit is False and len(calls) == 2
