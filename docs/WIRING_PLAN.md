@@ -344,7 +344,7 @@ Each item stays listed with what unblocks it. None is started as a workaround.
 |---|---|
 | ~~Rivers and hyphen stacks (§2.1)~~ | **Done (2026-10-09):** no raster needed; measured from the press PDF's word boxes (`spacing.py`, preflight `hyphen-stacks`/`rivers`). |
 | ~~Raster-diff in CI (§3.1)~~ | **Done (2026-10-09)** as a regression gate: the nightly compares against the last green night's rasters. Typographer-verified goldens are still absent. |
-| Compositor agent (§1.2) | **Caller done (2026-10-12):** `layout-review` (after `preflight`, reachable only with an OpenRouter key) hands it the press PDF and the pages preflight warned on; it crops each and records a closed verdict (`layout-review/1`, terminal, downloadable as artifact kind `layout-review`). **Still open:** DesignSpec patches, which need an adjustment vocabulary, an accept path and a per-build re-render to verify against. |
+| Compositor agent (§1.2) | **Caller done (2026-10-12):** `layout-review` (after `preflight`, reachable only with an OpenRouter key) hands it the press PDF and the pages preflight warned on; it crops each and records a closed verdict (`layout-review/1`, terminal, downloadable as artifact kind `layout-review`). **Still open:** fixes a reviewer can accept, planned in `COMPOSITOR_PATCH_PLAN.md` (K0–K5). |
 | Equations (§3.1) | A design choice: an OMML → MathML converter (Microsoft's XSLT isn't redistributable) and a renderer case in both paths. Ingest refuses them loudly now. |
 | The first real book's EMF figure | The author re-saving "Εικόνα 6" as PNG. |
 | Reviewer SSO | W2 gives per-reviewer tokens. An identity provider (OIDC) is a product decision. |
