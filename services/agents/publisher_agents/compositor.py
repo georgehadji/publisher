@@ -15,9 +15,10 @@ from pathlib import Path
 
 from .runtime import AgentResult, AgentRuntime, AgentRole, TaskBudget
 
-# Unwired (W5, docs/WIRING_PLAN.md W11): verifying a patch needs rendered
-# pages, and `crop`/`render_range` raise ToolUnavailable until something
-# rasterises one. The loop itself runs; nothing in a build calls it.
+# Unwired (W5, docs/WIRING_PLAN.md W11): nothing in a build calls it yet.
+# `crop` is real since 2026-10-09 -- it shows the model the build's press PDF,
+# given one -- and `render_range` stays unavailable by design: a new layout is
+# a build, reached by a proposal, never rendered privately by an agent.
 PROPOSAL_SCHEMA = json.loads(
     (Path(__file__).resolve().parents[3] / "schemas/agent-proposal/agent-proposal.schema.json")
     .read_text(encoding="utf-8"))
@@ -51,6 +52,7 @@ class Compositor:
         pagemap: dict | None = None,
         design_spec: dict | None = None,
         agent_version: str = "1.0",
+        press_pdf: str | None = None,
     ) -> AgentResult:
         """Run the crop-and-verify loop: scan -> crop -> propose -> verify."""
         return self._runtime.execute(
@@ -59,7 +61,7 @@ class Compositor:
             inputs={"defects": defects, "design_spec": design_spec or {}},
             tools=["scan_pagemap", "render_range", "crop", "propose_override"],
             output_schema=PROPOSAL_SCHEMA,
-            bound={"pagemap": pagemap or {}},
+            bound={"pagemap": pagemap or {}, "press_pdf": press_pdf},
         )
 
 

@@ -258,8 +258,44 @@ def test_tools_without_a_capability_raise_rather_than_fabricate(name, kwargs):
 
 def test_the_unavailable_tools_say_so_in_their_spec():
     """A surface an agent can read before spending a turn discovering it."""
-    for name in ("crop", "render_range"):
-        assert "UNAVAILABLE" in REGISTRY.spec(name).description
+    assert "UNAVAILABLE" in REGISTRY.spec("render_range").description
+
+
+# ── crop: the press PDF, shown (2026-10-09) ────────────────────
+
+@pytest.fixture
+def press_pdf(tmp_path):
+    from publisher_prepress.ghostscript import find_binary
+    if find_binary() is None:
+        pytest.skip("ghostscript is not installed")
+    weasyprint = pytest.importorskip("weasyprint")
+    pdf = tmp_path / "press.pdf"
+    weasyprint.HTML(string="<style>@page{size:100mm 150mm;margin:10mm} p{break-after:page}</style>"
+                           "<p>one</p><p>two</p>").write_pdf(pdf)
+    return str(pdf)
+
+
+def test_crop_shows_the_page_or_a_region_of_it(press_pdf):
+    from io import BytesIO
+    from PIL import Image
+    from publisher_agents.runtime import CROP_DPI, ToolImage
+    whole = call("crop", page=2, press_pdf=press_pdf)
+    assert isinstance(whole, ToolImage) and whole.caption == "page 2"
+    with Image.open(BytesIO(whole.png)) as image:   # 100 x 150 mm at 144 dpi
+        assert image.size == (round(100 / 25.4 * CROP_DPI), round(150 / 25.4 * CROP_DPI))
+    region = call("crop", page=1, bbox={"x": 10, "y": 20, "width": 100, "height": 50}, press_pdf=press_pdf)
+    with Image.open(BytesIO(region.png)) as image:
+        assert image.size == (200, 100) and "100 x 50 pt" in region.caption
+
+
+@pytest.mark.parametrize("kwargs, reason", [
+    ({"page": 3}, "not in the press PDF"),
+    ({"page": 0}, "numbered from 1"),
+    ({"page": 1, "bbox": {"x": 250, "y": 0, "width": 50, "height": 50}}, "not inside page 1"),
+])
+def test_crop_refuses_what_is_not_on_the_page(press_pdf, kwargs, reason):
+    with pytest.raises(ValueError, match=reason):
+        call("crop", press_pdf=press_pdf, **kwargs)
 
 
 def test_every_registered_tool_is_callable_or_raises_tool_unavailable():

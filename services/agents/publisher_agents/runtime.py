@@ -9,6 +9,7 @@ From AGENT_DESIGN.md §0 and §1:
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import inspect
 import json
@@ -16,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Protocol
 
 
@@ -250,6 +252,8 @@ class AgentAnswerInvalid(ValueError):
 # chapter's nodes) would spend the token budget on one call.
 # ponytail: plain truncation; summarise per tool if agents start needing the tail.
 MAX_TOOL_RESULT_CHARS = 20_000
+CROP_DPI = 144          # a crop is read by a model: twice the raster gate's 72 dpi
+MAX_CROP_PX = 1600      # longest side sent; a whole page at 144 dpi is ~900 x 1300
 
 
 class AgentRuntime:
@@ -345,20 +349,29 @@ class AgentRuntime:
                                  "content": self._dispatch(surface, offered, c, bound)})
         raise AgentBudgetExceeded(f"no final answer within max_turns={budget.max_turns} for role '{role.value}'")
 
-    def _dispatch(self, surface: "ToolSurface", offered: dict, c: ToolCall, bound: dict) -> str:
+    def _dispatch(self, surface: "ToolSurface", offered: dict, c: ToolCall, bound: dict) -> str | list:
         """Run one call and return what the model sees. A tool the call did not
         offer, or one that fails, comes back as an error the model can read --
-        it is never run, and it does not end the loop."""
+        it is never run, and it does not end the loop. A `ToolImage` goes back
+        as a text part and an image part, which the model reads (checked live
+        through OpenRouter on Haiku 4.5 and Sonnet 5, 2026-10-09)."""
         if c.name not in offered:
             return json.dumps({"error": f"no tool named {c.name!r} on this call"})
         fn = self._registry.get(c.name)
         accepted = inspect.signature(fn).parameters
-        # Bound artifacts win over anything the model sent under the same name.
-        kwargs = {**c.arguments, **{k: v for k, v in bound.items() if k in accepted}}
+        # The model may set only what the tool declares; bound artifacts, which
+        # it is never shown (a file path among them), come from the caller alone.
+        declared = offered[c.name].parameters
+        kwargs = {**{k: v for k, v in c.arguments.items() if k in declared},
+                  **{k: v for k, v in bound.items() if k in accepted}}
         try:
             result = surface.call(c.name, **kwargs)
         except Exception as e:
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
+        if isinstance(result, ToolImage):
+            return [{"type": "text", "text": result.caption},
+                    {"type": "image_url", "image_url": {
+                        "url": "data:image/png;base64," + base64.b64encode(result.png).decode("ascii")}}]
         text = json.dumps(result, ensure_ascii=False, default=str)
         if len(text) > MAX_TOOL_RESULT_CHARS:
             text = text[:MAX_TOOL_RESULT_CHARS] + f"... [truncated at {MAX_TOOL_RESULT_CHARS} chars]"
@@ -375,6 +388,14 @@ def _tool_schema(spec: ToolSpec, bound: dict) -> dict:
 
 
 # ── Default tool set ────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ToolImage:
+    """A tool's answer that is a picture: the runtime hands the model the image
+    itself, never a reference to one."""
+    png: bytes
+    caption: str
+
 
 class ToolUnavailable(RuntimeError):
     """A declared tool whose underlying capability this deployment does not have.
@@ -502,23 +523,49 @@ def _init_default_tools():
     
     @register_tool(ToolSpec(
         name="crop",
-        description="Crop a region of a page for visual inspection "
-                    "(UNAVAILABLE: needs a page-raster pipeline)",
-        parameters={"page": {"type": "integer"}, "bbox": {"type": "object"}},
+        description="Look at a page of the book as it prints, or a region of one: "
+                    "bbox {x, y, width, height} in pt from the page's top-left corner "
+                    "(the media box, bleed included); omit it for the whole page",
+        # press_pdf is not a parameter: only the caller binds it (`bound=`).
+        parameters={"page": {"type": "integer", "minimum": 1}, "bbox": {"type": "object"}},
     ))
-    def crop(page: int, bbox: dict | None = None) -> str:
-        """Unavailable: cropping needs a rasterised page, and nothing rasterises one.
+    def crop(page: int, bbox: dict | None = None, press_pdf: str | None = None) -> ToolImage:
+        """The page, or a region of it, as an image of the frozen press PDF.
 
-        This used to return `crop://page-3` — a well-formed reference to an image
-        that was never rendered and that no resolver anywhere knows how to fetch.
-        The Compositor's entire loop is crop → look → propose, so a fabricated
-        crop does not degrade that loop, it invents the evidence it runs on.
+        This reads an artifact, it does not lay anything out: the page comes
+        from the build's own pdfx/1, rendered by `ghostscript.render_pages`
+        (the raster-diff gate's renderer). A new layout is still a build
+        (`render_range`). The file is bound by the caller, never chosen by the
+        model. It used to return `crop://page-3`, a reference to an image
+        nothing had rendered; with no file bound it raises, never pretends.
         """
-        raise ToolUnavailable(
-            f"crop(page={page}) is unavailable: this deployment has no page-raster "
-            f"pipeline. The render path produces a PDF, not per-page images."
-        )
-    
+        import io
+        from PIL import Image
+        from publisher_prepress.ghostscript import render_pages
+
+        if not press_pdf:
+            raise ToolUnavailable(f"crop(page={page}) is unavailable: no press PDF is bound to this call")
+        if page < 1:
+            raise ValueError(f"page {page}: pages are numbered from 1")
+        pages = render_pages(Path(press_pdf), dpi=CROP_DPI, first=page, last=page)
+        if not pages:
+            raise ValueError(f"page {page} is not in the press PDF")
+        image = Image.open(io.BytesIO(pages[0]))
+        caption = f"page {page}"
+        if bbox:
+            x, y, w, h = (float(bbox[k]) for k in ("x", "y", "width", "height"))
+            scale = CROP_DPI / 72
+            box = (round(x * scale), round(y * scale), round((x + w) * scale), round((y + h) * scale))
+            if w <= 0 or h <= 0 or x < 0 or y < 0 or box[2] > image.width or box[3] > image.height:
+                raise ValueError(f"bbox {bbox} is not inside page {page} "
+                                 f"({image.width / scale:.0f} x {image.height / scale:.0f} pt)")
+            image = image.crop(box)
+            caption += f", x {x:g} y {y:g} pt, {w:g} x {h:g} pt"
+        image.thumbnail((MAX_CROP_PX, MAX_CROP_PX))
+        out = io.BytesIO()
+        image.save(out, "PNG")
+        return ToolImage(out.getvalue(), caption)
+
     @register_tool(ToolSpec(
         name="scan_pagemap",
         description="Scan a pagemap for composition defects (widows, orphans, runts)",

@@ -1,5 +1,6 @@
 """Tests for the agent runtime's tool loop (W5) and the agents built on it."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -232,3 +233,38 @@ def test_omitting_role_is_an_error_not_a_bypass():
     with pytest.raises(TypeError):
         reg.call("scoped")                       # type: ignore[call-arg]
     assert reg.call("scoped", AgentRole.COMPOSITOR) == "ran"
+
+# ── crop through the runtime: a bound file, an image the model sees ──────
+
+@pytest.fixture
+def press_pdf(tmp_path):
+    from publisher_prepress.ghostscript import find_binary
+    if find_binary() is None:
+        pytest.skip("ghostscript is not installed")
+    weasyprint = pytest.importorskip("weasyprint")
+    pdf = tmp_path / "press.pdf"
+    weasyprint.HTML(string="<p>one</p>").write_pdf(pdf)
+    return str(pdf)
+
+
+def _compose(provider, bound):
+    return AgentRuntime(provider).execute(AgentRole.COMPOSITOR, "1.0", {"task": "t"}, ["crop"],
+                                          ANY_ANSWER, bound=bound)
+
+
+def test_the_model_cannot_name_the_file_crop_reads(press_pdf):
+    """press_pdf is bound by the caller and is no parameter the model is shown;
+    sent by the model it is dropped, so an unbound crop is unavailable rather
+    than reading a path the model chose."""
+    provider = ScriptedProvider(call("crop", page=1, press_pdf=press_pdf), answer({"ok": True}))
+    _compose(provider, {})
+    assert "no press PDF is bound" in provider.seen[1]["messages"][-1]["content"]
+    assert "press_pdf" not in json.dumps(provider.seen[0]["tools"])
+
+
+def test_a_crop_reaches_the_model_as_an_image(press_pdf):
+    provider = ScriptedProvider(call("crop", page=1), answer({"ok": True}))
+    assert not _compose(provider, {"press_pdf": press_pdf}).failed
+    text, image = provider.seen[1]["messages"][-1]["content"]
+    assert text == {"type": "text", "text": "page 1"}
+    assert image["image_url"]["url"].startswith("data:image/png;base64,iVBOR")

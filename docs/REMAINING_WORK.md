@@ -189,8 +189,15 @@ failed review keeps every proposal and emits `proposal-review-failed`.
 `evaluate_structure_wrangler` was deleted: it scored the simulation's labels. Acceptance is
 now readable from the log (`ov-pr-*` ids).
 
-**Still open:** the Compositor runs but nothing calls it (W11: `crop`/`render_range` need
-rendered pages). The Preflight Explainer is a library call. **Done (2026-10-09):** the
+**Still open:** the Compositor runs but nothing calls it: no build step or route hands it
+a press PDF and a pagemap, and its DesignSpec patches have no accept path yet. **Done
+(2026-10-09): `crop` is real.** It renders a page of the build's frozen press PDF through
+`ghostscript.render_pages` (144 dpi) and crops it to a bbox in pt; the runtime hands the
+model the image itself (`ToolImage` -> a text part and an image part), which Haiku 4.5
+and Sonnet 5 read through OpenRouter (checked live: Sonnet, via the real runtime and
+provider, read a page's first line back). The file is bound by the caller: a model may
+send only the parameters a tool declares, so it cannot name a path. `render_range` stays
+unavailable by design: a new layout is a build. The Preflight Explainer is a library call. **Done (2026-10-09):** the
 Structure Wrangler ran live (Sonnet 5 via Google Vertex) and reviewed real proposals; it
 needed every route repinned to a zero-retention provider that takes `json_schema` and a
 `max_tokens` cap (see §3.5).
@@ -1036,5 +1043,5 @@ On the real book: 0 widows, 0 orphans, 0 runts, notes in order, 821 pages.
    turns verdicts into proposals a reviewer accepts (W4, `STRUCTURE_REPAIR_PLAN.md` B0–B9).
 3. **§1.1 — done (W2).** Reviewers sign in with their own token and their ops carry
    their name; the review loop closes, and has run against the real API (§3.5, §1.2,
-   2026-10-09). What's left across the tiers is the Compositor, which needs rendered
-   pages (W11).
+   2026-10-09). What's left across the tiers is a caller for the Compositor: its `crop`
+   shows the model real pages since 2026-10-09 (§1.2).
