@@ -37,6 +37,7 @@ from . import structure_infer_stage  # noqa: F401 -- registers "structure-infer"
 from . import propose_stage  # noqa: F401 -- registers "structure-propose" (W4)
 from . import secondary_output_stages  # noqa: F401 -- registers "epub", "onix" (E7.2)
 from . import advisory_stage  # noqa: F401 -- registers "manuscript-advisory" (E7.2)
+from . import layout_review_stage  # noqa: F401 -- registers "layout-review" (W11)
 
 __all__ = [
     "acquire_stage",
@@ -54,6 +55,7 @@ __all__ = [
     "structure_infer_stage",
     "secondary_output_stages",
     "advisory_stage",
+    "layout_review_stage",
 ]
 
 # ── IDML deliverable (opt-in) ────────────────────────────────────────────────

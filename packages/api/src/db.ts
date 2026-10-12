@@ -195,6 +195,9 @@ export const DELIVERABLE_SCHEMAS: Readonly<Record<string, string>> = Object.free
   epub: 'epub/1',
   onix: 'onix/1',
   'advisory-report': 'advisory-report/1',
+  // W11: the Compositor's closed verdicts on preflight's page-level warnings;
+  // advisory, present only on a build run with an OpenRouter key.
+  'layout-review': 'layout-review/1',
 });
 
 const OWNED_TABLES = ['titles', 'manuscripts', 'builds', 'webhooks'] as const;

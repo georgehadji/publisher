@@ -152,17 +152,30 @@ def test_the_explainer_reads_its_report_through_the_tool():
     assert '"bleed"' in provider.seen[1]["messages"][-1]["content"]
 
 
-def test_the_compositor_answers_in_agent_proposal_1():
+FINDINGS = [{"id": "widow-p3", "kind": "widow", "page": 3}, {"id": "river-p9", "kind": "river", "page": 9}]
+
+
+def test_the_compositor_gives_a_verdict_per_finding_it_was_given():
     from publisher_agents.compositor import Compositor
-    bad = ScriptedProvider(answer({"proposals": []}))      # no schema/agentId: not agent-proposal/1
-    assert Compositor(AgentRuntime(bad)).scan_and_fix([]).failed
-    good = ScriptedProvider(answer({"schema": "agent-proposal/1", "agentId": "compositor", "proposals": []}))
-    assert not Compositor(AgentRuntime(good)).scan_and_fix([]).failed
+    provider = ScriptedProvider(answer({"verdicts": [
+        {"finding": "river-p9", "verdict": "not-a-defect"},
+        {"finding": "widow-p3", "verdict": "confirmed"},
+        {"finding": "widow-p3", "verdict": "needs-human"}]}))   # repeated: the first counts
+    verdicts, result = Compositor(AgentRuntime(provider)).verify(FINDINGS, "press.pdf")
+    assert not result.failed and verdicts == {"widow-p3": "confirmed", "river-p9": "not-a-defect"}
+    assert [t["function"]["name"] for t in provider.seen[0]["tools"]] == ["crop"]
 
 
-def test_evaluate_compositor_with_no_sets():
-    from publisher_agents.compositor import evaluate_compositor, Compositor
-    assert "fix_success_rate" in evaluate_compositor(Compositor(AgentRuntime(ScriptedProvider())), [])
+def test_the_compositor_cannot_answer_for_a_finding_it_was_not_given():
+    from publisher_agents.compositor import Compositor
+    provider = ScriptedProvider(answer({"verdicts": [{"finding": "runt-p4", "verdict": "confirmed"}]}))
+    verdicts, result = Compositor(AgentRuntime(provider)).verify(FINDINGS, "press.pdf")
+    assert result.failed and verdicts == {}
+
+
+def test_no_findings_no_model_call():
+    from publisher_agents.compositor import Compositor
+    assert Compositor(AgentRuntime(ScriptedProvider())).verify([], "press.pdf") == ({}, None)
 
 
 def test_the_openrouter_provider_sends_tools_schema_and_pins():

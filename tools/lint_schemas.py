@@ -15,6 +15,7 @@ from pathlib import Path
 # Schemas that sit on a structure route (must have no free-text fields)
 STRUCTURE_ROUTE_SCHEMAS = [
     "schemas/classification/classification.schema.json",
+    "schemas/layout-review/layout-review.schema.json",   # the Compositor's verdicts
 ]
 
 # Allowlisted field names that may be string-typed in structure-route schemas.

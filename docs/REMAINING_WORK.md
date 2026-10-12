@@ -189,8 +189,12 @@ failed review keeps every proposal and emits `proposal-review-failed`.
 `evaluate_structure_wrangler` was deleted: it scored the simulation's labels. Acceptance is
 now readable from the log (`ov-pr-*` ids).
 
-**Still open:** the Compositor runs but nothing calls it: no build step or route hands it
-a press PDF and a pagemap, and its DesignSpec patches have no accept path yet. **Done
+**Done (2026-10-12): the Compositor has a caller.** `layout-review` runs after `preflight`
+when an OpenRouter key is configured: for each page preflight warned on (widows, runts,
+hyphen stacks, rivers; at most 8 a build) it crops the press PDF and records `confirmed`,
+`not-a-defect` or `needs-human` in `layout-review/1`, terminal and advisory.
+**Still open:** its DesignSpec patches have no vocabulary or accept path, and nothing
+re-renders a page to verify one. **Done
 (2026-10-09): `crop` is real.** It renders a page of the build's frozen press PDF through
 `ghostscript.render_pages` (144 dpi) and crops it to a bbox in pt; the runtime hands the
 model the image itself (`ToolImage` -> a text part and an image part), which Haiku 4.5
@@ -1043,5 +1047,5 @@ On the real book: 0 widows, 0 orphans, 0 runts, notes in order, 821 pages.
    turns verdicts into proposals a reviewer accepts (W4, `STRUCTURE_REPAIR_PLAN.md` B0–B9).
 3. **§1.1 — done (W2).** Reviewers sign in with their own token and their ops carry
    their name; the review loop closes, and has run against the real API (§3.5, §1.2,
-   2026-10-09). What's left across the tiers is a caller for the Compositor: its `crop`
-   shows the model real pages since 2026-10-09 (§1.2).
+   2026-10-09). The Compositor's caller landed 2026-10-12 (§1.2): it reviews preflight's
+   page-level warnings; DesignSpec patches are what's left of it.

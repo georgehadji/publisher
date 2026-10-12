@@ -39,7 +39,7 @@ import { createHash } from 'crypto';
 const ROOT = resolve(import.meta.dirname, '..');
 const SCHEMA_DIRS = [
   'ast', 'overrides', 'designspec', 'profile', 'preflight',
-  'manifest', 'classification', 'agent-proposal', 'pagemap', 'cover', 'ts'
+  'manifest', 'classification', 'agent-proposal', 'pagemap', 'cover', 'layout-review', 'ts'
 ];
 const OUT_TS = join(ROOT, 'ts');
 const OUT_PY = join(ROOT, 'py');

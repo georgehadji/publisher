@@ -26,7 +26,7 @@
 # fields listed there. `cache_key_adds` on each route is the checklist, not decoration --
 # a route missing a field here is a route that can silently poison its own cache.
 
-policy_version: 5          # bump on ANY edit to this file. Enters art-provenance /
+policy_version: 6          # bump on ANY edit to this file. Enters art-provenance /
                             # inference-result records for provenance, but is
                             # deliberately NOT itself part of any individual route's
                             # cache key -- keying on it would invalidate every route on
@@ -111,6 +111,25 @@ routes:
     schema_version: agent-proposal/1
     cost_per_call: 0.03
     max_tokens: 4096   # one turn: tool calls or a list of proposal ids; unset, OpenRouter reserves the whole window (402)
+    fallback_route: null
+    reasoning:
+      effort: none
+    provider:
+      only: [google-vertex]   # ZDR + json_schema + tools: see the note at structure-classify
+      allow_fallbacks: false
+      require_parameters: true
+      data_collection: deny
+      zdr: true
+
+  layout-review:
+    service: agents      # publisher_agents' Compositor (W11): crops the press PDF at preflight's
+                         # page-level warnings and gives each a closed verdict; changes nothing
+    model: anthropic/claude-sonnet-5   # reads crops through this provider (checked live, 2026-10-09)
+    tier: good
+    prompt_version: "1.0"
+    schema_version: layout-review/1
+    cost_per_call: 0.10
+    max_tokens: 2048   # one turn: crop calls or a list of verdicts; unset, OpenRouter reserves the whole window (402)
     fallback_route: null
     reasoning:
       effort: none

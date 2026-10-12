@@ -426,6 +426,9 @@ def _initial_inputs_for(conn, build: dict, registry) -> dict:
         # W5: the same key lets structure-propose's Structure Wrangler review
         # its proposals. Optional there: without it the proposals go out unreviewed.
         initial_inputs["structure-propose"] = {"api_key": openrouter_key}
+        # W11: and lets layout-review's Compositor look at preflight's page-level
+        # warnings. Required there: without a key it is not reachable.
+        initial_inputs["layout-review"] = {"api_key": openrouter_key}
     # The reviewer's override log. Supplied only when there is one: `resolve`
     # declares overrides_path an OPTIONAL root input whose absence means zero
     # overrides, so a book nobody has reviewed keeps the cache key it had.

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://publisher.internal/schemas/layout-review/1",
+  "title": "LayoutReview",
+  "description": "The Compositor's look at preflight's page-level warnings on the press PDF: one closed verdict per finding, no prose. Advisory: nothing consumes it, and it cannot change a build or the preflight verdict (D9).",
+  "type": "object",
+  "properties": {
+    "schema": { "type": "string", "enum": ["layout-review/1"] },
+    "agentId": { "type": "string", "const": "compositor" },
+    "promptVersion": { "type": "string", "maxLength": 32 },
+    "modelId": { "type": "string", "maxLength": 128 },
+    "costUsd": { "type": "number", "minimum": 0 },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" },
+      "maxItems": 5000
+    }
+  },
+  "required": ["schema", "agentId", "findings"],
+  "additionalProperties": false,
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["widow", "runt", "hyphen-stack", "river"] },
+        "page": { "type": "integer", "minimum": 1 },
+        "verdict": {
+          "type": "string",
+          "enum": ["confirmed", "not-a-defect", "needs-human", "unreviewed"],
+          "description": "unreviewed: over the per-build cap, missing from the answer, or the run failed"
+        }
+      },
+      "required": ["kind", "page", "verdict"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1535,6 +1535,26 @@ class NegativeTag(str, Enum):
     DISTORTED_ANATOMY = "distorted-anatomy"
 
 
+class Finding_Kind(str, Enum):
+    WIDOW = "widow"
+    RUNT = "runt"
+    HYPHEN_STACK = "hyphen-stack"
+    RIVER = "river"
+
+
+class Finding_Verdict(str, Enum):
+    CONFIRMED = "confirmed"
+    NOT_A_DEFECT = "not-a-defect"
+    NEEDS_HUMAN = "needs-human"
+    UNREVIEWED = "unreviewed"
+
+
+class Finding(BaseModel):
+    kind: Finding_Kind
+    page: int
+    verdict: Finding_Verdict
+
+
 class BookAST(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -2021,6 +2041,21 @@ class CoverVerdict(BaseModel):
     schema_: CoverVerdict_Schema = Field(..., alias="schema")
     winner: CoverVerdict_Winner
     modelInfo: CoverVerdict_ModelInfo
+
+
+class LayoutReview_Schema(str, Enum):
+    LAYOUT_REVIEW_1 = "layout-review/1"
+
+
+class LayoutReview(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_: LayoutReview_Schema = Field(..., alias="schema")
+    agentId: str
+    promptVersion: Optional[str] = Field(default=None)
+    modelId: Optional[str] = Field(default=None)
+    costUsd: Optional[float] = Field(default=None)
+    findings: list[Finding]
 
 
 

@@ -1053,6 +1053,19 @@ export type TypeZone = z.infer<typeof TypeZoneSchema>;
 export const NegativeTagSchema = z.enum(["text", "readable-typography", "logo", "watermark", "photorealistic-face", "real-person-likeness", "brand-marks", "signature", "clutter", "low-contrast-center", "extra-limbs", "distorted-anatomy"]);
 export type NegativeTag = z.infer<typeof NegativeTagSchema>;
 
+export const Finding_KindSchema: z.ZodTypeAny = z.enum(["widow", "runt", "hyphen-stack", "river"]);
+export type Finding_Kind = z.infer<typeof Finding_KindSchema>;
+
+export const Finding_VerdictSchema: z.ZodTypeAny = z.enum(["confirmed", "not-a-defect", "needs-human", "unreviewed"]);
+export type Finding_Verdict = z.infer<typeof Finding_VerdictSchema>;
+
+export const FindingSchema = z.object({
+  "kind": z.lazy(() => Finding_KindSchema),
+  "page": z.number().int().min(1),
+  "verdict": z.lazy(() => Finding_VerdictSchema),
+});
+export type Finding = z.infer<typeof FindingSchema>;
+
 export const BookASTSchema = z.object({
   "schema": BookAST_SchemaRefSchema,
   "metadata": MetadataSchema.optional(),
@@ -1422,3 +1435,16 @@ export const CoverVerdictSchema = z.object({
   "modelInfo": z.lazy(() => CoverVerdict_ModelInfoSchema),
 });
 export type CoverVerdict = z.infer<typeof CoverVerdictSchema>;
+
+export const LayoutReview_SchemaSchema: z.ZodTypeAny = z.enum(["layout-review/1"]);
+export type LayoutReview_Schema = z.infer<typeof LayoutReview_SchemaSchema>;
+
+export const LayoutReviewSchema = z.object({
+  "schema": z.lazy(() => LayoutReview_SchemaSchema),
+  "agentId": z.string(),
+  "promptVersion": z.string().max(32).optional(),
+  "modelId": z.string().max(128).optional(),
+  "costUsd": z.number().min(0).optional(),
+  "findings": z.array(FindingSchema).max(5000),
+});
+export type LayoutReview = z.infer<typeof LayoutReviewSchema>;
