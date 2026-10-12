@@ -1,6 +1,6 @@
 ---
 name: publisher-templates
-description: Map of the `templates/` folder — the DesignSpec preset library (literary, thriller, memoir, academic, poetry, scifi, childrens, reference, and four Greek trade sizes) that seeds a book's typography, margins, folios, running heads and chapter openings. Use this whenever a task touches book design defaults, adding or editing a template/preset, font pairings, drop caps, baseline grids, or asks "where do the starter designs live". Read before editing templates/.
+description: Map of the `templates/` folder — the DesignSpec preset library (literary, thriller, memoir, academic, poetry, scifi, childrens, reference, and four Greek trade sizes) that seeds a book's typography, margins, folios, running heads and chapter openings. Use this whenever a task touches book design defaults, adding or editing a template/preset, font pairings, drop caps, baseline grids, or asks "where do the starter designs live". Read before editing templates/. Read-only reference data — values are looked up here, never inferred.
 ---
 
 # `templates/` — DesignSpec presets

@@ -72,6 +72,12 @@ book build attempting it.
 (default `./.publisher/cas`), sharded `h[:2]/h[2:4]/h`. Stages write via `ctx.cas_root` —
 never `ctx.work_dir`, which is scratch and is deleted.
 
+**Reference data is looked up, never inferred.** `profiles/`, `templates/` and `schemas/`
+are read-only reference: read a trim, bleed, spine, gutter or schema value from the file,
+never reason one out, and change one only as a deliberate product decision. A guessed vendor
+value builds an internally consistent book that passes every gate here and is rejected by the
+vendor (`docs/CONTEXT_ARCHITECTURE.md` C2).
+
 **Hard gates. None may be softened.**
 - *Text integrity* (`ast-assemble`): `normalize(text(html)) == normalize(text(source))`.
   Fails the build outright. No override flag exists, deliberately.
@@ -177,15 +183,6 @@ suite; run those markers explicitly before claiming one.
 
 ## Docs
 
-`docs/ARCHITECTURE.md` (normative as of E7.1 — see its own "Status" note) ·
-`ARCHITECTURE_ROADMAP.md` (new, E7.1 — what ARCHITECTURE.md used to claim but was never built) ·
-`BUILD_PLAN.md` (phases, decisions D1–D10) ·
-`ARCHITECTURE_REMEDIATION.md` (A0–A2 landed; A3–A5 folded into `ARCHITECTURE_SCORE_10_PLAN.md`'s E1/E6/E7, landed there) ·
-`ARCHITECTURE_UPLIFT_PLAN.md` (U1–U7 implemented; U8–U9 folded into the same plan's E0.3/E2.3, landed there) ·
-`BLOCKING_FIX_PLAN.md` (D1–D3 landed in c5cfad3) ·
-`COST_AND_STABILITY_PLAN.md` · `REMEDIATION_PLAN.md` (complete) ·
-`VERIFICATION_PLAN.md` (G1–G8 — gates that cannot fail; own header says draft, but E0 below implements and generalises it) ·
-`CONTEXT_ARCHITECTURE.md` (C1–C4 — ICM evaluated against this repo; **research memo**) ·
-`ARCHITECTURE_SCORE_10_PLAN.md` (E0–E7 — EGFV v3.0 audit 5/10 → 10/10; **E0–E7 landed+tested**. E4/E5/E6 verified against a real Docker stack (migrations upgrade idempotently, RLS-constrained non-owner roles, fail-closed route auth with argon2id-hashed tokens, `structure-infer` guarded-reachable behind `infra/llm-egress`'s allowlist proxy — see git history for the full per-workstream detail). **E7**: E7.1 split `ARCHITECTURE.md` into normative (as-built §2.3/§2.13/§2.14) + `ARCHITECTURE_ROADMAP.md` (dated, triggered deferrals — Temporal pools (since partially built -- see R1's own status), a third emitter + cross-emitter agreement gate, S3/R2); E7.2 wired all three previously-dead packages (`epub`/`onix`/`manuscript-advisory` are real always-on-or-guarded stages, not just built-with-no-caller) — verified end-to-end against the real compose stack (upload → build → `epub`/`onix`/`manuscript-advisory`/`finish-gs`/`preflight`/`package` all complete, all three new artifact kinds downloadable via the existing generic artifact route); E7.3 added `tools/lint_docs_claims.py` (5 mechanical checks: folder-map paths, §2.14 tree, stage count, stage names, cross-reference identifiers), registered in E0.1's meta-gate with a mutation proving it can fail.
-
-Full index with per-document status: the **publisher-docs** skill.
+Start at `docs/ARCHITECTURE.md` (normative) and `docs/REMAINING_WORK.md` (what is open).
+Every document's status, the identifier series it owns and what has landed live in one
+place: the **publisher-docs** skill. Do not restate them here.

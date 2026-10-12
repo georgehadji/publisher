@@ -1,6 +1,7 @@
 # Context Architecture — evaluating ICM against what Publisher already has
 
-> **Status: research memo, 2026-08-24. Nothing implemented.** Owns identifier series **C1–C4**.
+> **Status: research memo, 2026-08-24. C2 implemented 2026-10-12; C1 and C3 open** (§8).
+> Owns identifier series **C1–C4**.
 > Two of the four proposals are amendments to existing `VERIFICATION_PLAN.md` items rather than
 > new work; that is called out per item.
 
@@ -215,3 +216,31 @@ Taken that way, ICM costs under a day and closes a defect class the derived-DAG 
 reach — an agent inventing a vendor value that every internal gate accepts. Taken literally, it
 would add seventeen unverified prose contracts to a repo whose central discipline is that facts
 are derived and their guards must be able to fail.
+
+---
+
+## 8. Audit, 2026-10-12
+
+Seven weeks on, against the same ICM conventions. §1–§4 hold; nothing below reopens C4.
+
+**C2 landed.** One paragraph in `CLAUDE.md`'s architecture section ("Reference data is looked
+up, never inferred") and one sentence at the end of the `publisher-profiles`,
+`publisher-templates` and `publisher-schemas` skill descriptions, so it is resident even when
+no skill body loads.
+
+**The drift §3 predicted happened, in the hand-written half.** Three facts had two homes
+(ICM's Pattern 5, canonical sources), and in each case one copy rotted:
+
+- `publisher-docs` said "U8–U9 open" in its rules while its own status table said they had
+  landed under E0.3/E2.3. The rule now points at the table instead of restating it.
+- `CLAUDE.md`'s Docs section restated every plan's status, duplicating `publisher-docs`. It
+  is now a three-line pointer; the per-plan detail it carried moved into that skill's table,
+  which also gained the two documents it was missing (`REMAINING_WORK.md`, `WIRING_PLAN.md`).
+  This also takes about 20 lines off the always-loaded file.
+- `publisher-services`' prepress table had no row for `margins.py` or `spacing.py`, and its
+  agents rows predated the crop tool. Added.
+
+**Still open, in order.** C3 (the `work_dir` lint) is unchanged. For C1, the cheap version is
+now evidenced: the services-table drift above is exactly what a check that every `.py` in a
+service package appears in its skill's file table would catch, and that fits as a sixth
+check in `tools/lint_docs_claims.py`. Full table generation is still not worth its cost.

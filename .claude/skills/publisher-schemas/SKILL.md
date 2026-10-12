@@ -1,6 +1,6 @@
 ---
 name: publisher-schemas
-description: Map of the `schemas/` folder — the JSON Schema source of truth (ast, overrides, designspec, profile, preflight, manifest, classification, agent-proposal, pagemap, cover/*) and the codegen that turns them into Pydantic + Zod types. Use this whenever a task adds or changes an artifact schema, a stage's input/output contract, a schema ID, or the generated types; or asks "what shape is an AST / DesignSpec / PreflightReport". Read before editing anything under schemas/.
+description: Map of the `schemas/` folder — the JSON Schema source of truth (ast, overrides, designspec, profile, preflight, manifest, classification, agent-proposal, pagemap, cover/*) and the codegen that turns them into Pydantic + Zod types. Use this whenever a task adds or changes an artifact schema, a stage's input/output contract, a schema ID, or the generated types; or asks "what shape is an AST / DesignSpec / PreflightReport". Read before editing anything under schemas/. Read-only reference data — values are looked up here, never inferred.
 ---
 
 # `schemas/` — the source of truth

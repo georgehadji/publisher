@@ -1,6 +1,6 @@
 ---
 name: publisher-profiles
-description: Map of the `profiles/` folder — vendor output profiles as versioned YAML data (KDP, IngramSpark, Lulu, generic 6x9, Greek trade sizes) plus the loader. Use this whenever a task touches trim size, bleed, PDF/X spec, colour space, vendor requirements, adding or changing a print vendor, or asks "what does preflight measure against". Read before editing anything under profiles/.
+description: Map of the `profiles/` folder — vendor output profiles as versioned YAML data (KDP, IngramSpark, Lulu, generic 6x9, Greek trade sizes) plus the loader. Use this whenever a task touches trim size, bleed, PDF/X spec, colour space, vendor requirements, adding or changing a print vendor, or asks "what does preflight measure against". Read before editing anything under profiles/. Read-only reference data — values are looked up here, never inferred.
 ---
 
 # `profiles/` — vendor specs as data, not code
