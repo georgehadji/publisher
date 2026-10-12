@@ -4,7 +4,7 @@ Docs-claims lint -- docs/ARCHITECTURE_SCORE_10_PLAN.md E7.3.
 
 `L20`: CLAUDE.md said "The 17 `@stage(...)` declarations" when the registry had 19 (now
 24). A small, hand-written number nobody regenerates is the whole failure class this
-closes -- not just that one claim. Five mechanically-checkable claims, each real drift
+closes -- not just that one claim. Six mechanically-checkable claims, each real drift
 this repo has actually had:
 
   1. Every backtick-wrapped path in CLAUDE.md's folder-map table exists.
@@ -15,6 +15,9 @@ this repo has actually had:
   5. Every work-item identifier (D8, U5, A3, E7.2, ...) referenced anywhere under docs/ or
      CLAUDE.md is DEFINED somewhere under docs/ (a heading or a bolded anchor) -- catches
      a typo'd or renamed identifier, not just a missing file.
+  6. Every non-empty module of a services/*/publisher_*/ package has a row in the
+     publisher-services skill's file tables (C1, partial: docs/CONTEXT_ARCHITECTURE.md §8 --
+     margins.py and spacing.py shipped with no row, and nothing noticed).
 
 This is deliberately NOT a general prose-checker: each check is narrow and mechanical, on
 purpose (a gate that flags true positives loses trust and gets disabled -- E0.1's own
@@ -33,6 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 ARCHITECTURE_MD = REPO_ROOT / "docs" / "ARCHITECTURE.md"
 DOCS_DIR = REPO_ROOT / "docs"
+SERVICES_SKILL = REPO_ROOT / ".claude" / "skills" / "publisher-services" / "SKILL.md"
 
 
 def _stage_names_from_registry() -> set[str]:
@@ -177,12 +181,29 @@ def check_identifiers_are_defined(violations: list[str]) -> None:
         )
 
 
+# ── 6. Every service module has a row in the publisher-services skill ──────
+
+def check_service_modules_are_mapped(violations: list[str]) -> None:
+    """A row cites a module as `<service>/publisher_<x>/<file>.py` or, inside that
+    service's own section, as `publisher_<x>/<file>.py`; either form counts. An
+    empty `__init__.py` has nothing to describe."""
+    cited = set(re.findall(r"`([\w/.-]+\.py)`", SERVICES_SKILL.read_text(encoding="utf-8")))
+    services = REPO_ROOT / "services"
+    for path in sorted(services.glob("*/publisher_*/**/*.py")):
+        if path.stat().st_size == 0:
+            continue
+        rel = path.relative_to(services).as_posix()
+        if rel not in cited and rel.split("/", 1)[1] not in cited:
+            violations.append(f"services/{rel} has no row in {SERVICES_SKILL.relative_to(REPO_ROOT).as_posix()}")
+
+
 def main() -> int:
     violations: list[str] = []
     check_claude_md_folder_paths(violations)
     check_architecture_repo_tree(violations)
     check_stage_count_and_names(violations)
     check_identifiers_are_defined(violations)
+    check_service_modules_are_mapped(violations)
 
     if violations:
         print(f"Docs-claims lint FAILED: {len(violations)} violation(s)")

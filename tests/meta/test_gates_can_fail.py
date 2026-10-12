@@ -218,6 +218,13 @@ def _pip_audit_unusable_reason() -> str | None:
     return None
 
 
+def add_unmapped_service_module(root: Path) -> None:
+    """Check 6's shape: a new service module with no row in the
+    publisher-services skill -- how margins.py and spacing.py shipped."""
+    (root / "services" / "prepress" / "publisher_prepress" / "meta_gate_probe.py").write_text(
+        "PROBE = 1\n", encoding="utf-8")
+
+
 def add_nonexistent_path_to_architecture_md(root: Path) -> None:
     """E7.3's own shape: cite a path in ARCHITECTURE.md's §2.14 repo tree that
     does not exist -- exactly the class `L18`/`L20` were (a hand-written
@@ -312,6 +319,12 @@ GATES: list[Gate] = [
         cmd=[sys.executable, "tools/lint_docs_claims.py"],
         cwd=".",
         mutate=add_nonexistent_path_to_architecture_md,
+    ),
+    Gate(
+        id="docs-claims-service-map",
+        cmd=[sys.executable, "tools/lint_docs_claims.py"],
+        cwd=".",
+        mutate=add_unmapped_service_module,
     ),
 ]
 

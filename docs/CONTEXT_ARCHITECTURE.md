@@ -1,6 +1,6 @@
 # Context Architecture — evaluating ICM against what Publisher already has
 
-> **Status: research memo, 2026-08-24. C2 implemented 2026-10-12; C1 and C3 open** (§8).
+> **Status: research memo, 2026-08-24. C2 and C3 implemented 2026-10-12, C1 in part** (§8).
 > Owns identifier series **C1–C4**.
 > Two of the four proposals are amendments to existing `VERIFICATION_PLAN.md` items rather than
 > new work; that is called out per item.
@@ -240,7 +240,17 @@ no skill body loads.
 - `publisher-services`' prepress table had no row for `margins.py` or `spacing.py`, and its
   agents rows predated the crop tool. Added.
 
-**Still open, in order.** C3 (the `work_dir` lint) is unchanged. For C1, the cheap version is
-now evidenced: the services-table drift above is exactly what a check that every `.py` in a
-service package appears in its skill's file table would catch, and that fits as a sixth
-check in `tools/lint_docs_claims.py`. Full table generation is still not worth its cost.
+**C3 landed as a check in the executor, not a lint.** By 2026-10-12 nine stage modules used
+`ctx.work_dir`, every one as scratch, so the lint §4 proposed would have been an allowlist
+with nothing to catch. The boundary failed somewhere else: `_register_artifacts`
+(`platform/exec/py/publisher_exec/__init__.py`) registered an artifact it could not find in
+the CAS as its bare hash, as if that were a path. A stage that left its output in `work_dir`
+therefore failed later, in whichever stage opened it, or never, for a terminal output. It
+now raises `ENGINE_BUG` naming the stage and the artifact. A cache entry whose blobs have
+left the CAS is treated as a miss rather than a hit. Proved by
+`platform/exec/py/tests/test_run_single_stage.py`.
+
+**C1, in part.** `tools/lint_docs_claims.py` check 6: every non-empty module under
+`services/*/publisher_*/` must have a row in the `publisher-services` skill. It found five
+modules with no row on landing (`docx_rich.py`, `classify_contract.py`, `scribus_check.py`
+and two `__init__.py` files), now added. Full table generation is still not worth its cost.
