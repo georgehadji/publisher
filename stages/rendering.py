@@ -172,6 +172,15 @@ KEEP = "_keep"
 KEEP_TAIL_CHARS = 40
 KEEP_CELL_CHARS = 16
 
+# K2: a paragraph's `fit` attribute -> the tracking its text is set with, in em.
+# The lever a typesetter pulls on a widow: track one paragraph tighter or looser so
+# it gains or loses a line, without reflowing the book. House constants, to be
+# tuned on the real book; the keys are ast.schema.json's enum (a test pins them).
+# Print only, set as `<span class="fit-<value>">` around the paragraph's text:
+# pandoc drops a <p>'s classes but keeps a span's, so the Typst path's Lua filter
+# sees the same markup the CSS path styles. Tracking adds no characters.
+FIT_TRACKING = {"tighter": -0.02, "tight": -0.01, "loose": 0.01, "looser": 0.02}
+
 
 def _keep_tail(content: list, cap: int = KEEP_TAIL_CHARS, after: str = "") -> list:
     """`content` with its final two words wrapped in one KEEP node, when they sit
@@ -521,12 +530,16 @@ def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None
                 calls = "".join(call for call, _ in rendered) + endnote_calls
                 kept = _keep_tail(inline, cap, after=calls)
                 text = _render_inline(kept) + ("" if kept is not inline else calls)
+                fit = (node.get("attrs") or {}).get("fit")
+                if fit:
+                    text = f'<span class="fit-{fit}">{text}</span>'
                 # K1: the paragraph's address, so paginate can name the node behind
                 # a widow or runt. An attribute, not text: the integrity gate is blind to it.
                 ref = (node.get("sourceRef") or {}).get("docxId")
                 ref_attr = f' data-ref="{_escape_html(ref)}"' if ref else ""
                 parts.append(f'<p class="{cls}"{ref_attr}>{text}{"".join(body for _, body in rendered)}</p>')
             else:
+                # `fit` is ignored here on purpose (K2): a reflowing book has no fixed line to save.
                 text = _render_inline(inline)
                 calls = [notes.call() for _ in cited]
                 refs = "".join(ref for ref, _ in calls) + endnote_calls
@@ -1004,6 +1017,9 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
         ".keep {",
         "  white-space: nowrap;",
         "}",
+        "",
+        # A paragraph's `fit` (K2, FIT_TRACKING).
+        *(f".fit-{name} {{ letter-spacing: {em:g}em; }}" for name, em in FIT_TRACKING.items()),
         "",
         ".chapter {",
         f"  page: chapter-opening;",

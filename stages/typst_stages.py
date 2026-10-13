@@ -55,8 +55,8 @@ from templates import complete_designspec, house_designspec
 # The fallbacks for the page-furniture blocks, shared with the CSS emitter so
 # both engines cannot drift apart on what a running head is. Moved to
 # stages/rendering.py in E1.3 along with emit_css itself.
-from stages.rendering import (BODY_ALIGNMENT, black_plate, book_identity, chapter_title_pt, head_side,
-                              inside_margin_mm, running_heads_plan)
+from stages.rendering import (BODY_ALIGNMENT, FIT_TRACKING, black_plate, book_identity, chapter_title_pt,
+                              head_side, inside_margin_mm, running_heads_plan)
 
 TYPST_SCHEMA = "text/x-typst"
 
@@ -259,7 +259,7 @@ def _furniture_typst(block: dict, body_size: float) -> tuple[str, str]:
 
 @stage(
     name="design-compile-typst",
-    version=11,   # v11: module-level bump (paginate-typst v11). v10: the completed DesignSpec (see design-compile v11); document title/author/lang from the AST. v9: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
+    version=12,   # v12: module-level bump (a paragraph's `fit` sets its tracking (K2)). v11: module-level bump (paginate-typst v11). v10: the completed DesignSpec (see design-compile v11); document title/author/lang from the AST. v9: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
                  # v5: figures reach the renderer without alpha (stages/media.py opaque).
                  # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: none to its output; paginate-typst's rendering changed in this module.
@@ -434,7 +434,24 @@ def _mark(fields: str) -> str:
 # note set in pieces, the later ones classed `footnote-cont`. Typst numbers its
 # own notes and breaks a long one across pages by itself, so the call is dropped
 # and every piece is folded back into the note it continues -- one `#footnote`.
-FOOTNOTE_FILTER_LUA = """
+#
+# A paragraph's `fit` (K2) arrives as `<span class="fit-<value>">` around its text
+# and is set as `#text(tracking: ...)[...]`, from the same table the CSS path uses
+# (rendering.FIT_TRACKING): honoured here, not dropped.
+FOOTNOTE_FILTER_LUA = "local FIT = {" + ", ".join(
+    f'["fit-{name}"] = "{em:g}em"' for name, em in FIT_TRACKING.items()) + "}\n" + """
+function Span(el)
+  for _, class in ipairs(el.classes) do
+    local tracking = FIT[class]
+    if tracking then
+      local out = pandoc.Inlines({pandoc.RawInline("typst", "#text(tracking: " .. tracking .. ")[")})
+      out:extend(el.content)
+      out:insert(pandoc.RawInline("typst", "]"))
+      return out
+    end
+  end
+end
+
 local function span_of(el, class)
   return el.t == "Span" and el.classes:includes(class)
 end
@@ -630,7 +647,7 @@ def _pin_fonts(styles: str, dest: Path) -> list[str]:
 
 @stage(
     name="paginate-typst",
-    version=11,   # v11: typst sees only the vault's files for the faces it names (--font-path, --ignore-system-fonts), and the cache key includes their bytes. v10: module-level bump (design-compile-typst v10). v9: module-level bump (black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black.) v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
+    version=12,   # v12: a paragraph's `fit` sets its tracking: the Lua filter maps its span to #text(tracking:) (K2). v11: typst sees only the vault's files for the faces it names (--font-path, --ignore-system-fonts), and the cache key includes their bytes. v10: module-level bump (design-compile-typst v10). v9: module-level bump (black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black.) v8: module-level bump (notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).) v7: module-level bump (keep span: a paragraph's last two words never split in print (no runts).) v6: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped; the Lua filter folds split notes back into one.
                  # v5: figures reach the renderer without alpha (stages/media.py opaque).
                  # v3: default face GFS Didot (was EB Garamond, installed nowhere).
                  # v4: link hrefs are percent-encoded (rendering._safe_href).

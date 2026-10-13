@@ -94,11 +94,15 @@ export type Paragraph_Attrs_Role = z.infer<typeof Paragraph_Attrs_RoleSchema>;
 export const Paragraph_Attrs_AlignmentSchema: z.ZodTypeAny = z.enum(["left", "center", "right", "justify"]);
 export type Paragraph_Attrs_Alignment = z.infer<typeof Paragraph_Attrs_AlignmentSchema>;
 
+export const Paragraph_Attrs_FitSchema: z.ZodTypeAny = z.enum(["tighter", "tight", "loose", "looser"]);
+export type Paragraph_Attrs_Fit = z.infer<typeof Paragraph_Attrs_FitSchema>;
+
 export const Paragraph_AttrsSchema: z.ZodTypeAny = z.object({
   "role": z.lazy(() => Paragraph_Attrs_RoleSchema).optional(),
   "indent": z.number().min(0).optional(),
   "alignment": z.lazy(() => Paragraph_Attrs_AlignmentSchema).optional(),
   "language": z.string().regex(new RegExp("^[a-z]{2,3}(-[A-Z]{2})?$")).optional(),
+  "fit": z.lazy(() => Paragraph_Attrs_FitSchema).optional(),
 });
 export type Paragraph_Attrs = z.infer<typeof Paragraph_AttrsSchema>;
 

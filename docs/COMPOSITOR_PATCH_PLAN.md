@@ -1,6 +1,6 @@
 # Compositor patches — from a verdict to a fix a reviewer accepts
 
-**Status:** plan, 2026-10-13, against `18c2e7a`. **K1 built** (2026-10-13); K2–K5 open. Owns identifier series **K0–K5**.
+**Status:** plan, 2026-10-13, against `18c2e7a`. **K1, K2 built** (2026-10-13); K3–K5 open. Owns identifier series **K0–K5**.
 **Follows:** `WIRING_PLAN.md` W11 (the Compositor's caller, `layout-review`, landed in `18c2e7a`).
 
 Today `layout-review` looks at each page preflight warned on and records `confirmed`,
@@ -72,6 +72,14 @@ an AST address.
   `ast_to_epub_sections`.
 - **The test that matters:** a real render where `fit: tight` on the widowed paragraph
   removes the widow line. Without it the lever is decorative.
+- *As built:* pandoc's HTML reader drops a `<p>`'s classes, so the value rides on a
+  `<span class="fit-<value>">` around the paragraph's text (print only), which both paths
+  read: `emit_css` tracks the class, the Lua filter (`FOOTNOTE_FILTER_LUA`) turns the span
+  into `#text(tracking:)[…]`. One table, `rendering.FIT_TRACKING`, feeds both; a test pins
+  its keys to the schema enum. The real-render test sweeps paragraph lengths with the K1
+  measurement page rather than needing a Word-corpus fixture: the lever needs no `docxId`,
+  only K3's proposal does. On that page `tight` clears some widows, `tighter` more, `loose`
+  none. Bumps: `extract`, `paginate`, `design-compile`, `design-compile-typst`, `paginate-typst`.
 
 ## K3 — Proposals in `layout-review/1`
 

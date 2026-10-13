@@ -206,7 +206,11 @@
             },
             "indent": { "type": "number", "minimum": 0 },
             "alignment": { "type": "string", "enum": ["left", "center", "right", "justify"] },
-            "language": { "type": "string", "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$" }
+            "language": { "type": "string", "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$" },
+            "fit": {
+              "type": "string", "enum": ["tighter", "tight", "loose", "looser"],
+              "description": "Print tracking for this paragraph, to gain or lose a line (K2). Absent: as designed. Set through the override log, never by ingest"
+            }
           },
           "additionalProperties": false
         },

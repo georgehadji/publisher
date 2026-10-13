@@ -166,11 +166,19 @@ class Paragraph_Attrs_Alignment(str, Enum):
     JUSTIFY = "justify"
 
 
+class Paragraph_Attrs_Fit(str, Enum):
+    TIGHTER = "tighter"
+    TIGHT = "tight"
+    LOOSE = "loose"
+    LOOSER = "looser"
+
+
 class Paragraph_Attrs(BaseModel):
     role: Optional[Paragraph_Attrs_Role] = Field(default=None)
     indent: Optional[float] = Field(default=None)
     alignment: Optional[Paragraph_Attrs_Alignment] = Field(default=None)
     language: Optional[str] = Field(default=None)
+    fit: Optional[Paragraph_Attrs_Fit] = Field(default=None)
 
     @field_validator("language")
     @classmethod

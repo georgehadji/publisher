@@ -140,6 +140,13 @@ def test_set_attr_with_no_value_removes_the_attribute():
     assert "alignment" not in (_node(_apply(set_, unset), "p1").get("attrs") or {})
 
 
+def test_a_paragraphs_fit_is_set_through_the_log_and_only_to_a_declared_step():
+    """K2: the Compositor's lever is an ordinary set_attr, because the schema declares it."""
+    out = _apply(_op("set_attr", "p1", path="/attrs/fit", value="tight"))
+    assert _node(out, "p1")["attrs"]["fit"] == "tight"
+    _refused(_op("set_attr", "p1", path="/attrs/fit", value="squeeze"), "is not one of")
+
+
 @pytest.mark.parametrize("path, value, reason", [
     ("/attrs/startsOn", "sideways", "is not one of"),
     ("/attrs/title", "X", "`title` is set by retitle"),
