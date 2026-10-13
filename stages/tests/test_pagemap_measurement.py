@@ -135,3 +135,49 @@ def test_unmeasurable_pages_leave_the_fields_absent_rather_than_false():
         assert "hasOrphans" not in page
         assert "hasRunts" not in page
         assert "wordCount" not in page
+
+
+# ── K1 (docs/COMPOSITOR_PATCH_PLAN.md): which paragraph a flag is about ──────
+
+def _book(*paragraphs: tuple[str | None, str]) -> dict:
+    """An ast/1 with one chapter of (docxId, text) paragraphs; None = no docxId."""
+    body = [{"type": "paragraph", "content": [{"type": "text", "text": text}],
+             **({"sourceRef": {"docxId": ref}} if ref else {})} for ref, text in paragraphs]
+    return {"schema": "ast/1", "body": [{"type": "chapter", "attrs": {"number": 1, "id": "ch1", "title": "One"},
+                                         "content": body}]}
+
+
+def test_print_html_carries_each_paragraphs_docx_id_and_the_epub_does_not():
+    from stages.rendering import ast_to_epub_sections, ast_to_html
+    book = _book(("p-a\"b", "has an id"), (None, "has none"))
+    html = ast_to_html(book)
+    assert 'data-ref="p-a&quot;b"' in html and html.count("data-ref=") == 1
+    sections = ast_to_epub_sections(book)
+    assert sections and all("data-ref" not in s["body"] for s in sections)
+    assert "has an id" in sections[0]["body"]
+
+
+def test_a_widow_names_the_paragraph_it_belongs_to():
+    for words in SWEEP:
+        measured = _measure(f'<p data-ref="long">{"wd " * words}</p><p data-ref="tail">tail here</p>')
+        flagged = [p for p, f in measured.items() if f["hasWidows"]]
+        if not flagged:
+            continue
+        page = measured[flagged[0]]
+        assert page["widowRefs"] == ["long"]
+        assert {r.get("ref") for r in page["paraRanges"]} <= {"long", "tail"}
+        return
+    pytest.fail("no widow produced across the swept paragraph lengths")
+
+
+def test_a_paragraph_without_an_id_gets_no_ref_rather_than_a_guess():
+    for words in SWEEP:
+        measured = _measure(f'<p>{"wd " * words}</p><p data-ref="tail">tail here</p>')
+        flagged = [p for p, f in measured.items() if f["hasWidows"]]
+        if not flagged:
+            continue
+        page = measured[flagged[0]]
+        assert "widowRefs" not in page
+        assert all("ref" not in r or r["ref"] == "tail" for r in page["paraRanges"])
+        return
+    pytest.fail("no widow produced across the swept paragraph lengths")

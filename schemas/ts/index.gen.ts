@@ -993,6 +993,7 @@ export type PageEntry_Type = z.infer<typeof PageEntry_TypeSchema>;
 export const PageEntry_ParaRangesItemSchema: z.ZodTypeAny = z.object({
   "paraIndex": z.number().int().min(0),
   "linesOnPage": z.number().int().min(1),
+  "ref": z.string().max(128).optional(),
 });
 export type PageEntry_ParaRangesItem = z.infer<typeof PageEntry_ParaRangesItemSchema>;
 
@@ -1009,6 +1010,8 @@ export const PageEntrySchema = z.object({
   "hasOrphans": z.boolean().optional(),
   "hasWidows": z.boolean().optional(),
   "hasRunts": z.boolean().optional(),
+  "widowRefs": z.array(z.string().max(128)).max(200).optional(),
+  "runtRefs": z.array(z.string().max(128)).max(200).optional(),
   "wordCount": z.number().int().min(0).optional(),
   "defectScore": z.number().min(0).optional(),
   "paraRanges": z.array(z.lazy(() => PageEntry_ParaRangesItemSchema)).max(200).optional(),

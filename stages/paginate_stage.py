@@ -193,6 +193,7 @@ def _measure_pages(rendered_pages) -> dict[int, dict]:
         return {}
 
     para_index: dict = {}                     # element -> index, document order
+    para_ref: dict[int, str] = {}             # para index -> its AST docxId (K1), when it has one
     lines: dict[int, dict[int, int]] = {}     # page -> para index -> lines here
     words: dict[int, int] = {}                # page -> word count
     total_lines: dict[int, int] = {}          # para index -> lines everywhere
@@ -212,6 +213,9 @@ def _measure_pages(rendered_pages) -> dict[int, dict]:
                     continue   # anonymous box: no source paragraph to attribute
                 if element not in para_index:
                     para_index[element] = len(para_index)
+                    ref = element.get("data-ref") if hasattr(element, "get") else None
+                    if ref:
+                        para_ref[para_index[element]] = ref
                 index = para_index[element]
                 page_lines[index] = page_lines.get(index, 0) + 1
                 total_lines[index] = total_lines.get(index, 0) + 1
@@ -237,6 +241,8 @@ def _measure_pages(rendered_pages) -> dict[int, dict]:
     measured: dict[int, dict] = {}
     for page_number, page_lines in lines.items():
         orphan = widow = runt = False
+        widow_refs: list[str] = []
+        runt_refs: list[str] = []
         for index, count in page_lines.items():
             where = spans[index]
             if count == 1 and len(where) > 1:
@@ -244,6 +250,7 @@ def _measure_pages(rendered_pages) -> dict[int, dict]:
                     orphan = True    # first line stranded, paragraph continues
                 elif page_number == where[-1]:
                     widow = True     # last line stranded, paragraph began earlier
+                    widow_refs += [para_ref[index]] if index in para_ref else []
             if (
                 page_number == where[-1]
                 and total_lines.get(index, 0) > 1
@@ -251,15 +258,22 @@ def _measure_pages(rendered_pages) -> dict[int, dict]:
                 and last_line_short.get(index, True)
             ):
                 runt = True
+                runt_refs += [para_ref[index]] if index in para_ref else []
         entry: dict = {
             "hasOrphans": orphan,
             "hasWidows": widow,
             "hasRunts": runt,
             "wordCount": words[page_number],
         }
+        # K1 (docs/COMPOSITOR_PATCH_PLAN.md): which paragraph each flag is about.
+        # Absent when the paragraph has no docxId (the synthetic corpus), never guessed.
+        if widow_refs:
+            entry["widowRefs"] = widow_refs
+        if runt_refs:
+            entry["runtRefs"] = runt_refs
         if page_lines:
             entry["paraRanges"] = [
-                {"paraIndex": i, "linesOnPage": c}
+                {"paraIndex": i, "linesOnPage": c, **({"ref": para_ref[i]} if i in para_ref else {})}
                 for i, c in sorted(page_lines.items())
             ][:MAX_PARA_RANGES]
         measured[page_number] = entry
@@ -466,7 +480,7 @@ def _font_files_salt(inputs: dict) -> str:
 
 @stage(
     name="paginate",
-    version=19,  # v19: the cache key includes the font files' bytes (cache_salt). v18: fallback CSS from house_designspec (see design-compile v11); <html> takes the book's lang; paraRanges cap read from the pagemap schema. v17: fallback CSS: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
+    version=20,  # v20: the pagemap names each paragraph (paraRanges[].ref) and the paragraphs behind a widow or runt (widowRefs, runtRefs) -- K1. v19: the cache key includes the font files' bytes (cache_salt). v18: fallback CSS from house_designspec (see design-compile v11); <html> takes the book's lang; paraRanges cap read from the pagemap schema. v17: fallback CSS: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
                  # v15: keep span: a paragraph's last two words (and its note calls) never split in print; a runt is a one-word last line under RUNT_MAX_FILL of the measure.
                  # v14: weasyprint 70 (URLFetcher subclass; footnote-policy keeps notes on their call page; 2400 s deadline).
                  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).

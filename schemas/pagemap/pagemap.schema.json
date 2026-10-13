@@ -38,6 +38,14 @@
         "hasOrphans": { "type": "boolean" },
         "hasWidows": { "type": "boolean" },
         "hasRunts": { "type": "boolean" },
+        "widowRefs": {
+          "type": "array", "items": { "type": "string", "maxLength": 128 }, "maxItems": 200,
+          "description": "docxIds of the paragraphs behind hasWidows (K1). Absent: no widow, or its paragraph has no docxId"
+        },
+        "runtRefs": {
+          "type": "array", "items": { "type": "string", "maxLength": 128 }, "maxItems": 200,
+          "description": "docxIds of the paragraphs behind hasRunts (K1). Absent: no runt, or its paragraph has no docxId"
+        },
         "wordCount": { "type": "integer", "minimum": 0 },
         "defectScore": { "type": "number", "minimum": 0 },
         "paraRanges": {
@@ -46,7 +54,8 @@
             "type": "object",
             "properties": {
               "paraIndex": { "type": "integer", "minimum": 0 },
-              "linesOnPage": { "type": "integer", "minimum": 1 }
+              "linesOnPage": { "type": "integer", "minimum": 1 },
+              "ref": { "type": "string", "maxLength": 128, "description": "The paragraph's AST sourceRef.docxId, when it has one (K1)" }
             },
             "required": ["paraIndex", "linesOnPage"],
             "additionalProperties": false

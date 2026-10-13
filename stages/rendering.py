@@ -521,7 +521,11 @@ def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None
                 calls = "".join(call for call, _ in rendered) + endnote_calls
                 kept = _keep_tail(inline, cap, after=calls)
                 text = _render_inline(kept) + ("" if kept is not inline else calls)
-                parts.append(f'<p class="{cls}">{text}{"".join(body for _, body in rendered)}</p>')
+                # K1: the paragraph's address, so paginate can name the node behind
+                # a widow or runt. An attribute, not text: the integrity gate is blind to it.
+                ref = (node.get("sourceRef") or {}).get("docxId")
+                ref_attr = f' data-ref="{_escape_html(ref)}"' if ref else ""
+                parts.append(f'<p class="{cls}"{ref_attr}>{text}{"".join(body for _, body in rendered)}</p>')
             else:
                 text = _render_inline(inline)
                 calls = [notes.call() for _ in cited]

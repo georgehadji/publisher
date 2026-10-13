@@ -1387,6 +1387,7 @@ class PageEntry_Type(str, Enum):
 class PageEntry_ParaRangesItem(BaseModel):
     paraIndex: int
     linesOnPage: int
+    ref: Optional[str] = Field(default=None)
 
 
 class PageEntry(BaseModel):
@@ -1404,6 +1405,8 @@ class PageEntry(BaseModel):
     hasOrphans: Optional[bool] = Field(default=None)
     hasWidows: Optional[bool] = Field(default=None)
     hasRunts: Optional[bool] = Field(default=None)
+    widowRefs: Optional[list[str]] = Field(default=None)
+    runtRefs: Optional[list[str]] = Field(default=None)
     wordCount: Optional[int] = Field(default=None)
     defectScore: Optional[float] = Field(default=None)
     paraRanges: Optional[list[PageEntry_ParaRangesItem]] = Field(default=None)

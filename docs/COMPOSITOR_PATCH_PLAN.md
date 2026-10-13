@@ -1,6 +1,6 @@
 # Compositor patches — from a verdict to a fix a reviewer accepts
 
-**Status:** plan, 2026-10-13, against `18c2e7a`. Nothing built. Owns identifier series **K0–K5**.
+**Status:** plan, 2026-10-13, against `18c2e7a`. **K1 built** (2026-10-13); K2–K5 open. Owns identifier series **K0–K5**.
 **Follows:** `WIRING_PLAN.md` W11 (the Compositor's caller, `layout-review`, landed in `18c2e7a`).
 
 Today `layout-review` looks at each page preflight warned on and records `confirmed`,
@@ -48,11 +48,12 @@ an AST address.
   have none, so their HTML and pagemaps keep today's shape (the nightly
   reproducibility run is unaffected).
 - `paginate._measure_pages` reads the attribute from the box's element. Each `paraRanges`
-  item gains an optional `ref`, and each page gains optional `widowRef` / `runtRefs` naming the
-  paragraph behind its flag.
+  item gains an optional `ref`, and each page gains optional `widowRefs` / `runtRefs` naming the
+  paragraphs behind its flags. *As built:* the print renderer only (`PrintNotes`); EPUB
+  sections carry no `data-ref`.
 - `pagemap/1` schema: the new optional fields; codegen; `.gen.*` committed. `platform/pagescan`
-  reads pagemap field names and the cross-implementation fixture pins them, so `cargo test`
-  runs with this change.
+  reads pagemap field names, but serde ignores fields it does not declare, so the crate
+  needed no change (*as built*).
 - Bumps: `extract` and `paginate` (they share the renderer). `ast-assemble` compares text only,
   so an attribute is safe. Every cached HTML and pagemap misses once.
 - **Test:** a weasyprint render of a fixture that widows; the page's `widowRef` is the AST
