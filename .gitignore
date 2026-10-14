@@ -52,6 +52,9 @@ Thumbs.db
 .test-cas-cache/
 .cas-cache/
 
+# vitest's per-run JSON reports (packages/api, packages/web). Test output, not source.
+.vitest/
+
 # Claude Code tool state, not source. `.claude/skills/` IS tracked (the folder
 # maps CLAUDE.md points at), so these are named individually rather than
 # ignoring `.claude/` wholesale, which would silently drop the skills.
