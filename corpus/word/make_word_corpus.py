@@ -311,6 +311,22 @@ def doubtful(a: Author) -> None:
         a.para(body)
 
 
+def composition(a: Author) -> None:
+    """A long plain book for the Compositor's fix loop (COMPOSITOR_PATCH_PLAN K0-K5):
+    three chapters of paragraphs whose lengths step through a fixed cycle, so their
+    last lines fall at every point of a page. Under the house stylesheet it widows
+    nowhere (`widows: 2` forbids it); under a stylesheet that allows a widow, some
+    paragraph's last line lands alone at the top of a page whatever the face --
+    the defect `layout-review` proposes a `fit` for. Every paragraph has a docxId."""
+    words = (PROSE * 12).split()
+    for c, chapter in enumerate(("ONE", "TWO", "THREE", "FOUR")):
+        a.heading(chapter)
+        for i in range(60):
+            count = 24 + (i * 37 + c * 53) % 150   # 24..173 words, no two neighbours alike
+            start = (i * 7 + c * 11) % 60           # and no two paragraphs the same text
+            a.para(" ".join(words[start:start + count]))
+
+
 def build(name: str, write) -> None:
     word = win32com.client.DispatchEx("Word.Application")
     word.Visible = False
@@ -332,6 +348,7 @@ MANUSCRIPTS = {
     "word-equation.docx": equation,
     "word-thesis.docx": thesis,
     "word-doubtful.docx": doubtful,
+    "word-composition.docx": composition,
 }
 
 if __name__ == "__main__":
