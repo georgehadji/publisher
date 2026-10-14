@@ -179,7 +179,9 @@ KEEP_CELL_CHARS = 16
 # Print only, set as `<span class="fit-<value>">` around the paragraph's text:
 # pandoc drops a <p>'s classes but keeps a span's, so the Typst path's Lua filter
 # sees the same markup the CSS path styles. Tracking adds no characters.
-FIT_TRACKING = {"tighter": -0.02, "tight": -0.01, "loose": 0.01, "looser": 0.02}
+# `tight` is -0.015, not -0.01: on DejaVu Serif -0.01em pulled back 1 of 38 swept
+# widows (Times: 29 of 35), so the first proposal was a wasted rebuild on such faces.
+FIT_TRACKING = {"tighter": -0.02, "tight": -0.015, "loose": 0.01, "looser": 0.02}
 
 
 def _keep_tail(content: list, cap: int = KEEP_TAIL_CHARS, after: str = "") -> list:
