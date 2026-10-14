@@ -196,7 +196,12 @@ hyphen stacks, rivers; at most 8 a build) it crops the press PDF and records `co
 **Done (2026-10-14): fixes a reviewer can accept** (`COMPOSITOR_PATCH_PLAN.md` K0–K5): a
 confirmed widow or runt proposes a paragraph `fit` by rule, a reviewer accepts it into the
 override log, and the next build reports each fit `cleared`, `still-defective` or
-`unmeasured`, which the structure view returns (`fitOutcomes`) and the review panel lists. **Still open:** a live end-to-end run, which needs a Word-corpus book that widows. **Done
+`unmeasured`, which the structure view returns (`fitOutcomes`) and the review panel lists. **Not open, and why (2026-10-15):** no Word book widows or runts under the house stylesheet
+(`widows: 2; orphans: 2` and `.keep`; searched over ~1,100 pages of constructs, two faces),
+so on the CSS path the loop is a safety net with nothing to catch today. Its mechanics are
+proven end to end on `corpus/word/word-composition.docx` under the house stylesheet with
+`widows: 2` relaxed (`stages/tests/test_fit_loop.py`; `COMPOSITOR_PATCH_PLAN.md` **Live
+check**). **Done
 (2026-10-09): `crop` is real.** It renders a page of the build's frozen press PDF through
 `ghostscript.render_pages` (144 dpi) and crops it to a bbox in pt; the runtime hands the
 model the image itself (`ToolImage` -> a text part and an image part), which Haiku 4.5
@@ -478,7 +483,7 @@ effective document, with overrides applied, rather than the AST from before them
 
 ### 3.1 Real DOCX — Word-authored fixtures, and a first real manuscript
 
-**Done: Word's own XML.** `corpus/word/` holds three DOCX files that Word wrote, authored
+**Done: Word's own XML.** `corpus/word/` holds DOCX files that Word wrote, authored
 through its COM API by `corpus/word/make_word_corpus.py` (Windows + Word only; the files are
 committed and CI only reads them). Between them they carry tracked insertions and deletions,
 a comment, a footnote, endnotes, a Word TOC field, a hyperlink, a content control, a nested

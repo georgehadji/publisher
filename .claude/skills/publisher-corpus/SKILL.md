@@ -30,6 +30,7 @@ so it exists *before* it is needed rather than after the gate slips.
 | `word/word-novel.docx`, `word/word-technical.docx` | Must ingest; pinned by `services/ingest/tests/test_word_corpus.py`. First contact found five silent text losses. |
 | `word/word-thesis.docx` | The first REAL manuscript's conventions, with synthetic prose: bold Normal-style numbered headings, a typed contents page, a pictured footnote, SmartArt, `Heading`-styled bibliography entries. Must ingest as 4 chapters + contents + bibliography. |
 | `word/word-doubtful.docx` | The corpus's only doubted manuscript (F1): typed chapter titles and a mid-book APPENDIX, so ingest scores the chapter, the appendix and the titles it swallowed below 0.8. What `structure-infer` is pinned to send. |
+| `word/word-composition.docx` | A long plain book (4 chapters × 60 paragraphs whose lengths step through a cycle) for the Compositor's fix loop. Widows nowhere under the house stylesheet (`widows: 2`); under it with that one rule relaxed, some paragraph widows on any face. Driven end to end by `stages/tests/test_fit_loop.py` (COMPOSITOR_PATCH_PLAN **Live check**). |
 | `corpus/*.docx` (top level) | **Authors' real manuscripts, gitignored — never commit one.** The repo is public. Drop a book here to probe ingest locally; reproduce what it teaches in `word/` instead. |
 | `word/word-equation.docx` | Must be **refused** (`IngestError`): nothing renders an equation, so accepting one loses it later. |
 

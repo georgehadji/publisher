@@ -1,6 +1,6 @@
 # Compositor patches — from a verdict to a fix a reviewer accepts
 
-**Status:** plan, 2026-10-13, against `18c2e7a`. **K1–K5 built** (2026-10-13/14). Live end-to-end proof still waits on a Word-corpus book that widows (see below). Owns identifier series **K0–K5**.
+**Status:** plan, 2026-10-13, against `18c2e7a`. **K1–K5 built** (2026-10-13/14). The loop is proven end to end on a Word book under a widow-permitting stylesheet; under the house stylesheet nothing widows or runts, so on the CSS path it is a safety net with nothing to catch today (see **Live check**, below). Owns identifier series **K0–K5**.
 **Follows:** `WIRING_PLAN.md` W11 (the Compositor's caller, `layout-review`, landed in `18c2e7a`).
 
 Today `layout-review` looks at each page preflight warned on and records `confirmed`,
@@ -158,9 +158,31 @@ One green commit per phase: K1 → K2 → K3 → K4 → K5. Each runs the full s
 `python platform/stages/integrity.py`. K1 also runs `cargo test`, and K4 vitest and the
 integration suite.
 
-**Live check gap.** The real book now measures 0 widows and 0 runts, and the synthetic books
-have no `docxId`. The end-to-end proof needs a Word-corpus fixture (`corpus/word/`, ingested,
-so it has ids) laid out to widow. Building that is part of K2's test.
+**Live check (2026-10-15): the house design leaves the loop nothing to catch.** The real book
+measures 0 widows and 0 runts, and that is not luck: the house stylesheet sets `widows: 2;
+orphans: 2` on every paragraph and `.keep` holds each one's last two words together.
+Searched for a construct that beats them, in GFS Didot (the house face) and DejaVu Serif
+(CI's default serif), over ~1,100 pages: short 2-3 line paragraphs, paragraphs before a
+heading or scene break, beside a table, every paragraph role, left/centre alignment, a
+paragraph ending in emphasis or a link, footnotes and long footnotes, one chapter and
+eight. None widowed or ran short. With the same rules removed the same books show 27
+widowed and 66 runt paragraphs, so the measurement sees them. (The search also found
+that a `chapter-opening` paragraph anywhere but a chapter's start crashes weasyprint 70
+in its drop-cap float -- ingest never sets that role; filed separately.)
+
+So the loop is a safety net on the CSS path: for what the stylesheet cannot prevent, and
+for a design that relaxes it. Its mechanics are proven end to end instead
+(`stages/tests/test_fit_loop.py`): `corpus/word/word-composition.docx`, written by Word,
+goes through the real ingest, integrity gate, resolve, paginate, preflight composition
+check and layout-review, under the house stylesheet with `widows: 2` relaxed to 1 and
+nothing else changed. The Compositor's model is the one stand-in, confirming every widow.
+Each build's proposals are accepted into the log as the API would log them, and the next
+build must report every accepted fit, against the value it applied, as `cleared` or
+`still-defective`, without changing a word. At least one must clear within three builds.
+Measured: 6 widowed paragraphs in GFS Didot and 7 in DejaVu Serif; `tight` cleared 1 and 2
+of them, `tighter` 4 of 5 and 3 of 5, and on each face the second reflow widowed one new
+paragraph downstream -- the next build's proposal. With the lever disabled (every fit tracking 0),
+the test fails. A live run of the real Compositor adds only the model's verdicts.
 
 ## Non-goals
 
