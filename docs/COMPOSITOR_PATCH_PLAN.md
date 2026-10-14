@@ -1,6 +1,6 @@
 # Compositor patches — from a verdict to a fix a reviewer accepts
 
-**Status:** plan, 2026-10-13, against `18c2e7a`. **K1–K3 built** (2026-10-13/14); K4–K5 open. Owns identifier series **K0–K5**.
+**Status:** plan, 2026-10-13, against `18c2e7a`. **K1–K4 built** (2026-10-13/14); K5 open. Owns identifier series **K0–K5**.
 **Follows:** `WIRING_PLAN.md` W11 (the Compositor's caller, `layout-review`, landed in `18c2e7a`).
 
 Today `layout-review` looks at each page preflight warned on and records `confirmed`,
@@ -115,6 +115,15 @@ an AST address.
   suite for the accept.
 - Revert already exists: a `set_attr` with no `value` removes the attribute, through the
   existing `PATCH /v1/documents/:id/overrides`.
+- *As built:* `manuscripts.ts` `layoutProposals` flattens layout-review/1's findings into
+  agent-proposal/1's shape (`sourceRef`, a rationale derived from kind and page, plus
+  `page`/`kind`), deduped by id, since one paragraph can be behind a widow and a runt. Both
+  routes read the two artifacts through one `reviewedProposals`; `null` only when neither
+  producer ran. `ProposalReview` gains `page` and `kind`, and the panel shows them. The
+  Python tables live in `stages/propose_stage.py` beside structure-propose's types, so the
+  existing pins cover `fit_paragraph`; a new pin covers `PROPOSAL_PATHS`.
+  `tests/integration/test_layout_proposals.py` accepts one against real Postgres (CI: the
+  local integration database is not this project's).
 
 ## K5 — Verify: the next build is the re-render
 

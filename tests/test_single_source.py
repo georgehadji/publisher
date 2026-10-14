@@ -123,6 +123,15 @@ def test_the_api_copies_the_parameters_the_stage_declares():
     assert restated == PROPOSAL_PARAMS
 
 
+def test_the_api_writes_the_attribute_path_the_stage_declares():
+    """A set_attr op needs a path, and a proposal carries none (K4): the API takes
+    it from PROPOSAL_PATHS. A path only one side knows is an accept the log refuses."""
+    from stages.propose_stage import PROPOSAL_OPS, PROPOSAL_PATHS
+    assert {t for t, op in PROPOSAL_OPS.items() if op == "set_attr"} == set(PROPOSAL_PATHS)
+    body = _read("packages/api/src/contract.ts").split("export const PROPOSAL_PATHS = {", 1)[1].split("}", 1)[0]
+    assert dict(re.findall(r'(\w+): "([^"]+)"', body)) == PROPOSAL_PATHS
+
+
 def test_the_override_route_and_contract_accept_every_schema_op():
     """The API restates the op enum twice (the PATCH route's JSON schema and
     contract.ts's union). An op missing there is one no reviewer can log."""

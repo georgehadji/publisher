@@ -337,6 +337,9 @@ function ProposalSection({ manuscriptId, proposals }: { manuscriptId: string; pr
       </p>
       {proposals.map((p) => (
         <div key={p.id} style={styles.lowConfCard}>
+          {p.page !== null && (
+            <p style={styles.chapterMeta}>Page {p.page} · {p.kind}</p>
+          )}
           <p style={styles.contextText}>{p.rationale}</p>
           <p style={styles.chapterMeta}>
             Accepting logs <strong>{p.op}</strong> on <TargetId docxId={p.docxId} />

@@ -77,7 +77,10 @@ _AGREES = {"chapter-title"}
 PROPOSAL_OPS = {"merge_chapters": "merge", "adjust_heading_level": "demote",
                 "flag_ambiguity": "flag_ambiguity", "start_body": "start_body",
                 "end_body": "end_body", "reclassify": "reclassify",
-                "split_chapter": "split", "promote_heading": "promote"}
+                "split_chapter": "split", "promote_heading": "promote",
+                # layout-review's (K3/K4): the accept route reads layout-review/1
+                # beside agent-proposal/1, so its one type joins the same tables.
+                "fit_paragraph": "set_attr"}
 # The parameters each proposal type may carry into its op (contract.ts
 # PROPOSAL_PARAMS, pinned the same way). The API copies these: one the type
 # does not declare is a 422 (B2), and so is one the op's schema requires that
@@ -85,7 +88,10 @@ PROPOSAL_OPS = {"merge_chapters": "merge", "adjust_heading_level": "demote",
 PROPOSAL_PARAMS = {"merge_chapters": (), "adjust_heading_level": (),
                    "flag_ambiguity": (), "start_body": (), "end_body": (),
                    "reclassify": ("from", "to", "value"),
-                   "split_chapter": (), "promote_heading": ()}
+                   "split_chapter": (), "promote_heading": (), "fit_paragraph": ("value",)}
+# The attribute path a set_attr proposal's op writes (contract.ts PROPOSAL_PATHS,
+# pinned the same way): overrides/1 requires one, and a proposal carries none.
+PROPOSAL_PATHS = {"fit_paragraph": "/attrs/fit"}
 
 
 def _change(kind: str, params: dict) -> str:
@@ -333,7 +339,7 @@ def _opening(section: dict, limit: int = 80) -> str:
 
 @stage(
     name="structure-propose",
-    version=10,  # v10: a chapter title folded into a back section proposes a split there (F1)
+    version=11,  # v11: module-level bump (PROPOSAL_OPS/PARAMS/PATHS carry layout-review's fit_paragraph, K4; its own proposals are unchanged). v10: a chapter title folded into a back section proposes a split there (F1)
                 # v9: a disagreeing verdict on a block inside a front/back section is flagged (F1)
                 # v8: a chapter's doubted headings and paragraphs get proposals --
                 # split_chapter, promote_heading (new), demote, reclassify (B8)

@@ -65,10 +65,22 @@ describe("StructureReviewPanel", () => {
 
   it("offers each model proposal as advice with an Accept button", () => {
     const html = render(review({ proposals: [
-      { id: "pr-1", type: "merge_chapters", op: "merge", docxId: "p1", rationale: "Same scene.", confidence: 0.7 },
+      { id: "pr-1", type: "merge_chapters", op: "merge", docxId: "p1", rationale: "Same scene.", confidence: 0.7, page: null, kind: null },
     ] }));
     expect(html).toContain("Model proposals (1)");
     expect(html).toContain("Same scene.");
+    expect(html).toContain(">Accept<");
+    expect(html).not.toContain("Page ");
+  });
+
+  it("shows a layout proposal's page and defect (K4)", () => {
+    const html = render(review({ proposals: [
+      { id: "pr-2", type: "fit_paragraph", op: "set_attr", docxId: "p7",
+        rationale: "A widow on page 5: set its paragraph's fit to tight to pull the line back.",
+        confidence: null, page: 5, kind: "widow" },
+    ] }));
+    expect(html).toContain("Page 5 · widow");
+    expect(html).toContain("set_attr");
     expect(html).toContain(">Accept<");
   });
 

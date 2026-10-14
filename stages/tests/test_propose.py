@@ -131,7 +131,12 @@ def test_ids_are_stable_across_rebuilds_and_distinct_per_change():
 
 
 def test_every_proposal_type_maps_to_an_implemented_op():
-    assert set(PROPOSAL_OPS) <= set(SCHEMA["$defs"]["proposal"]["properties"]["type"]["enum"])
+    """Both producers' types: agent-proposal/1's and layout-review/1's (K4)."""
+    layout = json.loads((Path(__file__).resolve().parents[2]
+                         / "schemas/layout-review/layout-review.schema.json").read_text(encoding="utf-8"))
+    produced = (set(SCHEMA["$defs"]["proposal"]["properties"]["type"]["enum"])
+                | set(layout["$defs"]["proposal"]["properties"]["type"]["enum"]))
+    assert set(PROPOSAL_OPS) <= produced
     assert all(op in _TRANSFORMS and op not in UNIMPLEMENTED_OPS for op in PROPOSAL_OPS.values())
 
 

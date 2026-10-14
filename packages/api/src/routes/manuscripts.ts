@@ -14,7 +14,7 @@ import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { CAS_ROOT, UPLOAD_MAX_BYTES, casPath, loadOwned, readCasFile, withTenant } from '../db.js';
-import { BLOCK_EXCERPT_CHARS, LOW_CONFIDENCE_BELOW, PROPOSAL_OPS, PROPOSAL_PARAMS } from '../contract.js';
+import { BLOCK_EXCERPT_CHARS, LOW_CONFIDENCE_BELOW, PROPOSAL_OPS, PROPOSAL_PARAMS, PROPOSAL_PATHS } from '../contract.js';
 import type {
   BlockReview, ChapterReview, OrphanedOp, OverrideOp, ProposalReview, StructureReview,
 } from '../contract.js';
@@ -173,7 +173,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
       // fabricating chapters that were never inferred.
       const { artifacts, overrides } = await withTenant(request.tenantId, async (client) => ({
         artifacts: await reviewedBuildArtifacts(
-          client, request.params.id, ['ast/1', 'doc-effective/1', 'agent-proposal/1']),
+          client, request.params.id, ['ast/1', 'doc-effective/1', ...PROPOSAL_SCHEMAS]),
         // The override log, in the order it will be applied. Independent of
         // whether a build has run: a reviewer's decisions exist either way.
         overrides: (
@@ -201,7 +201,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
       const ast = JSON.parse(await readCasFile(astRow.sha256));
       const effectiveRow = artifacts.find((row) => row.schema_id === 'doc-effective/1');
       const effective = effectiveRow ? JSON.parse(await readCasFile(effectiveRow.sha256)) : null;
-      const proposalRow = artifacts.find((row) => row.schema_id === 'agent-proposal/1');
+      const proposals = await reviewedProposals(artifacts);
       return {
         manuscriptId: request.params.id,
         status: 'ready',
@@ -211,9 +211,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
         // An op may aim at a node an earlier op created (a break `insert` added),
         // which only the effective document has.
         orphanedOps: orphanedOps(effective ? [ast, effective] : ast, overrides),
-        proposals: proposalRow
-          ? pendingProposals(JSON.parse(await readCasFile(proposalRow.sha256)), overrides)
-          : null,
+        proposals: proposals ? pendingProposals({ proposals }, overrides) : null,
       } satisfies StructureReview;
     }
   );
@@ -253,10 +251,9 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
       if (!manuscript) {
         return reply.code(404).send({ error: 'not found' });
       }
-      const [row] = await withTenant(request.tenantId, (client) =>
-        reviewedBuildArtifacts(client, request.params.id, ['agent-proposal/1']));
-      const document = row ? JSON.parse(await readCasFile(row.sha256)) : null;
-      const proposal = (document?.proposals ?? []).find((p: any) => p.id === request.params.pid);
+      const rows = await withTenant(request.tenantId, (client) =>
+        reviewedBuildArtifacts(client, request.params.id, PROPOSAL_SCHEMAS));
+      const proposal = ((await reviewedProposals(rows)) ?? []).find((p: any) => p.id === request.params.pid);
       if (!proposal) {
         return reply.code(404).send({ error: 'no such proposal in the latest build' });
       }
@@ -406,6 +403,7 @@ export function proposalOp(proposal: any, actor: string, at: string): OverrideOp
     id: `ov-${proposal.id}`,
     sourceRef: { docxId: proposal.sourceRef.docxId },
     op: PROPOSAL_OPS[type],
+    ...(Object.hasOwn(PROPOSAL_PATHS, type) ? { path: PROPOSAL_PATHS[type as keyof typeof PROPOSAL_PATHS] } : {}),
     ...Object.fromEntries(declared.filter((name) => name in proposal).map((name) => [name, proposal[name]])),
     actor,
     at,
@@ -432,7 +430,47 @@ export function pendingProposals(document: any, ops: OverrideOp[]): ProposalRevi
       docxId: p.sourceRef.docxId,
       rationale: p.rationale,
       confidence: typeof p.confidence === 'number' ? p.confidence : null,
+      page: typeof p.page === 'number' ? p.page : null,
+      kind: typeof p.kind === 'string' ? p.kind : null,
     }));
+}
+
+/** The artifacts a build's proposals come from: structure-propose's, then layout-review's (K4). */
+const PROPOSAL_SCHEMAS = ['agent-proposal/1', 'layout-review/1'];
+
+/**
+ * Every proposal of the reviewed build, in agent-proposal/1's shape, or `null`
+ * when neither producer ran for it (no API key), which is not "none".
+ */
+async function reviewedProposals(rows: { schema_id: string; sha256: string }[]): Promise<any[] | null> {
+  const agent = rows.find((row) => row.schema_id === 'agent-proposal/1');
+  const layout = rows.find((row) => row.schema_id === 'layout-review/1');
+  if (!agent && !layout) return null;
+  return [
+    ...(agent ? JSON.parse(await readCasFile(agent.sha256)).proposals ?? [] : []),
+    ...(layout ? layoutProposals(JSON.parse(await readCasFile(layout.sha256))) : []),
+  ];
+}
+
+/**
+ * layout-review/1's proposals (K3) in agent-proposal/1's shape, so one accept
+ * path serves both. The stage stores no prose; the rationale is derived here
+ * from the finding it fixes. One paragraph can be behind a widow and a runt;
+ * the same change is the same id, so it is listed once.
+ */
+export function layoutProposals(review: any): any[] {
+  const byId = new Map<string, any>();
+  for (const finding of review?.findings ?? []) {
+    for (const p of finding.proposals ?? []) {
+      if (byId.has(p.id)) continue;
+      byId.set(p.id, {
+        id: p.id, type: p.type, sourceRef: { docxId: p.docxId }, value: p.value,
+        rationale: `A ${finding.kind} on page ${finding.page}: set its paragraph's fit to ${p.value} to pull the line back.`,
+        page: finding.page, kind: finding.kind,
+      });
+    }
+  }
+  return [...byId.values()];
 }
 
 /**

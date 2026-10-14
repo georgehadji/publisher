@@ -7,7 +7,7 @@
  * and "not measured" (null) stays distinct from "measured, nothing low" ([]).
  */
 import { describe, expect, it } from 'vitest';
-import { LOW_CONFIDENCE_BELOW, orphanedOps, pendingProposals, proposalOp, structureView } from './manuscripts.js';
+import { LOW_CONFIDENCE_BELOW, layoutProposals, orphanedOps, pendingProposals, proposalOp, structureView } from './manuscripts.js';
 import { BLOCK_EXCERPT_CHARS } from '../contract.js';
 import type { OverrideOp } from '../contract.js';
 
@@ -182,8 +182,8 @@ describe('pendingProposals', () => {
 
   it('lists each proposal with the op accepting it would log', () => {
     expect(pendingProposals(document, [])).toEqual([
-      { id: 'pr-a', type: 'merge_chapters', op: 'merge', docxId: 'c2', rationale: 'prose', confidence: 0.8 },
-      { id: 'pr-b', type: 'flag_ambiguity', op: 'flag_ambiguity', docxId: 'c5', rationale: 'odd', confidence: null },
+      { id: 'pr-a', type: 'merge_chapters', op: 'merge', docxId: 'c2', rationale: 'prose', confidence: 0.8, page: null, kind: null },
+      { id: 'pr-b', type: 'flag_ambiguity', op: 'flag_ambiguity', docxId: 'c5', rationale: 'odd', confidence: null, page: null, kind: null },
     ]);
   });
 
@@ -225,5 +225,45 @@ describe('proposalOp (B2)', () => {
   it('a type with no op, even an Object.prototype name, becomes none', () => {
     expect(proposalOp({ ...reclassify, type: 'suggest_title' }, 'user:ada', at)).toMatch(/has no op/);
     expect(proposalOp({ ...reclassify, type: 'constructor' }, 'user:ada', at)).toMatch(/has no op/);
+  });
+});
+
+describe('layout-review proposals (K4)', () => {
+  const at = '2026-10-14T00:00:00.000Z';
+  const fit = (id: string, docxId: string, value: string) => ({ id, type: 'fit_paragraph', docxId, value });
+  const review = {
+    schema: 'layout-review/1',
+    agentId: 'compositor',
+    findings: [
+      { kind: 'widow', page: 5, verdict: 'confirmed', proposals: [fit('pr-w', 'p7', 'tight')] },
+      { kind: 'runt', page: 5, verdict: 'confirmed', proposals: [fit('pr-w', 'p7', 'tight'), fit('pr-r', 'p8', 'tighter')] },
+      { kind: 'river', page: 9, verdict: 'confirmed' },
+    ],
+  };
+
+  it("takes agent-proposal/1's shape, once per change, the rationale derived from the finding", () => {
+    const proposals = layoutProposals(review);
+    expect(proposals.map((p) => [p.id, p.sourceRef.docxId, p.value, p.page, p.kind])).toEqual([
+      ['pr-w', 'p7', 'tight', 5, 'widow'], ['pr-r', 'p8', 'tighter', 5, 'runt']]);
+    expect(proposals[0].rationale).toBe("A widow on page 5: set its paragraph's fit to tight to pull the line back.");
+  });
+
+  it('accepting one logs set_attr on /attrs/fit: the path the log requires, the value the rule chose', () => {
+    expect(proposalOp(layoutProposals(review)[0], 'user:ada', at)).toEqual({
+      id: 'ov-pr-w', sourceRef: { docxId: 'p7' }, op: 'set_attr', path: '/attrs/fit', value: 'tight',
+      actor: 'user:ada', at, rationale: "A widow on page 5: set its paragraph's fit to tight to pull the line back.",
+    });
+  });
+
+  it('shows its page and kind for review, and leaves once accepted', () => {
+    const pending = pendingProposals({ proposals: layoutProposals(review) }, [op('ov-pr-w', 'p7')]);
+    expect(pending).toEqual([{ id: 'pr-r', type: 'fit_paragraph', op: 'set_attr', docxId: 'p8',
+      rationale: "A runt on page 5: set its paragraph's fit to tighter to pull the line back.",
+      confidence: null, page: 5, kind: 'runt' }]);
+  });
+
+  it('a structure proposal never gains a path', () => {
+    const merge = { id: 'pr-m', type: 'merge_chapters', sourceRef: { docxId: 'c2' }, rationale: 'prose' };
+    expect('path' in (proposalOp(merge, 'user:ada', at) as OverrideOp)).toBe(false);
   });
 });

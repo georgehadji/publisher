@@ -32,9 +32,9 @@ export interface StructureReview {
   /** Logged ops that target no node of this build; `null` when there is no build yet. */
   orphanedOps: OrphanedOp[] | null;
   /**
-   * The model's proposals from the same build (`structure-propose`) that no
-   * logged op has accepted yet. `null`: no model ran for that build (no API key
-   * configured), which is not "no proposals".
+   * The models' proposals from the same build that no logged op has accepted
+   * yet: `structure-propose`'s, then `layout-review`'s (K4). `null`: neither ran
+   * for that build (no API key configured), which is not "no proposals".
    */
   proposals: ProposalReview[] | null;
 }
@@ -52,6 +52,8 @@ export const PROPOSAL_OPS = {
   reclassify: "reclassify",
   split_chapter: "split",
   promote_heading: "promote",
+  /** layout-review/1's (K4): the Compositor's widow/runt fix, a paragraph's `fit`. */
+  fit_paragraph: "set_attr",
 } as const satisfies Record<string, OverrideOp["op"]>;
 
 /**
@@ -69,7 +71,17 @@ export const PROPOSAL_PARAMS = {
   reclassify: ["from", "to", "value"],
   split_chapter: [],
   promote_heading: [],
+  fit_paragraph: ["value"],
 } as const satisfies Record<keyof typeof PROPOSAL_OPS, readonly ("from" | "to" | "value")[]>;
+
+/**
+ * The attribute path a `set_attr` proposal's op writes: overrides/1 requires a
+ * `path` on set_attr, and a proposal carries none. Pinned to
+ * stages/propose_stage.py PROPOSAL_PATHS by tests/test_single_source.py.
+ */
+export const PROPOSAL_PATHS = {
+  fit_paragraph: "/attrs/fit",
+} as const satisfies Partial<Record<keyof typeof PROPOSAL_OPS, string>>;
 
 /** One proposal awaiting a reviewer. Accepting it logs op `ov-<id>`. */
 export interface ProposalReview {
@@ -79,6 +91,10 @@ export interface ProposalReview {
   docxId: string;
   rationale: string;
   confidence: number | null;
+  /** The page a layout-review proposal fixes; `null` for a structure proposal. */
+  page: number | null;
+  /** The defect it fixes (`widow`, `runt`); `null` for a structure proposal. */
+  kind: string | null;
 }
 
 /** A single chapter in the review. */
