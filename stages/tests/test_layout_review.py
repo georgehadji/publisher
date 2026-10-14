@@ -31,9 +31,17 @@ def _report(*warned: str) -> dict:
             + [{"code": "bleed", "status": "pass", "severity": "error", "humanMessage": "x"}]}
 
 
-def _pagemap(widows=(), runts=()) -> dict:
-    return {"pages": [{"pageNumber": n, "hasOrphans": False, "hasWidows": n in widows, "hasRunts": n in runts}
-                      for n in range(1, 21)]}
+def _pagemap(widows=(), runts=(), refs=None) -> dict:
+    """`refs`: page -> {"widowRefs"|"runtRefs": [docxId, ...]} (K1)."""
+    return {"pages": [{"pageNumber": n, "hasOrphans": False, "hasWidows": n in widows, "hasRunts": n in runts,
+                       **(refs or {}).get(n, {})} for n in range(1, 21)]}
+
+
+def _doc(**fits) -> dict:
+    """A doc-effective/1 of paragraphs: docxId -> fit (None: as designed)."""
+    return {"schema": "ast/1", "body": [{"type": "chapter", "attrs": {"number": 1}, "content": [
+        {"type": "paragraph", "sourceRef": {"docxId": ref}, **({"attrs": {"fit": fit}} if fit else {}),
+         "content": [{"type": "text", "text": ref}]} for ref, fit in fits.items()]}]}
 
 
 @pytest.fixture(autouse=True)
@@ -56,12 +64,13 @@ def _ctx(tmp_path) -> StageCtx:
                     memory_budget_mb=256, work_dir=str(tmp_path), cas_root=str(tmp_path / "cas"))
 
 
-def _run(tmp_path, report: dict, pagemap: dict):
-    for name, doc in (("r.json", report), ("m.json", pagemap)):
+def _run(tmp_path, report: dict, pagemap: dict, doc: dict | None = None):
+    for name, doc in (("r.json", report), ("m.json", pagemap), ("d.json", doc or _doc())):
         (tmp_path / name).write_text(json.dumps(doc), encoding="utf-8")
     (tmp_path / "p.pdf").write_bytes(b"%PDF-1.3")
     result = layout_review(_ctx(tmp_path), report=str(tmp_path / "r.json"), pdf_path=str(tmp_path / "p.pdf"),
-                           pagemap_path=str(tmp_path / "m.json"), api_key="sk-fake")
+                           pagemap_path=str(tmp_path / "m.json"), doc_path=str(tmp_path / "d.json"),
+                           api_key="sk-fake")
     blob = next((tmp_path / "cas").rglob(result.artifacts[0].hash))
     document = json.loads(blob.read_text(encoding="utf-8"))
     validate(document, SCHEMA)
@@ -88,7 +97,7 @@ def test_each_finding_gets_the_compositors_verdict(tmp_path, monkeypatch):
         {"kind": "runt", "page": 2, "verdict": "unreviewed"},       # left out of the answer
         {"kind": "river", "page": 11, "verdict": "not-a-defect"}]
     assert document["modelId"] and result.warnings == []
-    assert result.metrics == {"findings": 3, "reviewed": 2, "confirmed": 1}
+    assert result.metrics == {"findings": 3, "reviewed": 2, "confirmed": 1, "proposals": 0}  # no refs
 
 
 def test_over_the_cap_the_rest_are_unreviewed_and_it_says_so(tmp_path, monkeypatch):
@@ -106,6 +115,31 @@ def test_a_failed_review_leaves_every_finding_unreviewed_and_says_so(tmp_path, m
     result, document = _run(tmp_path, _report("composition"), _pagemap(widows=(5,)))
     assert document["findings"] == [{"kind": "widow", "page": 5, "verdict": "unreviewed"}]
     assert [w.code for w in result.warnings] == ["layout-review-failed"]
+
+
+def test_a_confirmed_widow_or_runt_proposes_the_next_fit_step_by_rule(tmp_path, monkeypatch):
+    from scripted_provider import answer
+    _compositor_answers(monkeypatch, answer({"verdicts": [
+        {"finding": "widow-p5", "verdict": "confirmed"}, {"finding": "runt-p7", "verdict": "confirmed"},
+        {"finding": "runt-p9", "verdict": "not-a-defect"}]}))
+    refs = {5: {"widowRefs": ["p-a"]}, 7: {"runtRefs": ["p-b", "p-c", "p-gone"]}, 9: {"runtRefs": ["p-d"]}}
+    result, document = _run(tmp_path, _report("composition"), _pagemap(widows=(5,), runts=(7, 9), refs=refs),
+                            _doc(**{"p-a": None, "p-b": "tight", "p-c": "tighter", "p-d": None}))
+    widow, runt, rejected = document["findings"]
+    assert [(p["docxId"], p["type"], p["value"]) for p in widow["proposals"]] == [("p-a", "fit_paragraph", "tight")]
+    # p-b steps on; p-c is at the last step and p-gone is no paragraph: both left to a human
+    assert [(p["docxId"], p["value"]) for p in runt["proposals"]] == [("p-b", "tighter")]
+    assert "proposals" not in rejected
+    assert result.metrics["proposals"] == 2
+
+
+def test_a_proposal_is_the_same_proposal_on_every_rebuild():
+    from stages.layout_review_stage import proposals_for
+    pagemap = _pagemap(widows=(5,), refs={5: {"widowRefs": ["p-a"]}})
+    once = proposals_for("widow", 5, pagemap, {"p-a": None})
+    assert once == proposals_for("widow", 5, pagemap, {"p-a": None})
+    assert once[0]["id"] != proposals_for("widow", 5, pagemap, {"p-a": "tight"})[0]["id"]
+    assert proposals_for("runt", 5, pagemap, {"p-a": None}) == []        # the ref is the widow's
 
 
 def test_nothing_warned_no_compositor_is_built(tmp_path, monkeypatch):

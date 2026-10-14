@@ -966,19 +966,19 @@ export const TrimSizeSuggestionSchema = z.object({
 });
 export type TrimSizeSuggestion = z.infer<typeof TrimSizeSuggestionSchema>;
 
-export const Proposal_TypeSchema: z.ZodTypeAny = z.enum(["reclassify", "merge_chapters", "split_chapter", "adjust_heading_level", "identify_front_matter", "identify_back_matter", "flag_ambiguity", "suggest_title", "start_body", "end_body", "promote_heading"]);
-export type Proposal_Type = z.infer<typeof Proposal_TypeSchema>;
+export const AgentProposal_Proposal_TypeSchema: z.ZodTypeAny = z.enum(["reclassify", "merge_chapters", "split_chapter", "adjust_heading_level", "identify_front_matter", "identify_back_matter", "flag_ambiguity", "suggest_title", "start_body", "end_body", "promote_heading"]);
+export type AgentProposal_Proposal_Type = z.infer<typeof AgentProposal_Proposal_TypeSchema>;
 
-export const Proposal_SourceRefSchema: z.ZodTypeAny = z.object({
+export const AgentProposal_Proposal_SourceRefSchema: z.ZodTypeAny = z.object({
   "docxId": z.string().max(128),
   "contentHash": z.string().regex(new RegExp("^[a-f0-9]{64}$")).optional(),
 });
-export type Proposal_SourceRef = z.infer<typeof Proposal_SourceRefSchema>;
+export type AgentProposal_Proposal_SourceRef = z.infer<typeof AgentProposal_Proposal_SourceRefSchema>;
 
-export const ProposalSchema = z.object({
+export const AgentProposal_ProposalSchema = z.object({
   "id": z.string().regex(new RegExp("^pr-[a-zA-Z0-9_-]+$")),
-  "type": z.lazy(() => Proposal_TypeSchema),
-  "sourceRef": z.lazy(() => Proposal_SourceRefSchema),
+  "type": z.lazy(() => AgentProposal_Proposal_TypeSchema),
+  "sourceRef": z.lazy(() => AgentProposal_Proposal_SourceRefSchema),
   "from": z.string().max(64).optional(),
   "to": z.string().max(64).optional(),
   "value": z.union([z.string().max(256), z.number().int(), z.boolean(), z.number()]).optional(),
@@ -986,7 +986,21 @@ export const ProposalSchema = z.object({
   "confidence": z.number().min(0).max(1).optional(),
   "evidence": z.array(z.string().max(1024)).max(20).optional(),
 });
-export type Proposal = z.infer<typeof ProposalSchema>;
+export type AgentProposal_Proposal = z.infer<typeof AgentProposal_ProposalSchema>;
+
+export const LayoutReview_Proposal_TypeSchema: z.ZodTypeAny = z.enum(["fit_paragraph"]);
+export type LayoutReview_Proposal_Type = z.infer<typeof LayoutReview_Proposal_TypeSchema>;
+
+export const LayoutReview_Proposal_ValueSchema: z.ZodTypeAny = z.enum(["tight", "tighter"]);
+export type LayoutReview_Proposal_Value = z.infer<typeof LayoutReview_Proposal_ValueSchema>;
+
+export const LayoutReview_ProposalSchema = z.object({
+  "id": z.string().regex(new RegExp("^pr-[a-f0-9]{24}$")),
+  "type": z.lazy(() => LayoutReview_Proposal_TypeSchema),
+  "docxId": z.string().max(128),
+  "value": z.lazy(() => LayoutReview_Proposal_ValueSchema),
+});
+export type LayoutReview_Proposal = z.infer<typeof LayoutReview_ProposalSchema>;
 
 export const PageEntry_SideSchema: z.ZodTypeAny = z.enum(["recto", "verso"]);
 export type PageEntry_Side = z.infer<typeof PageEntry_SideSchema>;
@@ -1070,6 +1084,7 @@ export const FindingSchema = z.object({
   "kind": z.lazy(() => Finding_KindSchema),
   "page": z.number().int().min(1),
   "verdict": z.lazy(() => Finding_VerdictSchema),
+  "proposals": z.array(LayoutReview_ProposalSchema).max(50).optional(),
 });
 export type Finding = z.infer<typeof FindingSchema>;
 
@@ -1360,7 +1375,7 @@ export const AgentProposalSchema = z.object({
   "agentVersion": z.string().max(32).optional(),
   "promptVersion": z.string().max(32).optional(),
   "modelId": z.string().max(128).optional(),
-  "proposals": z.array(ProposalSchema).max(500),
+  "proposals": z.array(AgentProposal_ProposalSchema).max(500),
   "stateChanges": z.lazy(() => AgentProposal_StateChangesSchema).optional(),
   "evaluation": z.lazy(() => AgentProposal_EvaluationSchema).optional(),
   "costUsd": z.number().min(0).optional(),

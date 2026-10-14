@@ -28,9 +28,27 @@
           "type": "string",
           "enum": ["confirmed", "not-a-defect", "needs-human", "unreviewed"],
           "description": "unreviewed: over the per-build cap, missing from the answer, or the run failed"
+        },
+        "proposals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/proposal" },
+          "maxItems": 50,
+          "description": "K3: confirmed widows and runts only, one per paragraph the pagemap names behind the defect"
         }
       },
       "required": ["kind", "page", "verdict"],
+      "additionalProperties": false
+    },
+    "proposal": {
+      "type": "object",
+      "description": "A fix picked by rule (layout_review_stage.NEXT_FIT), not by the model; it reaches the book only through a reviewer's accept",
+      "properties": {
+        "id": { "type": "string", "pattern": "^pr-[a-f0-9]{24}$" },
+        "type": { "type": "string", "enum": ["fit_paragraph"] },
+        "docxId": { "type": "string", "maxLength": 128 },
+        "value": { "type": "string", "enum": ["tight", "tighter"] }
+      },
+      "required": ["id", "type", "docxId", "value"],
       "additionalProperties": false
     }
   }

@@ -1331,7 +1331,7 @@ class TrimSizeSuggestion(BaseModel):
     rationale: Optional[TrimSizeSuggestion_Rationale] = Field(default=None)
 
 
-class Proposal_Type(str, Enum):
+class AgentProposal_Proposal_Type(str, Enum):
     RECLASSIFY = "reclassify"
     MERGE_CHAPTERS = "merge_chapters"
     SPLIT_CHAPTER = "split_chapter"
@@ -1345,7 +1345,7 @@ class Proposal_Type(str, Enum):
     PROMOTE_HEADING = "promote_heading"
 
 
-class Proposal_SourceRef(BaseModel):
+class AgentProposal_Proposal_SourceRef(BaseModel):
     docxId: str
     contentHash: Optional[str] = Field(default=None)
 
@@ -1357,12 +1357,12 @@ class Proposal_SourceRef(BaseModel):
         return v
 
 
-class Proposal(BaseModel):
+class AgentProposal_Proposal(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
-    type_: Proposal_Type = Field(..., alias="type")
-    sourceRef: Proposal_SourceRef
+    type_: AgentProposal_Proposal_Type = Field(..., alias="type")
+    sourceRef: AgentProposal_Proposal_SourceRef
     from_: Optional[str] = Field(default=None, alias="from")
     to: Optional[str] = Field(default=None)
     value: Optional[Union[str, int, bool, float]] = Field(default=None)
@@ -1374,6 +1374,31 @@ class Proposal(BaseModel):
     @classmethod
     def _validate_id(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and not re.match("^pr-[a-zA-Z0-9_-]+$", v):
+            raise ValueError("id does not match required pattern")
+        return v
+
+
+class LayoutReview_Proposal_Type(str, Enum):
+    FIT_PARAGRAPH = "fit_paragraph"
+
+
+class LayoutReview_Proposal_Value(str, Enum):
+    TIGHT = "tight"
+    TIGHTER = "tighter"
+
+
+class LayoutReview_Proposal(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    type_: LayoutReview_Proposal_Type = Field(..., alias="type")
+    docxId: str
+    value: LayoutReview_Proposal_Value
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not re.match("^pr-[a-f0-9]{24}$", v):
             raise ValueError("id does not match required pattern")
         return v
 
@@ -1564,6 +1589,7 @@ class Finding(BaseModel):
     kind: Finding_Kind
     page: int
     verdict: Finding_Verdict
+    proposals: Optional[list[LayoutReview_Proposal]] = Field(default=None)
 
 
 class BookAST(BaseModel):
@@ -1937,7 +1963,7 @@ class AgentProposal(BaseModel):
     agentVersion: Optional[str] = Field(default=None)
     promptVersion: Optional[str] = Field(default=None)
     modelId: Optional[str] = Field(default=None)
-    proposals: list[Proposal]
+    proposals: list[AgentProposal_Proposal]
     stateChanges: Optional[AgentProposal_StateChanges] = Field(default=None)
     evaluation: Optional[AgentProposal_Evaluation] = Field(default=None)
     costUsd: Optional[float] = Field(default=None)

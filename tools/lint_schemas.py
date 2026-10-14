@@ -29,6 +29,10 @@ ALLOWLIST = {
     "schemaVersion",
     "cacheHit",
     "costUsd",
+    # layout-review/1 proposals (K3): a hash id and a node address copied from the
+    # pagemap, both written by layout_review_stage, never by the model.
+    "id",
+    "docxId",
 }
 
 

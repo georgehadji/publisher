@@ -1,6 +1,6 @@
 # Compositor patches — from a verdict to a fix a reviewer accepts
 
-**Status:** plan, 2026-10-13, against `18c2e7a`. **K1, K2 built** (2026-10-13); K3–K5 open. Owns identifier series **K0–K5**.
+**Status:** plan, 2026-10-13, against `18c2e7a`. **K1–K3 built** (2026-10-13/14); K4–K5 open. Owns identifier series **K0–K5**.
 **Follows:** `WIRING_PLAN.md` W11 (the Compositor's caller, `layout-review`, landed in `18c2e7a`).
 
 Today `layout-review` looks at each page preflight warned on and records `confirmed`,
@@ -93,6 +93,13 @@ an AST address.
   mistake `raw-pdf/1` once made.
 - `layout-review` now also takes `doc-effective/1`, to read a paragraph's current `fit`. It
   stays terminal. Version bump.
+- *As built:* `proposals` is an array, not one `proposal`: a page can hold several runts,
+  and dropping all but one would hide fixes. Ids are `pr-` + 24 hex of
+  sha256(docxId|fit_paragraph|value), the `structure-propose` scheme, so the same advice is
+  the same proposal on every rebuild and the `tighter` step is a new one. A ref the
+  document no longer has, or a paragraph a human set loose, gets no proposal.
+  `tools/lint_schemas.py` allowlists `id` and `docxId`: our code writes both, never the
+  model.
 
 ## K4 — The accept path
 
