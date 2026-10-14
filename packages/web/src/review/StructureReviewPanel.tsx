@@ -7,6 +7,7 @@ import type {
   StructureReview,
   ChapterReview,
   BlockReview,
+  FitOutcomeReview,
   LowConfidenceNode,
   OrphanedOp,
   OverrideOp,
@@ -87,6 +88,15 @@ export function StructureReviewPanel({ review }: { review: StructureReview }) {
         )}
         {review.proposals !== null && review.proposals.length > 0 && (
           <ProposalSection manuscriptId={review.manuscriptId} proposals={review.proposals} />
+        )}
+        {review.fitOutcomes === null ? (
+          review.overrides.some(isFitOp) && (
+            <p style={styles.placeholder}>
+              This build ran no layout review, so the fits in the override log were not checked.
+            </p>
+          )
+        ) : (
+          <FitOutcomeSection outcomes={review.fitOutcomes} awaiting={fitsAwaitingABuild(review)} />
         )}
         {review.orphanedOps !== null && review.orphanedOps.length > 0 && (
           <OrphanedSection orphans={review.orphanedOps} />
@@ -363,6 +373,69 @@ function AcceptButton({ manuscriptId, proposalId }: { manuscriptId: string; prop
       </button>
       {state && !state.ok && <span role="status" style={{ color: "#c62828" }}>{state.message}</span>}
     </form>
+  );
+}
+
+/** A logged op that sets a paragraph's `fit` (an accepted fit_paragraph proposal, K4). */
+function isFitOp(op: OverrideOp): boolean {
+  return op.op === "set_attr" && op.path === "/attrs/fit";
+}
+
+/**
+ * What each outcome means, in words a reviewer acts on. Typed over the contract's
+ * union, so an outcome the API adds without a sentence here fails to compile.
+ */
+const FIT_OUTCOME_TEXT: Record<FitOutcomeReview["outcome"], { label: string; detail: string }> = {
+  cleared: {
+    label: "Cleared",
+    detail: "this build measured the paragraph's pages, and it is behind no widow or runt.",
+  },
+  "still-defective": {
+    label: "Still a widow or runt",
+    detail: "if the Compositor confirms it again, the next fit step is proposed; past tighter it is left to you.",
+  },
+  unmeasured: {
+    label: "Not measured",
+    detail: "this render path does not record which paragraph is behind a defect, so nothing is claimed.",
+  },
+};
+
+/**
+ * Paragraphs the override log sets a fit on that this build reports no outcome
+ * for: logged after it ran, so the next build is the first to apply them.
+ */
+function fitsAwaitingABuild(review: StructureReview): number {
+  const reported = new Set((review.fitOutcomes ?? []).map((o) => o.docxId));
+  return new Set(
+    review.overrides.filter(isFitOp).map((op) => op.sourceRef.docxId).filter((id) => !reported.has(id))
+  ).size;
+}
+
+function awaitingNote(count: number): string {
+  return count === 1
+    ? "1 fit in the override log has no outcome yet: logged after this build, it applies on the next one."
+    : `${count} fits in the override log have no outcome yet: logged after this build, they apply on the next one.`;
+}
+
+/** What this build made of each fit a reviewer accepted (K5). Read-only. */
+function FitOutcomeSection({ outcomes, awaiting }: { outcomes: FitOutcomeReview[]; awaiting: number }) {
+  if (outcomes.length === 0 && awaiting === 0) return null;
+  return (
+    <div style={styles.lowConfSection}>
+      <h3>Fit outcomes ({outcomes.length})</h3>
+      <p style={styles.chapterMeta}>What this build made of each paragraph's fit.</p>
+      {awaiting > 0 && <p style={styles.chapterMeta}>{awaitingNote(awaiting)}</p>}
+      {outcomes.map(({ docxId, fit, outcome }) => (
+        <div key={docxId} style={styles.lowConfCard}>
+          <p style={styles.contextText}>
+            <strong>{FIT_OUTCOME_TEXT[outcome].label}</strong>: {FIT_OUTCOME_TEXT[outcome].detail}
+          </p>
+          <p style={styles.chapterMeta}>
+            Fit <strong>{fit}</strong> on <TargetId docxId={docxId} />
+          </p>
+        </div>
+      ))}
+    </div>
   );
 }
 

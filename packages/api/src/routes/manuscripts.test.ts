@@ -7,7 +7,7 @@
  * and "not measured" (null) stays distinct from "measured, nothing low" ([]).
  */
 import { describe, expect, it } from 'vitest';
-import { LOW_CONFIDENCE_BELOW, layoutProposals, orphanedOps, pendingProposals, proposalOp, structureView } from './manuscripts.js';
+import { LOW_CONFIDENCE_BELOW, fitOutcomes, layoutProposals, orphanedOps, pendingProposals, proposalOp, structureView } from './manuscripts.js';
 import { BLOCK_EXCERPT_CHARS } from '../contract.js';
 import type { OverrideOp } from '../contract.js';
 
@@ -265,5 +265,44 @@ describe('layout-review proposals (K4)', () => {
   it('a structure proposal never gains a path', () => {
     const merge = { id: 'pr-m', type: 'merge_chapters', sourceRef: { docxId: 'c2' }, rationale: 'prose' };
     expect('path' in (proposalOp(merge, 'user:ada', at) as OverrideOp)).toBe(false);
+  });
+});
+
+describe('fit outcomes (K5)', () => {
+  const review = (fitOutcomes?: unknown) =>
+    ({ schema: 'layout-review/1', agentId: 'compositor', findings: [], ...(fitOutcomes ? { fitOutcomes } : {}) });
+
+  it('is null with no layout review: not checked, which is not "no fits"', () => {
+    expect(fitOutcomes(null)).toBeNull();
+  });
+
+  it('is empty when the review ran and no paragraph carries a fit (the stage omits the key)', () => {
+    expect(fitOutcomes(review())).toEqual([]);
+  });
+
+  it('passes each outcome through, in the order the stage wrote them', () => {
+    expect(fitOutcomes(review([
+      { docxId: 'p7', fit: 'tight', outcome: 'cleared' },
+      { docxId: 'p8', fit: 'tighter', outcome: 'still-defective' },
+      { docxId: 'p9', fit: 'tight', outcome: 'unmeasured' },
+    ]))).toEqual([
+      { docxId: 'p7', fit: 'tight', outcome: 'cleared' },
+      { docxId: 'p8', fit: 'tighter', outcome: 'still-defective' },
+      { docxId: 'p9', fit: 'tight', outcome: 'unmeasured' },
+    ]);
+  });
+
+  it('drops a row it cannot vouch for rather than putting it on the wire', () => {
+    expect(fitOutcomes(review([
+      { docxId: 'p7', fit: 'tight', outcome: 'not-flagged' },
+      { docxId: 'p8', fit: 'squeeze', outcome: 'cleared' },
+      { docxId: 7, fit: 'tight', outcome: 'cleared' },
+      { docxId: 'p9', fit: 'tight', outcome: 'cleared', extra: '<b>x</b>' },
+      'p10',
+    ]))).toEqual([{ docxId: 'p9', fit: 'tight', outcome: 'cleared' }]);
+  });
+
+  it('is null, not empty, when it could read none of the rows: unreadable is not "no fits"', () => {
+    expect(fitOutcomes(review([{ docxId: 'p7', fit: 'tight', outcome: 'not-flagged' }]))).toBeNull();
   });
 });

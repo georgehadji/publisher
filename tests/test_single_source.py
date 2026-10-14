@@ -132,6 +132,22 @@ def test_the_api_writes_the_attribute_path_the_stage_declares():
     assert dict(re.findall(r'(\w+): "([^"]+)"', body)) == PROPOSAL_PATHS
 
 
+def test_the_review_contract_names_the_fit_steps_and_outcomes_the_schemas_allow():
+    """K5: the structure view drops a fit outcome whose values the contract does
+    not name. A value the stage writes but the contract lacks is an outcome no
+    reviewer ever sees; one the contract names but no schema allows is dead."""
+    contract = _read("packages/api/src/contract.ts")
+
+    def listed(name: str) -> list[str]:
+        return re.findall(r'"([\w-]+)"', contract.split(f"export const {name} = [", 1)[1].split("]", 1)[0])
+
+    ast = json.loads(_read("schemas/ast/ast.schema.json"))
+    review = json.loads(_read("schemas/layout-review/layout-review.schema.json"))
+    assert listed("FIT_STEPS") == ast["$defs"]["paragraph"]["properties"]["attrs"]["properties"]["fit"]["enum"]
+    assert listed("FIT_STEPS") == review["$defs"]["fitOutcome"]["properties"]["fit"]["enum"]
+    assert listed("FIT_OUTCOMES") == review["$defs"]["fitOutcome"]["properties"]["outcome"]["enum"]
+
+
 def test_the_override_route_and_contract_accept_every_schema_op():
     """The API restates the op enum twice (the PATCH route's JSON schema and
     contract.ts's union). An op missing there is one no reviewer can log."""

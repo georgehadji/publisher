@@ -15,6 +15,7 @@
 export type {
   StructureReview, ChapterReview, BlockReview, LowConfidenceNode, OverrideOp, OrphanedOp,
   ProposalReview,
+  FitOutcomeReview,
 } from "../../api/src/contract";
 
 /**

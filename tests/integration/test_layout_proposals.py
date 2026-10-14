@@ -23,7 +23,8 @@ AST = {"schema": "ast/1", "body": [{"type": "chapter", "attrs": {"number": 1, "t
     {"type": "paragraph", "sourceRef": {"docxId": "p7"}, "content": [{"type": "text", "text": "Words."}]}]}]}
 REVIEW = {"schema": "layout-review/1", "agentId": "compositor", "findings": [
     {"kind": "widow", "page": 5, "verdict": "confirmed",
-     "proposals": [{"id": PID, "type": "fit_paragraph", "docxId": "p7", "value": "tight"}]}]}
+     "proposals": [{"id": PID, "type": "fit_paragraph", "docxId": "p7", "value": "tight"}]}],
+    "fitOutcomes": [{"docxId": "p6", "fit": "tight", "outcome": "cleared"}]}
 
 
 def _built(db, cas_root, manuscript_id: str) -> None:
@@ -58,6 +59,8 @@ def test_a_layout_proposal_is_listed_and_accepting_it_logs_set_attr_on_fit(api_s
     view = requests.get(f"{api_server}/v1/manuscripts/{manuscript_id}/structure", headers=auth).json()
     [listed] = [p for p in view["proposals"] if p["id"] == PID]
     assert (listed["op"], listed["docxId"], listed["page"], listed["kind"]) == ("set_attr", "p7", 5, "widow")
+    # K5: the same build's fit outcomes, off the same artifact
+    assert view["fitOutcomes"] == [{"docxId": "p6", "fit": "tight", "outcome": "cleared"}]
 
     accept = f"{api_server}/v1/manuscripts/{manuscript_id}/proposals/{PID}/accept"
     first = requests.post(accept, json={"actor": "user:reviewer"},

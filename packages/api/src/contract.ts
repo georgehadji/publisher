@@ -37,6 +37,32 @@ export interface StructureReview {
    * for that build (no API key configured), which is not "no proposals".
    */
   proposals: ProposalReview[] | null;
+  /**
+   * What each paragraph's applied `fit` did in the same build, read off its
+   * `layout-review/1` (K5). `null`: layout-review did not run for that build (no
+   * API key), so nothing was checked -- not "no fits". `[]`: it ran, and no
+   * paragraph carries a fit.
+   */
+  fitOutcomes: FitOutcomeReview[] | null;
+}
+
+/**
+ * A paragraph's `fit` steps and what one did in a build. Pinned to
+ * schemas/ast (`fit`) and schemas/layout-review (`outcome`) by tests/test_single_source.py.
+ */
+export const FIT_STEPS = ["tighter", "tight", "loose", "looser"] as const;
+export const FIT_OUTCOMES = ["cleared", "still-defective", "unmeasured"] as const;
+
+/**
+ * One applied fit's outcome. `still-defective`: the paragraph is still behind a
+ * widow or runt. `cleared`: the build measured its pages and it is behind
+ * neither. `unmeasured`: the render path names no paragraph behind a defect (the
+ * Typst path), so no claim is made -- unmeasured is not clean.
+ */
+export interface FitOutcomeReview {
+  docxId: string;
+  fit: (typeof FIT_STEPS)[number];
+  outcome: (typeof FIT_OUTCOMES)[number];
 }
 
 /**

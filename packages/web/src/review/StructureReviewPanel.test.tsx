@@ -5,7 +5,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { StructureReview } from "../types";
+import type { OverrideOp, StructureReview } from "../types";
 
 vi.mock("./actions", () => ({
   submitOverride: vi.fn(),
@@ -28,6 +28,7 @@ function review(over: Partial<StructureReview> = {}): StructureReview {
     overrides: [],
     orphanedOps: [],
     proposals: [],
+    fitOutcomes: null,
     ...over,
   };
 }
@@ -82,6 +83,43 @@ describe("StructureReviewPanel", () => {
     expect(html).toContain("Page 5 · widow");
     expect(html).toContain("set_attr");
     expect(html).toContain(">Accept<");
+  });
+
+  it("says what each applied fit did in this build, in words (K5)", () => {
+    const html = render(review({ fitOutcomes: [
+      { docxId: "p7", fit: "tight", outcome: "cleared" },
+      { docxId: "p8", fit: "tighter", outcome: "still-defective" },
+    ] }));
+    expect(html).toContain("Fit outcomes (2)");
+    expect(html).toContain("p7");
+    expect(html).toContain("Cleared");
+    expect(html).toContain("Still a widow or runt");
+  });
+
+  it("does not present an unmeasured fit as cleared", () => {
+    const html = render(review({ fitOutcomes: [{ docxId: "p9", fit: "tight", outcome: "unmeasured" }] }));
+    expect(html).toContain("Not measured");
+    expect(html).not.toContain("Cleared");
+  });
+
+  it("says a logged fit was not checked when this build ran no layout review", () => {
+    const fit: OverrideOp = { id: "ov-pr-1", sourceRef: { docxId: "p7" }, op: "set_attr", path: "/attrs/fit",
+      value: "tight", actor: "user:ada", at: "2026-10-14T00:00:00.000Z" };
+    expect(render(review({ overrides: [fit] }))).toContain("not checked");
+    expect(render(review())).not.toContain("Fit outcomes");
+    expect(render(review({ fitOutcomes: [] }))).not.toContain("Fit outcomes");
+  });
+
+  it("says a fit accepted since this build has no outcome until the next one", () => {
+    const fit = (id: string, docxId: string): OverrideOp => ({ id, sourceRef: { docxId }, op: "set_attr",
+      path: "/attrs/fit", value: "tight", actor: "user:ada", at: "2026-10-14T00:00:00.000Z" });
+    const measured = [{ docxId: "p7", fit: "tight" as const, outcome: "cleared" as const }];
+    expect(render(review({ fitOutcomes: [], overrides: [fit("ov-1", "p8")] })))
+      .toContain("1 fit in the override log has no outcome yet");
+    expect(render(review({ fitOutcomes: measured, overrides: [fit("ov-1", "p7"), fit("ov-2", "p8")] })))
+      .toContain("1 fit in the override log has no outcome yet");
+    expect(render(review({ fitOutcomes: measured, overrides: [fit("ov-1", "p7")] })))
+      .not.toContain("no outcome yet");
   });
 
   it("lists logged ops that reach nothing in this build", () => {

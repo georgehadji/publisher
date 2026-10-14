@@ -14,9 +14,11 @@ import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { CAS_ROOT, UPLOAD_MAX_BYTES, casPath, loadOwned, readCasFile, withTenant } from '../db.js';
-import { BLOCK_EXCERPT_CHARS, LOW_CONFIDENCE_BELOW, PROPOSAL_OPS, PROPOSAL_PARAMS, PROPOSAL_PATHS } from '../contract.js';
+import {
+  BLOCK_EXCERPT_CHARS, FIT_OUTCOMES, FIT_STEPS, LOW_CONFIDENCE_BELOW, PROPOSAL_OPS, PROPOSAL_PARAMS, PROPOSAL_PATHS,
+} from '../contract.js';
 import type {
-  BlockReview, ChapterReview, OrphanedOp, OverrideOp, ProposalReview, StructureReview,
+  BlockReview, ChapterReview, FitOutcomeReview, OrphanedOp, OverrideOp, ProposalReview, StructureReview,
 } from '../contract.js';
 
 export { LOW_CONFIDENCE_BELOW };
@@ -195,13 +197,15 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
           overrides,
           orphanedOps: null,          // no AST yet to check them against
           proposals: null,
+          fitOutcomes: null,
         } satisfies StructureReview;
       }
 
       const ast = JSON.parse(await readCasFile(astRow.sha256));
       const effectiveRow = artifacts.find((row) => row.schema_id === 'doc-effective/1');
       const effective = effectiveRow ? JSON.parse(await readCasFile(effectiveRow.sha256)) : null;
-      const proposals = await reviewedProposals(artifacts);
+      const layout = await layoutReview(artifacts);
+      const proposals = await reviewedProposals(artifacts, layout);
       return {
         manuscriptId: request.params.id,
         status: 'ready',
@@ -212,6 +216,7 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
         // which only the effective document has.
         orphanedOps: orphanedOps(effective ? [ast, effective] : ast, overrides),
         proposals: proposals ? pendingProposals({ proposals }, overrides) : null,
+        fitOutcomes: fitOutcomes(layout),
       } satisfies StructureReview;
     }
   );
@@ -253,7 +258,8 @@ export async function registerManuscripts(server: FastifyInstance): Promise<void
       }
       const rows = await withTenant(request.tenantId, (client) =>
         reviewedBuildArtifacts(client, request.params.id, PROPOSAL_SCHEMAS));
-      const proposal = ((await reviewedProposals(rows)) ?? []).find((p: any) => p.id === request.params.pid);
+      const proposal = ((await reviewedProposals(rows, await layoutReview(rows))) ?? [])
+        .find((p: any) => p.id === request.params.pid);
       if (!proposal) {
         return reply.code(404).send({ error: 'no such proposal in the latest build' });
       }
@@ -438,18 +444,50 @@ export function pendingProposals(document: any, ops: OverrideOp[]): ProposalRevi
 /** The artifacts a build's proposals come from: structure-propose's, then layout-review's (K4). */
 const PROPOSAL_SCHEMAS = ['agent-proposal/1', 'layout-review/1'];
 
+/** The reviewed build's layout-review/1, parsed; `null` when it did not run for that build. */
+async function layoutReview(rows: { schema_id: string; sha256: string }[]): Promise<unknown> {
+  const row = rows.find((r) => r.schema_id === 'layout-review/1');
+  return row ? JSON.parse(await readCasFile(row.sha256)) : null;
+}
+
 /**
  * Every proposal of the reviewed build, in agent-proposal/1's shape, or `null`
- * when neither producer ran for it (no API key), which is not "none".
+ * when neither producer ran for it (no API key), which is not "none". `layout`
+ * is that build's parsed layout-review/1 (layoutReview), read once per request.
  */
-async function reviewedProposals(rows: { schema_id: string; sha256: string }[]): Promise<any[] | null> {
+async function reviewedProposals(
+  rows: { schema_id: string; sha256: string }[],
+  layout: unknown,
+): Promise<any[] | null> {
   const agent = rows.find((row) => row.schema_id === 'agent-proposal/1');
-  const layout = rows.find((row) => row.schema_id === 'layout-review/1');
-  if (!agent && !layout) return null;
+  if (!agent && layout === null) return null;
   return [
     ...(agent ? JSON.parse(await readCasFile(agent.sha256)).proposals ?? [] : []),
-    ...(layout ? layoutProposals(JSON.parse(await readCasFile(layout.sha256))) : []),
+    ...(layout !== null ? layoutProposals(layout) : []),
   ];
+}
+
+/**
+ * What each applied `fit` did in the reviewed build (K5), from its layout-review/1.
+ * Passed through, never recomputed: the stage measured it, and the API owns no
+ * pipeline logic. A row whose values the contract does not name is dropped rather
+ * than put on the wire. `null`: no layout review, so nothing was checked -- or
+ * not one row was readable, which must not read as "no fits" either.
+ */
+export function fitOutcomes(review: unknown): FitOutcomeReview[] | null {
+  if (review === null || typeof review !== 'object') return null;
+  const rows = (review as { fitOutcomes?: unknown }).fitOutcomes;
+  const listed: unknown[] = Array.isArray(rows) ? rows : [];
+  const read = listed.filter(isFitOutcome).map(({ docxId, fit, outcome }) => ({ docxId, fit, outcome }));
+  return listed.length > 0 && read.length === 0 ? null : read;
+}
+
+function isFitOutcome(row: unknown): row is FitOutcomeReview {
+  if (typeof row !== 'object' || row === null) return false;
+  const { docxId, fit, outcome } = row as Record<string, unknown>;
+  return typeof docxId === 'string'
+    && (FIT_STEPS as readonly unknown[]).includes(fit)
+    && (FIT_OUTCOMES as readonly unknown[]).includes(outcome);
 }
 
 /**
