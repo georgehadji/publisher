@@ -1592,6 +1592,25 @@ class Finding(BaseModel):
     proposals: Optional[list[LayoutReview_Proposal]] = Field(default=None)
 
 
+class FitOutcome_Fit(str, Enum):
+    TIGHTER = "tighter"
+    TIGHT = "tight"
+    LOOSE = "loose"
+    LOOSER = "looser"
+
+
+class FitOutcome_Outcome(str, Enum):
+    CLEARED = "cleared"
+    STILL_DEFECTIVE = "still-defective"
+    UNMEASURED = "unmeasured"
+
+
+class FitOutcome(BaseModel):
+    docxId: str
+    fit: FitOutcome_Fit
+    outcome: FitOutcome_Outcome
+
+
 class BookAST(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -2093,6 +2112,7 @@ class LayoutReview(BaseModel):
     modelId: Optional[str] = Field(default=None)
     costUsd: Optional[float] = Field(default=None)
     findings: list[Finding]
+    fitOutcomes: Optional[list[FitOutcome]] = Field(default=None)
 
 
 

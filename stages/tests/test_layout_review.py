@@ -97,7 +97,8 @@ def test_each_finding_gets_the_compositors_verdict(tmp_path, monkeypatch):
         {"kind": "runt", "page": 2, "verdict": "unreviewed"},       # left out of the answer
         {"kind": "river", "page": 11, "verdict": "not-a-defect"}]
     assert document["modelId"] and result.warnings == []
-    assert result.metrics == {"findings": 3, "reviewed": 2, "confirmed": 1, "proposals": 0}  # no refs
+    assert result.metrics == {"findings": 3, "reviewed": 2, "confirmed": 1, "proposals": 0,  # no refs
+                              "fit_cleared": 0, "fit_still_defective": 0, "fit_unmeasured": 0}
 
 
 def test_over_the_cap_the_rest_are_unreviewed_and_it_says_so(tmp_path, monkeypatch):
@@ -140,6 +141,29 @@ def test_a_proposal_is_the_same_proposal_on_every_rebuild():
     assert once == proposals_for("widow", 5, pagemap, {"p-a": None})
     assert once[0]["id"] != proposals_for("widow", 5, pagemap, {"p-a": "tight"})[0]["id"]
     assert proposals_for("runt", 5, pagemap, {"p-a": None}) == []        # the ref is the widow's
+
+
+def test_each_applied_fit_is_cleared_still_defective_or_unmeasured():
+    """K5: read off this build's pagemap. A paragraph it never names is no claim."""
+    from stages.layout_review_stage import fit_outcomes
+    pagemap = _pagemap(widows=(5,), refs={
+        4: {"paraRanges": [{"paraIndex": 0, "linesOnPage": 9, "ref": "p-a"}, {"paraIndex": 1, "linesOnPage": 3, "ref": "p-b"}]},
+        5: {"widowRefs": ["p-a"], "paraRanges": [{"paraIndex": 0, "linesOnPage": 1, "ref": "p-a"}]}})
+    assert fit_outcomes(pagemap, {"p-a": "tight", "p-b": "tighter", "p-c": "tight", "p-d": None}) == [
+        {"docxId": "p-a", "fit": "tight", "outcome": "still-defective"},
+        {"docxId": "p-b", "fit": "tighter", "outcome": "cleared"},
+        {"docxId": "p-c", "fit": "tight", "outcome": "unmeasured"}]
+
+
+def test_a_fix_that_cleared_every_warning_is_still_reported(tmp_path, monkeypatch):
+    """The fix worked, so preflight warned on nothing and no Compositor is built --
+    and that is exactly the build whose outcome a reviewer needs to see."""
+    monkeypatch.setattr(layout_review_stage, "_compositor", lambda api_key: pytest.fail("nothing to look at"))
+    pagemap = _pagemap(refs={5: {"paraRanges": [{"paraIndex": 0, "linesOnPage": 4, "ref": "p-a"}]}})
+    result, document = _run(tmp_path, _report(), pagemap, _doc(**{"p-a": "tight"}))
+    assert document["findings"] == []
+    assert document["fitOutcomes"] == [{"docxId": "p-a", "fit": "tight", "outcome": "cleared"}]
+    assert result.metrics["fit_cleared"] == 1
 
 
 def test_nothing_warned_no_compositor_is_built(tmp_path, monkeypatch):

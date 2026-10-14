@@ -14,6 +14,12 @@
       "type": "array",
       "items": { "$ref": "#/$defs/finding" },
       "maxItems": 5000
+    },
+    "fitOutcomes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/fitOutcome" },
+      "maxItems": 5000,
+      "description": "K5: what each paragraph's applied `fit` did in this build, read off the pagemap"
     }
   },
   "required": ["schema", "agentId", "findings"],
@@ -37,6 +43,19 @@
         }
       },
       "required": ["kind", "page", "verdict"],
+      "additionalProperties": false
+    },
+    "fitOutcome": {
+      "type": "object",
+      "properties": {
+        "docxId": { "type": "string", "maxLength": 128 },
+        "fit": { "type": "string", "enum": ["tighter", "tight", "loose", "looser"] },
+        "outcome": {
+          "type": "string", "enum": ["cleared", "still-defective", "unmeasured"],
+          "description": "unmeasured: the pagemap names no paragraph (e.g. the Typst path), so no claim is made"
+        }
+      },
+      "required": ["docxId", "fit", "outcome"],
       "additionalProperties": false
     },
     "proposal": {

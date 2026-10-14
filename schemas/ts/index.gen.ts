@@ -1088,6 +1088,19 @@ export const FindingSchema = z.object({
 });
 export type Finding = z.infer<typeof FindingSchema>;
 
+export const FitOutcome_FitSchema: z.ZodTypeAny = z.enum(["tighter", "tight", "loose", "looser"]);
+export type FitOutcome_Fit = z.infer<typeof FitOutcome_FitSchema>;
+
+export const FitOutcome_OutcomeSchema: z.ZodTypeAny = z.enum(["cleared", "still-defective", "unmeasured"]);
+export type FitOutcome_Outcome = z.infer<typeof FitOutcome_OutcomeSchema>;
+
+export const FitOutcomeSchema = z.object({
+  "docxId": z.string().max(128),
+  "fit": z.lazy(() => FitOutcome_FitSchema),
+  "outcome": z.lazy(() => FitOutcome_OutcomeSchema),
+});
+export type FitOutcome = z.infer<typeof FitOutcomeSchema>;
+
 export const BookASTSchema = z.object({
   "schema": BookAST_SchemaRefSchema,
   "metadata": MetadataSchema.optional(),
@@ -1468,5 +1481,6 @@ export const LayoutReviewSchema = z.object({
   "modelId": z.string().max(128).optional(),
   "costUsd": z.number().min(0).optional(),
   "findings": z.array(FindingSchema).max(5000),
+  "fitOutcomes": z.array(FitOutcomeSchema).max(5000).optional(),
 });
 export type LayoutReview = z.infer<typeof LayoutReviewSchema>;

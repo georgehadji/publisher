@@ -193,8 +193,10 @@ now readable from the log (`ov-pr-*` ids).
 when an OpenRouter key is configured: for each page preflight warned on (widows, runts,
 hyphen stacks, rivers; at most 8 a build) it crops the press PDF and records `confirmed`,
 `not-a-defect` or `needs-human` in `layout-review/1`, terminal and advisory.
-**Still open:** fixes a reviewer can accept. Planned in `COMPOSITOR_PATCH_PLAN.md`
-(K0–K5): a paragraph `fit` attribute through the override log, verified by the next build. **Done
+**Done (2026-10-14): fixes a reviewer can accept** (`COMPOSITOR_PATCH_PLAN.md` K0–K5): a
+confirmed widow or runt proposes a paragraph `fit` by rule, a reviewer accepts it into the
+override log, and the next build reports each fit `cleared`, `still-defective` or
+`unmeasured`. **Still open:** a live end-to-end run, which needs a Word-corpus book that widows. **Done
 (2026-10-09): `crop` is real.** It renders a page of the build's frozen press PDF through
 `ghostscript.render_pages` (144 dpi) and crops it to a bbox in pt; the runtime hands the
 model the image itself (`ToolImage` -> a text part and an image part), which Haiku 4.5

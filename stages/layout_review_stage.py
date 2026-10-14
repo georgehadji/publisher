@@ -20,7 +20,8 @@ what keeps a run inside the Compositor's budget.
 Each confirmed widow or runt whose paragraph the pagemap names (K1) carries a
 `fit_paragraph` proposal at the next step of a fixed rule (NEXT_FIT, K3) -- the
 model only verifies; it never picks a value. A proposal reaches the book only
-when a reviewer accepts it into the override log.
+when a reviewer accepts it into the override log. The next build reports what
+each applied `fit` did (`fitOutcomes`, K5), whether or not anything warned.
 
 Advisory and terminal (D9): nothing consumes `layout-review/1`, so it cannot
 change the book, the preflight verdict or the package. Reachable only with the
@@ -94,6 +95,20 @@ def paragraph_fits(doc: dict) -> dict[str, str | None]:
     return fits
 
 
+def fit_outcomes(pagemap: dict, fits: dict[str, str | None]) -> list[dict]:
+    """K5: did each applied `fit` work? Read off this build alone -- the next build
+    after an accept IS the re-render. `still-defective`: the pagemap still names the
+    paragraph behind a widow or runt. `cleared`: it names the paragraph on its pages
+    and behind nothing. `unmeasured`: it never names the paragraph (the Typst path
+    records no refs, K1), so no claim is made -- unmeasured is not clean."""
+    pages = pagemap.get("pages") or []
+    located = {r["ref"] for p in pages for r in p.get("paraRanges") or [] if r.get("ref")}
+    flagged = {ref for p in pages for key in _REFS.values() for ref in p.get(key) or []}
+    return [{"docxId": ref, "fit": fit,
+             "outcome": "still-defective" if ref in flagged else "cleared" if ref in located else "unmeasured"}
+            for ref, fit in sorted(fits.items()) if fit]
+
+
 def proposals_for(kind: str, page: int, pagemap: dict, fits: dict[str, str | None]) -> list[dict]:
     """A `fit_paragraph` proposal per paragraph the pagemap names behind this
     page's widow or runt (K1), at the next step NEXT_FIT allows. The id comes from
@@ -112,7 +127,7 @@ def proposals_for(kind: str, page: int, pagemap: dict, fits: dict[str, str | Non
 
 @stage(
     name="layout-review",
-    version=2,   # v2: a confirmed widow or runt carries a fit_paragraph proposal (K3); reads doc-effective/1
+    version=3,   # v3: reports each applied fit's outcome (K5). v2: a confirmed widow or runt carries a fit_paragraph proposal (K3); reads doc-effective/1
     inputs={"report": "preflight/1", "pdf_path": "pdfx/1", "pagemap_path": "pagemap/1",
             "doc_path": "doc-effective/1", "api_key": "openrouter-credential/1"},
     root_inputs=["api_key"],   # required and unproduced: no key, not reachable
@@ -160,7 +175,9 @@ def layout_review(ctx: StageCtx, report: str | None = None, pdf_path: str | None
         proposals = proposals_for(finding["kind"], finding["page"], pagemap, fits) if verdict == "confirmed" else []
         return {**out, "proposals": proposals} if proposals else out
 
-    document = {"schema": "layout-review/1", "agentId": "compositor", "findings": [recorded(f) for f in findings]}
+    outcomes = fit_outcomes(pagemap, fits)
+    document = {"schema": "layout-review/1", "agentId": "compositor", "findings": [recorded(f) for f in findings],
+                **({"fitOutcomes": outcomes} if outcomes else {})}
     if result is not None:
         from publisher_agents.compositor import PROMPT_VERSION
         document.update(promptVersion=PROMPT_VERSION, modelId=_route().model_id,
@@ -174,7 +191,9 @@ def layout_review(ctx: StageCtx, report: str | None = None, pdf_path: str | None
                                     media_type="application/json", size=len(data))],
         metrics={"findings": len(findings), "reviewed": len(verdicts),
                  "confirmed": sum(v == "confirmed" for v in verdicts.values()),
-                 "proposals": sum(len(f.get("proposals", [])) for f in document["findings"])},
+                 "proposals": sum(len(f.get("proposals", [])) for f in document["findings"]),
+                 **{f"fit_{o.replace('-', '_')}": sum(x["outcome"] == o for x in outcomes)
+                    for o in ("cleared", "still-defective", "unmeasured")}},
         warnings=warnings,
     )
 

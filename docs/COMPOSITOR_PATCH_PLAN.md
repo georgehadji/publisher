@@ -1,6 +1,6 @@
 # Compositor patches — from a verdict to a fix a reviewer accepts
 
-**Status:** plan, 2026-10-13, against `18c2e7a`. **K1–K4 built** (2026-10-13/14); K5 open. Owns identifier series **K0–K5**.
+**Status:** plan, 2026-10-13, against `18c2e7a`. **K1–K5 built** (2026-10-13/14). Live end-to-end proof still waits on a Word-corpus book that widows (see below). Owns identifier series **K0–K5**.
 **Follows:** `WIRING_PLAN.md` W11 (the Compositor's caller, `layout-review`, landed in `18c2e7a`).
 
 Today `layout-review` looks at each page preflight warned on and records `confirmed`,
@@ -135,6 +135,16 @@ paragraph moved off any warned page).
 The regression floor is preflight, not the raster diff (a corpus gate, not a per-build one).
 An adjustment that strands an orphan fails the build outright. A new widow or runt on another
 page is a new warning, which the same loop then reviews.
+
+*As built:* the outcomes are `cleared`, `still-defective` and `unmeasured`, not
+`not-flagged`. One stage run sees only its own build, so "was flagged before, is not now"
+cannot be told apart from "was never flagged"; what this build CAN say is whether the
+pagemap still names the paragraph behind a widow or runt (`still-defective`), names it on its
+pages and behind nothing (`cleared`), or never names it (`unmeasured`: the Typst path records
+no refs, K1, and calling those cleared would be the unmeasured-is-clean mistake). The report
+is `fitOutcomes`, one entry per paragraph carrying a `fit`, written whether or not anything
+warned: a fix that worked removes the warning, and that build is the one a reviewer needs.
+A still-defective paragraph that is confirmed again gets K3's next step. layout-review v3.
 
 ---
 
