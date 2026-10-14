@@ -145,6 +145,10 @@ no refs, K1, and calling those cleared would be the unmeasured-is-clean mistake)
 is `fitOutcomes`, one entry per paragraph carrying a `fit`, written whether or not anything
 warned: a fix that worked removes the warning, and that build is the one a reviewer needs.
 A still-defective paragraph that is confirmed again gets K3's next step. layout-review v3.
+Reviewers see them (2026-10-14): `GET /v1/manuscripts/:id/structure` returns the reviewed
+build's `fitOutcomes`, passed through and never recomputed (`null` when layout-review did
+not run, or no row was readable: not "no fits"), and the review panel lists each in words,
+`unmeasured` never as cleared, plus the fits logged since that build, which await the next.
 
 ---
 

@@ -1,6 +1,6 @@
 # Wiring plan — every open item in `REMAINING_WORK.md`, in build order
 
-**Status:** W0–W10 done (2026-10-02). W11 was blocked by design; on 2026-10-09 the user chose to build the page-raster pipeline, which closed two of its rows and half of a third (below). On 2026-10-12 the Compositor got its caller, `layout-review`; its DesignSpec patches stay open.
+**Status:** W0–W10 done (2026-10-02). W11 was blocked by design; on 2026-10-09 the user chose to build the page-raster pipeline, which closed two of its rows and half of a third (below). On 2026-10-12 the Compositor got its caller, `layout-review`; on 2026-10-14 its fixes (`COMPOSITOR_PATCH_PLAN.md` K0–K5), a paragraph `fit` in the override log rather than a DesignSpec patch.
 Planned 2026-10-01 against `ae1a05e` plus the uncommitted split/merge work.
 **Scope:** every item `docs/REMAINING_WORK.md` still lists as open. Each phase below says
 which item it closes, what changes, which gates prove it, and why it sits where it does.

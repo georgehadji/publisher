@@ -196,7 +196,7 @@ hyphen stacks, rivers; at most 8 a build) it crops the press PDF and records `co
 **Done (2026-10-14): fixes a reviewer can accept** (`COMPOSITOR_PATCH_PLAN.md` K0–K5): a
 confirmed widow or runt proposes a paragraph `fit` by rule, a reviewer accepts it into the
 override log, and the next build reports each fit `cleared`, `still-defective` or
-`unmeasured`. **Still open:** a live end-to-end run, which needs a Word-corpus book that widows. **Done
+`unmeasured`, which the structure view returns (`fitOutcomes`) and the review panel lists. **Still open:** a live end-to-end run, which needs a Word-corpus book that widows. **Done
 (2026-10-09): `crop` is real.** It renders a page of the build's frozen press PDF through
 `ghostscript.render_pages` (144 dpi) and crops it to a bbox in pt; the runtime hands the
 model the image itself (`ToolImage` -> a text part and an image part), which Haiku 4.5
@@ -1041,7 +1041,8 @@ On the real book: 0 widows, 0 orphans, 0 runts, notes in order, 821 pages.
    worker image and is packaged. Its 821 pages (weasyprint 70) become a text-carrying
    PDF/X-1a, and the EPUB is EPUBCheck-clean. What's left:
    - No composition warnings: runts 264 → 0 and widows 27 → 0 (see **Runts**, **Widows**).
-     The one warning left is image resolution, unmeasured.
+     Image resolution, the other warning in the 2026-09-26 verdict, was unmeasured then;
+     it is measured since 2026-09-30 (§2.2).
    - The proof takes about 2.5 s a page.
    - The author must re-save one EMF figure as PNG.
 2. **§1.3 — done.** Ingest scores its structural decisions, the AST carries them, and the
@@ -1050,4 +1051,6 @@ On the real book: 0 widows, 0 orphans, 0 runts, notes in order, 821 pages.
 3. **§1.1 — done (W2).** Reviewers sign in with their own token and their ops carry
    their name; the review loop closes, and has run against the real API (§3.5, §1.2,
    2026-10-09). The Compositor's caller landed 2026-10-12 (§1.2): it reviews preflight's
-   page-level warnings; DesignSpec patches are what's left of it.
+   page-level warnings. Its fixes landed 2026-10-14 (`COMPOSITOR_PATCH_PLAN.md` K0–K5) as a
+   paragraph `fit` in the override log, not a DesignSpec patch (K0: a spread-scoped patch
+   has nothing in the DesignSpec to carry it); the review panel shows what each did.
