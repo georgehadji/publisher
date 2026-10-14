@@ -197,7 +197,7 @@ hyphen stacks, rivers; at most 8 a build) it crops the press PDF and records `co
 confirmed widow or runt proposes a paragraph `fit` by rule, a reviewer accepts it into the
 override log, and the next build reports each fit `cleared`, `still-defective` or
 `unmeasured`, which the structure view returns (`fitOutcomes`) and the review panel lists. **Not open, and why (2026-10-15):** no Word book widows or runts under the house stylesheet
-(`widows: 2; orphans: 2` and `.keep`; searched over ~1,100 pages of constructs, two faces),
+(`widows: 2; orphans: 2` and `.keep`; searched over ~1,600 pages of constructs, two faces),
 so on the CSS path the loop is a safety net with nothing to catch today. Its mechanics are
 proven end to end on `corpus/word/word-composition.docx` under the house stylesheet with
 `widows: 2` relaxed (`stages/tests/test_fit_loop.py`; `COMPOSITOR_PATCH_PLAN.md` **Live

@@ -5,8 +5,8 @@ it into the override log, the next build applies it and reports what it did.
 
 A proof of the MECHANICS, not that the house design ever triggers the loop: under
 the house stylesheet `corpus/word/word-composition.docx` widows nowhere (`widows: 2`
-forbids it; measured 2026-10-15 over ~1,100 pages of prose, notes, headings, tables,
-roles and marks, in GFS Didot and DejaVu Serif). So this renders the house
+forbids it; nor did any construct searched on 2026-10-15, ~1,600 pages -- see
+COMPOSITOR_PATCH_PLAN.md **Live check** for what was and was not tried). So this renders the house
 stylesheet with that one rule relaxed, and only that rule.
 
 Real stages throughout -- ingest, extract, ast-assemble (the integrity gate),

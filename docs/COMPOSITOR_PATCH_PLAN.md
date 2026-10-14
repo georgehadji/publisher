@@ -161,14 +161,20 @@ integration suite.
 **Live check (2026-10-15): the house design leaves the loop nothing to catch.** The real book
 measures 0 widows and 0 runts, and that is not luck: the house stylesheet sets `widows: 2;
 orphans: 2` on every paragraph and `.keep` holds each one's last two words together.
-Searched for a construct that beats them, in GFS Didot (the house face) and DejaVu Serif
-(CI's default serif), over ~1,100 pages: short 2-3 line paragraphs, paragraphs before a
-heading or scene break, beside a table, every paragraph role, left/centre alignment, a
-paragraph ending in emphasis or a link, footnotes and long footnotes, one chapter and
-eight. None widowed or ran short. With the same rules removed the same books show 27
-widowed and 66 runt paragraphs, so the measurement sees them. (The search also found
-that a `chapter-opening` paragraph anywhere but a chapter's start crashes weasyprint 70
-in its drop-cap float -- ingest never sets that role; filed separately.)
+Searched for a construct that beats them, ~1,600 pages in all, none of which widowed or ran
+short:
+- ~1,370 pages in GFS Didot (the house face) and DejaVu Serif (CI's default serif), one
+  chapter and eight: short 2-3 line paragraphs, paragraphs before a heading or scene
+  break, beside a table, every role but `chapter-opening` (it crashed, below), left/centre
+  alignment, a paragraph ending in emphasis, a link or bold.
+- 234 pages of plain prose, prose with footnotes and with long footnotes, one chapter, in
+  whatever face weasyprint resolved (no vault `@font-face`). With `widows`/`orphans` at 1
+  and `.keep` removed, those same books show 27 widowed and 66 runt paragraphs, so the
+  measurement sees them.
+
+The search also found that a `chapter-opening` paragraph anywhere but a chapter's start
+crashes weasyprint 70 in its drop-cap float. Ingest never sets that role; a reviewer's
+`set_attr` on `/attrs/role` can. Filed separately.
 
 So the loop is a safety net on the CSS path: for what the stylesheet cannot prevent, and
 for a design that relaxes it. Its mechanics are proven end to end instead
