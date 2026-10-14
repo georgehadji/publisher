@@ -92,7 +92,8 @@ export function StructureReviewPanel({ review }: { review: StructureReview }) {
         {review.fitOutcomes === null ? (
           review.overrides.some(isFitOp) && (
             <p style={styles.placeholder}>
-              This build ran no layout review, so the fits in the override log were not checked.
+              No fit outcome could be checked for this build, so whether the fits in the override log
+              worked is unknown.
             </p>
           )
         ) : (
@@ -401,14 +402,16 @@ const FIT_OUTCOME_TEXT: Record<FitOutcomeReview["outcome"], { label: string; det
 };
 
 /**
- * Paragraphs the override log sets a fit on that this build reports no outcome
- * for: logged after it ran, so the next build is the first to apply them.
+ * Paragraphs whose fit in the override log this build has no outcome for: logged
+ * after it ran, so the next build is the first to apply them. The log's LAST fit
+ * on a paragraph is the one `resolve` applies (ops apply in order), so a step
+ * accepted after a still-defective outcome -- `tight` reported, `tighter` logged
+ * since -- awaits a build too.
  */
 function fitsAwaitingABuild(review: StructureReview): number {
-  const reported = new Set((review.fitOutcomes ?? []).map((o) => o.docxId));
-  return new Set(
-    review.overrides.filter(isFitOp).map((op) => op.sourceRef.docxId).filter((id) => !reported.has(id))
-  ).size;
+  const reported = new Map((review.fitOutcomes ?? []).map((o) => [o.docxId, o.fit]));
+  const logged = new Map(review.overrides.filter(isFitOp).map((op) => [op.sourceRef.docxId, op.value]));
+  return [...logged].filter(([docxId, value]) => reported.get(docxId) !== value).length;
 }
 
 function awaitingNote(count: number): string {

@@ -39,9 +39,9 @@ export interface StructureReview {
   proposals: ProposalReview[] | null;
   /**
    * What each paragraph's applied `fit` did in the same build, read off its
-   * `layout-review/1` (K5). `null`: layout-review did not run for that build (no
-   * API key), so nothing was checked -- not "no fits". `[]`: it ran, and no
-   * paragraph carries a fit.
+   * `layout-review/1` (K5). `null`: nothing could be checked -- layout-review did
+   * not run for that build (no API key), or not one of its rows was readable --
+   * which is not "no fits". `[]`: it ran, and no paragraph carries a fit.
    */
   fitOutcomes: FitOutcomeReview[] | null;
 }

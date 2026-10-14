@@ -105,7 +105,7 @@ describe("StructureReviewPanel", () => {
   it("says a logged fit was not checked when this build ran no layout review", () => {
     const fit: OverrideOp = { id: "ov-pr-1", sourceRef: { docxId: "p7" }, op: "set_attr", path: "/attrs/fit",
       value: "tight", actor: "user:ada", at: "2026-10-14T00:00:00.000Z" };
-    expect(render(review({ overrides: [fit] }))).toContain("not checked");
+    expect(render(review({ overrides: [fit] }))).toContain("No fit outcome could be checked");
     expect(render(review())).not.toContain("Fit outcomes");
     expect(render(review({ fitOutcomes: [] }))).not.toContain("Fit outcomes");
   });
@@ -120,6 +120,25 @@ describe("StructureReviewPanel", () => {
       .toContain("1 fit in the override log has no outcome yet");
     expect(render(review({ fitOutcomes: measured, overrides: [fit("ov-1", "p7")] })))
       .not.toContain("no outcome yet");
+  });
+
+  it("counts the next step accepted after a still-defective fit as awaiting a build", () => {
+    const tight: OverrideOp = { id: "ov-1", sourceRef: { docxId: "p7" }, op: "set_attr", path: "/attrs/fit",
+      value: "tight", actor: "user:ada", at: "2026-10-14T00:00:00.000Z" };
+    const tighter: OverrideOp = { ...tight, id: "ov-2", value: "tighter" };
+    const html = render(review({
+      fitOutcomes: [{ docxId: "p7", fit: "tight", outcome: "still-defective" }],
+      overrides: [tight, tighter],   // in log order: the last one is what the next build applies
+    }));
+    expect(html).toContain("1 fit in the override log has no outcome yet");
+  });
+
+  it("says nothing was checked, without claiming why, when the outcomes are null", () => {
+    const fit: OverrideOp = { id: "ov-1", sourceRef: { docxId: "p7" }, op: "set_attr", path: "/attrs/fit",
+      value: "tight", actor: "user:ada", at: "2026-10-14T00:00:00.000Z" };
+    const html = render(review({ fitOutcomes: null, overrides: [fit] }));
+    expect(html).toContain("No fit outcome could be checked for this build");
+    expect(html).not.toContain("ran no layout review");
   });
 
   it("lists logged ops that reach nothing in this build", () => {
