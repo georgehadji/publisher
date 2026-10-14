@@ -61,7 +61,10 @@ def test_tightening_a_widowed_paragraph_pulls_its_last_line_back():
     """Searched for, not hard-coded (see test_pagemap_measurement): where a line
     breaks depends on the host's fonts. What is asserted once found holds anywhere:
     the same paragraph, rendered by the same renderer and stylesheet, widows as
-    designed and does not once its `fit` is `tight`."""
+    designed and does not once its `fit` takes a step K3 proposes. Both steps are
+    tried in proposal order because how far one moves a line is the face's
+    business: on Times `tight` clears most swept widows, on DejaVu Serif (CI's
+    default serif) it cleared 1 of 38 and `tighter` 36."""
     weasyprint = pytest.importorskip("weasyprint")
     from stages.paginate_stage import _measure_pages
     fit_css = "".join(line for line in emit_css({}).splitlines() if line.startswith(".fit-"))
@@ -72,9 +75,11 @@ def test_tightening_a_widowed_paragraph_pulls_its_last_line_back():
         pages = _measure_pages(weasyprint.HTML(string=f"<style>{CSS}{fit_css}</style>{html}").render().pages)
         return [page.get("widowRefs", []) for page in pages.values() if page["hasWidows"]]
 
+    from stages.layout_review_stage import NEXT_FIT
+    steps = [NEXT_FIT[None], NEXT_FIT[NEXT_FIT[None]]]   # tight, then tighter
     for words in range(40, 400):
         designed = widows(words, None)
-        if designed and widows(words, "tight") == []:
+        if designed and any(widows(words, fit) == [] for fit in steps):
             assert designed == [["long"]]
             return
-    pytest.fail("no widow that `fit: tight` pulls back across the swept paragraph lengths")
+    pytest.fail(f"no widow that a fit step ({', '.join(steps)}) pulls back across the swept paragraph lengths")
