@@ -140,3 +140,27 @@ def test_renders_a_real_pdf_with_measured_chapter_pages():
         ch2 = next(c for c in pagemap["chapters"] if c["chapterId"] == "ch2")
         assert ch2["startPage"] > 1
         assert ch2["startPage"] % 2 == 1, "chapters open recto per the DesignSpec"
+
+
+@pytest.mark.skipif(not (HAVE_TOOLCHAIN and HAVE_FACE),
+                    reason="pandoc, typst or the GFS Didot face is not installed")
+def test_equations_are_typst_math_in_the_pinned_math_face(tmp_path):
+    """pandoc reads the HTML's MathML as Typst math -- an inline equation in its
+    line, a displayed one as a block -- and the preamble names the math face."""
+    from stages.rendering import MATH_FONT
+    from stages.tests.test_equation_text import _book
+
+    styles = _emit_typst(SPEC)
+    assert f'#show math.equation: set text(font: "{MATH_FONT}")' in styles
+    (tmp_path / "doc.json").write_text(json.dumps(_book()), encoding="utf-8")
+    (tmp_path / "styles.typ").write_text(styles, encoding="utf-8")
+    ctx = StageCtx(build_id="t", deterministic_seed="t", deadline=datetime.now(timezone.utc),
+                   memory_budget_mb=512, work_dir=str(tmp_path / "work"), cas_root=str(tmp_path / "cas"))
+    result = paginate_typst(ctx, doc_path=str(tmp_path / "doc.json"), typ_path=str(tmp_path / "styles.typ"))
+
+    pdf = next(a for a in result.artifacts if a.kind == "pdf")
+    data = (Path(ctx.cas_root) / pdf.hash[:2] / pdf.hash[2:4] / pdf.hash).read_bytes()
+    assert b"NewCMMath" in data
+    main = next((tmp_path / "work").rglob("main.typ")).read_text(encoding="utf-8")
+    assert "$E = 1 / 8 rho g H^2$" in main            # inline, in its sentence
+    assert "$ sum_(i = 1)^n x_i $" in main             # displayed: spaces inside the $

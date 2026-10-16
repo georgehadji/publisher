@@ -190,6 +190,11 @@ KEEP_CELL_CHARS = 16
 # so the text stream the integrity gate reads is unchanged.
 DROP_CAP = "_dropCap"
 
+# The face both print paths set equations in: Typst's bundled math font (OFL,
+# no vault entry needed -- it is inside the pinned typst binary). The Typst path
+# names it in a show rule; the CSS path has Typst draw each equation (paginate).
+MATH_FONT = "New Computer Modern Math"
+
 
 def _drop_cap(content: list) -> list:
     """`content` with its first letter (and any punctuation before it, and any
