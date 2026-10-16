@@ -308,9 +308,22 @@ def test_the_no_loss_check_counts_smartart_text():
     assert {"Ερώτηση", "Έλεγχος", "Ορισμός"} <= set(sources)
 
 
-def test_an_equation_is_refused_not_dropped():
-    with pytest.raises(IngestError, match="equation"):
-        _ingest("word-equation.docx")
+def test_an_equation_word_built_becomes_mathml_in_its_sentence():
+    from publisher_structure.mathml import math_text
+    ast = _ingest("word-equation.docx")
+    [math] = _nodes(ast, "math")
+    assert math_text(math["content"]) == "E=18ρgH2"
+    paragraph = next(p for p in _nodes(ast, "paragraph") if math in p["content"])
+    assert paragraph["content"][-1]["text"].endswith(".")
+
+
+def test_the_no_loss_check_counts_each_equation_where_it_sits():
+    """The oracle marks the equation's place itself, from the XML: a walk that
+    stopped emitting equations would leave its paragraphs one character short."""
+    import docx
+
+    sources = docx_rich.source_texts(docx.Document(str(CORPUS / "word-equation.docx")))
+    assert any(s.endswith(docx_rich.EQUATION + ".") for s in sources)
 
 
 def test_the_no_loss_check_does_not_trust_the_walk(monkeypatch):

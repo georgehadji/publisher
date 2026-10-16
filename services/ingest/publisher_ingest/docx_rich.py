@@ -26,9 +26,12 @@ in `w:hyperlink`, and exposes neither footnote references nor drawings.
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 from typing import Callable, Optional
 
 from lxml import etree
+
+from .omml import UnsupportedMath, omml_text, to_mathml
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
@@ -344,8 +347,18 @@ def _inline_runs(
                     walk(content, extra_marks)
             elif tag in TRANSPARENT:
                 walk(child, extra_marks)
-            # Anything else -- HIDDEN revisions, pPr, bookmarks, math (refused
-            # by source_texts) -- carries no text for the book.
+            elif tag == f"{M}oMath":
+                nodes.append({"type": "math", "content": equation_mathml(child)})
+                source.append(EQUATION)
+            elif tag == f"{M}oMathPara":
+                # A displayed equation: a block of its own, lifted out of the
+                # paragraph like a figure, and counted as its own source text.
+                for o_math in child.findall(f"{M}oMath"):
+                    if not _hidden(o_math):
+                        nodes.append({"__block__": {"type": "equation", "content": equation_mathml(o_math)},
+                                      "__source__": EQUATION})
+            # Anything else -- HIDDEN revisions, pPr, bookmarks -- carries no
+            # text for the book.
 
     walk(para, [])
     return nodes, "".join(source)
@@ -462,6 +475,7 @@ def paragraph_blocks(
 
     lifted = [n["__block__"] for n in nodes if "__block__" in n]
     inline = _merge_text([n for n in nodes if "__block__" not in n])
+    displayed = [n["__source__"] for n in nodes if "__source__" in n]
 
     blocks: list[dict] = []
     if source_text.strip():
@@ -477,7 +491,7 @@ def paragraph_blocks(
         # not in the note area -- the schema's footnote holds inline content
         # only. Give `footnote` block content if a book needs them in place.
         blocks.extend(n["__block__"] for n in note if "__block__" in n)
-    return blocks, [source_text.strip()] if source_text.strip() else []
+    return blocks, ([source_text.strip()] if source_text.strip() else []) + displayed
 
 
 def table_block(
@@ -527,6 +541,34 @@ def _hidden(el: etree._Element) -> bool:
     return any(a.tag in HIDDEN for a in el.iterancestors())
 
 
+# Where an equation sits in a paragraph's source text, on both sides of the
+# no-loss check (the walk's `source` and `source_texts`). Its characters are
+# checked on their own, as it converts (`equation_mathml`): Word keeps some of
+# an equation's glyphs in properties, so the MathML holds more than its `m:t`.
+EQUATION = "￼"
+
+
+def equation_mathml(o_math: etree._Element) -> str:
+    """`m:oMath` as MathML, refused unless every character of the equation
+    (`omml_text`, read off the XML) appears in the MathML's text, as often.
+    Counted, not ordered: MathML sets a root's degree after its base, where OMML
+    stores it first (omml.py).
+
+    The MathML's text is read here with lxml, not `publisher_structure.mathml`:
+    services do not import one another (`.importlinter`). That module's own
+    checks run where the AST is rendered and compared (`ast-assemble`)."""
+    try:
+        mathml = to_mathml(o_math, _hidden)
+    except UnsupportedMath as exc:
+        raise UnsupportedContent(str(exc)) from None
+    want = Counter(c for c in omml_text(o_math, _hidden) if not c.isspace())
+    lost = want - Counter("".join(etree.fromstring(mathml).itertext()))
+    if lost:
+        raise UnsupportedContent(
+            f"an equation lost {''.join(sorted(lost.elements()))!r} converting to MathML")
+    return mathml
+
+
 def _text_roots(document) -> list:
     """(root element, part) of the body and each notes part: the book's text."""
     roots = [(document.element.body, document.part)]
@@ -548,31 +590,36 @@ def source_texts(document) -> list[str]:
     whatever it sits inside, unless it is HIDDEN. Headers, footers and comments
     are not book text and are not read.
 
-    Equations are refused, not skipped: OMML text is `m:t`, and no renderer here
-    has an equation case, so accepting one would only lose it further down.
+    An equation counts as one EQUATION character where it sits in its
+    paragraph; a displayed one (`m:oMathPara`) is a text of its own, since it
+    becomes a block. Its characters are checked as it converts.
     """
     texts: list[str] = []
     for root, part in _text_roots(document):
         for ids in root.iter(f"{DGM}relIds"):
             if not _hidden(ids):
                 texts.extend(diagram_texts(ids, part))
-        for math in root.iter(f"{M}oMath"):
-            if not _hidden(math):
-                words = "".join(t.text or "" for t in math.iter(f"{M}t"))
-                raise UnsupportedContent(
-                    f"the manuscript contains an equation ({words[:40]!r}); "
-                    "equations are not supported yet"
-                )
         for para in root.iter(f"{W}p"):
             if _hidden(para):
                 continue
             chars: list[str] = []
-            for el in para.iter(f"{W}t", f"{W}tab", f"{W}noBreakHyphen", f"{W}sym"):
+            for el in para.iter(f"{W}t", f"{W}tab", f"{W}noBreakHyphen", f"{W}sym", f"{M}oMath"):
                 # Only this paragraph's own text: a text box's paragraphs nest
                 # inside it and are counted on their own.
                 owner = next(el.iterancestors(f"{W}p"))
                 if owner is not para or _hidden(el):
                     continue
+                maths = [a for a in el.iterancestors(f"{M}oMath")]
+                if el.tag == f"{M}oMath":
+                    if maths:
+                        continue                # nested: part of the outer one
+                    if next(el.iterancestors(f"{M}oMathPara"), None) is not None:
+                        texts.append(EQUATION)
+                    else:
+                        chars.append(EQUATION)
+                    continue
+                if maths:
+                    continue                    # an equation's own text run
                 if el.tag == f"{W}t":
                     chars.append(el.text or "")
                 elif el.tag == f"{W}noBreakHyphen":

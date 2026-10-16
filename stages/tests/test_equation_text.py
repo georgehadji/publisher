@@ -56,6 +56,16 @@ def test_the_print_gate_reads_an_equation_as_the_ast_does():
     assert normalize_text(extract_text_from_html(ast_to_html(book))) == source
 
 
+def test_a_word_equation_passes_ingest_and_the_print_gate():
+    from pathlib import Path
+    from publisher_ingest import docx_to_ast
+    word = Path(__file__).resolve().parents[2] / "corpus" / "word" / "word-equation.docx"
+    book = docx_to_ast(word, store_media=lambda b, t, n: "0" * 64)
+    source = normalize_text(ast_text(book))
+    assert "square of its height: E=18ρgH2." in source
+    assert normalize_text(extract_text_from_html(ast_to_html(book))) == source
+
+
 def test_the_epub_stage_passes_its_own_text_check(tmp_path):
     from stages.secondary_output_stages import epub
     # The stage fails unless the stored package's text equals ast_text.

@@ -41,6 +41,7 @@ from docx.text.paragraph import Paragraph
 from lxml import etree
 
 from .docx_rich import (
+    EQUATION,
     W,
     _toggle_on,
     MediaNotStorable,
@@ -385,6 +386,8 @@ def _node_text(node) -> str:
         return ""
     if node.get("type") == "text":
         return node.get("text", "")
+    if node.get("type") in ("math", "equation"):
+        return EQUATION                         # docx_rich: its MathML is checked on its own
     return _node_text(node.get("content") or [])
 
 
@@ -553,6 +556,8 @@ def _assign_source_refs(ast: dict) -> None:
     def identity(node: dict) -> str:
         if node["type"] in ("chapter", "part"):
             basis = (node.get("attrs") or {}).get("title") or ""
+        elif node["type"] == "equation":
+            basis = node["content"]             # its MathML; its prose is one EQUATION
         else:
             # A node with no prose (figure, scene break) is identified by what it
             # IS: a figure's attrs carry its media hash.
@@ -627,6 +632,8 @@ def _assert_no_text_lost(sources: list[str], ast: dict) -> None:
                 # means a block's text is also counted inside its parent's
                 # chunk; harmless, since this is a substring test.
                 emitted.append(_node_text(node["content"]))
+            elif node.get("type") == "equation":
+                emitted.append(EQUATION)
             for key in ("frontMatter", "body", "backMatter", "content"):
                 walk(node.get(key))
         elif isinstance(node, list):
