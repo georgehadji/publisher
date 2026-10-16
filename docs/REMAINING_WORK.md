@@ -1040,6 +1040,21 @@ table under **weasyprint 70**).
 
 On the real book: 0 widows, 0 orphans, 0 runts, notes in order, 821 pages.
 
+## Drop caps (2026-10-16): a crash, fixed
+
+weasyprint 70 crashed (`AssertionError` in `layout/float.py`) whenever it pushed a
+chapter-opening paragraph whole onto the next page -- the house `orphans: 2` with one line
+left -- because the drop cap was a floated `::first-letter`, which weasyprint builds inside
+the line box (WeasyPrint #1859; the crash fix in 70.0 covers a different path). Smallest
+case: 32 one-line paragraphs, then a chapter opening. A genuine chapter opening sits under
+its title on a fresh page, so the real book never hit it; a reviewer's `set_attr` on
+`/attrs/role`, a chapter merge or a page-filling epigraph would. The drop cap is now a real
+element, `<span class="drop-cap">`, floated by the stylesheet (`rendering.DROP_CAP`): no
+crash anywhere in the window, text stream unchanged. `orphans: 1` on the paragraph did not
+help (still crashed); the Typst path draws no drop cap and pandoc passes the span through as
+text. Expect the nightly raster diff to flag chapter-opening pages once; accept them with
+the workflow's `rebaseline` input.
+
 ## If you do three things
 
 1. **§3.1 — done for the first real book: it passes preflight.** It runs end to end in the

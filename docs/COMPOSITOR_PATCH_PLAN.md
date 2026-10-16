@@ -174,7 +174,8 @@ short:
 
 The search also found that a `chapter-opening` paragraph anywhere but a chapter's start
 crashes weasyprint 70 in its drop-cap float. Ingest never sets that role; a reviewer's
-`set_attr` on `/attrs/role` can. Filed separately.
+`set_attr` on `/attrs/role` can. Fixed 2026-10-16: the drop cap is a floated span, not
+`::first-letter` (`rendering.DROP_CAP`, `stages/tests/test_drop_cap.py`).
 
 So the loop is a safety net on the CSS path: for what the stylesheet cannot prevent, and
 for a design that relaxes it. Its mechanics are proven end to end instead
