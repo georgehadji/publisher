@@ -18,6 +18,7 @@ equality of output.
 from __future__ import annotations
 
 import html as _html
+import unicodedata
 
 # The house 5.00mm baseline -- see design_compile_stage.py's original comment:
 # a DesignSpec reaches emit_css() as a plain dict with no schema defaults
@@ -151,6 +152,9 @@ def _render_inline(content: list) -> str:
         elif ntype == KEEP:
             parts.append(f'<span class="keep">{_render_inline(node["content"])}{node.get("after", "")}</span>')
 
+        elif ntype == DROP_CAP:
+            parts.append(f'<span class="drop-cap">{_render_inline(node["content"])}</span>')
+
         else:
             parts.append(_escape_html(str(node.get("text", ""))))
 
@@ -171,6 +175,40 @@ def _render_inline(content: list) -> str:
 KEEP = "_keep"
 KEEP_TAIL_CHARS = 40
 KEEP_CELL_CHARS = 16
+
+# A chapter opening's drop cap, set as a real element -- `<span class="drop-cap">`,
+# floated by emit_css -- not as `::first-letter`. weasyprint 70 builds a floated
+# ::first-letter inside the line box (WeasyPrint #1859), and crashes (AssertionError
+# in float layout) when it must push the paragraph whole onto the next page: the
+# house `orphans: 2` with one line left. A real float is built in the right place.
+# `DROP_CAP` is render-only, like KEEP: it holds what ::first-letter took -- opening
+# punctuation, the first letter, its combining marks -- with the run's own marks,
+# so the text stream the integrity gate reads is unchanged.
+DROP_CAP = "_dropCap"
+
+
+def _drop_cap(content: list) -> list:
+    """`content` with its first letter (and any punctuation before it, and any
+    combining marks after it) wrapped in a DROP_CAP node; `content` itself when
+    it does not open with a text run holding a letter or digit."""
+    if not content or content[0].get("type", "text") != "text":
+        return content
+    run = content[0]
+    text = run.get("text", "")
+    start = len(text) - len(text.lstrip())
+    end = start
+    while end < len(text) and unicodedata.category(text[end]).startswith("P"):
+        end += 1
+    if end >= len(text) or not text[end].isalnum():
+        return content
+    end += 1
+    while end < len(text) and unicodedata.category(text[end]).startswith("M"):
+        end += 1
+    pieces = [{**run, "text": text[:start]}] if start else []
+    pieces.append({"type": DROP_CAP, "content": [{**run, "text": text[start:end]}]})
+    if end < len(text):
+        pieces.append({**run, "text": text[end:]})
+    return pieces + content[1:]
 
 # K2: a paragraph's `fit` attribute -> the tracking its text is set with, in em.
 # The lever a typesetter pulls on a widow: track one paragraph tighter or looser so
@@ -530,6 +568,8 @@ def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None
                 # calls hold no text, so the text stream is unchanged.
                 rendered = [notes.render_parts(note) for note in cited]
                 calls = "".join(call for call, _ in rendered) + endnote_calls
+                if role == "chapter-opening":
+                    inline = _drop_cap(inline)    # DROP_CAP: a real float, not ::first-letter
                 kept = _keep_tail(inline, cap, after=calls)
                 text = _render_inline(kept) + ("" if kept is not inline else calls)
                 fit = (node.get("attrs") or {}).get("fit")
@@ -1043,7 +1083,8 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
 
     if drop_cap:
         lines.extend([
-            "p.chapter-opening::first-letter {",
+            # On the DROP_CAP span, not ::first-letter: see DROP_CAP.
+            ".drop-cap {",
             f"  font-size: {body_size * drop_cap_lines * 0.8}pt;",
             f"  line-height: {leading * drop_cap_lines * 0.7}pt;",
             "  float: left;",
