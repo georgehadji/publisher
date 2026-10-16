@@ -1052,8 +1052,11 @@ its title on a fresh page, so the real book never hit it; a reviewer's `set_attr
 element, `<span class="drop-cap">`, floated by the stylesheet (`rendering.DROP_CAP`): no
 crash anywhere in the window, text stream unchanged. `orphans: 1` on the paragraph did not
 help (still crashed); the Typst path draws no drop cap and pandoc passes the span through as
-text. Expect the nightly raster diff to flag chapter-opening pages once; accept them with
-the workflow's `rebaseline` input.
+text. The nightly raster diff flagged every chapter opening in the six synthetic books
+(30 pages, SSIM ≥ 0.987; only the first line moved) and was rebaselined the same day. The
+old pages had been wrong all along: the `::first-letter` float was drawn over the first
+line's text, not beside it. The raster diff compares against the last accepted night, so
+it never could have caught that; only a look at the page did.
 
 ## If you do three things
 
