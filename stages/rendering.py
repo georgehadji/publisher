@@ -1108,6 +1108,18 @@ def emit_css(designspec: dict, bleed_mm: float = 0.0) -> str:
             "",
         ])
 
+    # Equations: paginate draws each as an image (stages/math_render.py); a
+    # displayed one is centred on a line of its own, kept whole.
+    lines.extend([
+        "div.equation {",
+        "  text-align: center;",
+        f"  margin: {leading / 2:g}pt 0;",
+        "  break-inside: avoid;",
+        "}",
+        "img.math, img.math-display { max-width: 100%; }",
+        "",
+    ])
+
     # Scene break
     lines.extend([
         "hr.scene-break {",

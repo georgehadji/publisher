@@ -469,6 +469,24 @@ def _stylesheet(css_path: str | None) -> str:
     return emit_css(house_designspec())
 
 
+def _draw_equations(html_body: str, work: Path) -> str:
+    """The book's equations as Typst-drawn images; the HTML unchanged without any.
+    pandoc and typst are required then, as on the Typst path: an equation the
+    renderer cannot draw fails the build, never prints as loose characters."""
+    from stages.math_render import typeset_equations
+    if "<math" not in html_body:
+        return html_body
+    from stages.typst_stages import _require_binary, _run
+    try:
+        drawn = typeset_equations(html_body, work, pandoc=_require_binary("pandoc", "PUBLISHER_PANDOC_BIN"),
+                                  typst=_require_binary("typst", "PUBLISHER_TYPST_BIN"), run=_run)
+    except ValueError as exc:
+        raise StageError(kind=ErrorKind.ENGINE_BUG, message=f"equations: {exc}") from exc
+    if "<math" in drawn:                        # a form MATH does not match
+        raise StageError(kind=ErrorKind.ENGINE_BUG, message="an equation was left undrawn")
+    return drawn
+
+
 def _font_files_salt(inputs: dict) -> str:
     """Cache-key salt (W7): the bytes of every font file this render would
     embed. The CSS only names families; which files those resolve to is the
@@ -480,7 +498,7 @@ def _font_files_salt(inputs: dict) -> str:
 
 @stage(
     name="paginate",
-    version=23,  # v22: the drop cap is a floated span, not ::first-letter, which crashed weasyprint 70 when a chapter-opening paragraph was pushed to the next page (rendering.DROP_CAP). v21: a paragraph's `fit` sets its tracking (rendering.FIT_TRACKING, K2). v20: the pagemap names each paragraph (paraRanges[].ref) and the paragraphs behind a widow or runt (widowRefs, runtRefs) -- K1. v19: the cache key includes the font files' bytes (cache_salt). v18: fallback CSS from house_designspec (see design-compile v11); <html> takes the book's lang; paraRanges cap read from the pagemap schema. v17: fallback CSS: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
+    version=24,  # v24: equations drawn by Typst as K-only SVG (stages/math_render.py). v23: the HTML carries MathML. v22: the drop cap is a floated span, not ::first-letter, which crashed weasyprint 70 when a chapter-opening paragraph was pushed to the next page (rendering.DROP_CAP). v21: a paragraph's `fit` sets its tracking (rendering.FIT_TRACKING, K2). v20: the pagemap names each paragraph (paraRanges[].ref) and the paragraphs behind a widow or runt (widowRefs, runtRefs) -- K1. v19: the cache key includes the font files' bytes (cache_salt). v18: fallback CSS from house_designspec (see design-compile v11); <html> takes the book's lang; paraRanges cap read from the pagemap schema. v17: fallback CSS: black and grey text print on K alone (rendering.black_plate), not as RGB the press conversion makes rich black. v16: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages).
                  # v15: keep span: a paragraph's last two words (and its note calls) never split in print; a runt is a one-word last line under RUNT_MAX_FILL of the measure.
                  # v14: weasyprint 70 (URLFetcher subclass; footnote-policy keeps notes on their call page; 2400 s deadline).
                  # v9: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
@@ -546,11 +564,10 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
     doc = json.loads(doc_path_p.read_bytes())
     from stages.rendering import ast_to_html
     html_body = ast_to_html(doc)
-    if "<math " in html_body:
-        # weasyprint has no MathML: it would print an equation's characters in
-        # a row ("a2" for a/2) and the build would look complete.
-        raise StageError(kind=ErrorKind.BAD_INPUT,
-                         message="this render path cannot draw equations yet")
+    work = Path(ctx.work_dir)
+    # weasyprint has no MathML: it would print an equation's characters in a
+    # row ("a2" for a/2). Typst draws them (stages/math_render.py).
+    html_body = _draw_equations(html_body, work)
 
     css = _stylesheet(css_path)
 
@@ -560,7 +577,6 @@ def paginate(ctx: StageCtx, doc_path: str | None = None, css_path: str | None = 
     # Figures are referenced as `media/<sha256>.<ext>`; the bytes live in CAS and
     # have to be on disk beside the HTML before the renderer resolves them.
     from stages.media import materialize_media
-    work = Path(ctx.work_dir)
     images = materialize_media(html_body, ctx.cas_root, work)
     if images:
         print(f"  [paginate] materialized {len(images)} figure(s)")

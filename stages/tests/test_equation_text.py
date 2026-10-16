@@ -8,11 +8,14 @@ EPUB's spine text (the epub stage). They agree only through
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
-from publisher_stages import StageCtx, StageError
+from publisher_stages import StageCtx
 from publisher_structure.mathml import MathMLError
 from publisher_structure.rules import extract_text_from_html, normalize_text
 from stages.rendering import ast_to_html
@@ -85,8 +88,43 @@ def test_the_page_carries_parsed_mathml_not_the_stored_string():
         ast_to_html(book)
 
 
-def test_the_css_path_refuses_an_equation_it_cannot_draw(tmp_path):
+TOOLS = bool(shutil.which("pandoc") and shutil.which("typst"))
+
+
+@pytest.mark.skipif(not TOOLS, reason="pandoc or typst is not installed")
+def test_the_css_path_draws_each_equation_in_black_ink_alone(tmp_path):
+    """weasyprint has no MathML; Typst draws each equation, and its RGB black is
+    rewritten to K, so the page holds no four-colour black anywhere."""
+    pytest.importorskip("weasyprint")
+    from publisher_prepress import ghostscript
+    if ghostscript.find_binary() is None:
+        pytest.skip("Ghostscript is not installed")
     from stages.paginate_stage import paginate
-    with pytest.raises(StageError) as refused:
-        paginate(_ctx(tmp_path), doc_path=_doc(tmp_path, _book()))
-    assert "cannot draw equations" in refused.value.message
+
+    ctx = _ctx(tmp_path)
+    result = paginate(ctx, doc_path=_doc(tmp_path, _book()))
+    svgs = sorted((tmp_path / "work" / "math").glob("*.svg"))
+    assert len([s for s in svgs if not s.name.startswith("eq-")]) == 2
+    assert all("device-cmyk(0 0 0 1)" in s.read_text(encoding="utf-8") and 'fill="#' not in s.read_text(encoding="utf-8")
+               for s in svgs if not s.name.startswith("eq-"))
+
+    pdf = next(a for a in result.artifacts if a.kind == "pdf")
+    path = Path(ctx.cas_root) / pdf.hash[:2] / pdf.hash[2:4] / pdf.hash
+    inks = set().union(*ghostscript.page_colours(path))
+    assert (0, 0, 0, 100) in inks
+    assert not [c for c in inks if c[3] > 50 and (c[0] or c[1] or c[2])], "rich black on the page"
+
+
+def test_math_render_lowers_an_inline_equation_by_its_depth(tmp_path):
+    from stages.math_render import typeset_equations
+    if not (shutil.which("pandoc") and shutil.which("typst")):
+        pytest.skip("pandoc or typst is not installed")
+    from stages.typst_stages import _run
+    html = typeset_equations(ast_to_html(_book()), tmp_path, pandoc=shutil.which("pandoc"),
+                             typst=shutil.which("typst"), run=_run)
+    assert "<math" not in html
+    inline = re.search(r'<img class="math" src="math/[0-9a-f]{64}\.svg" style="height: ([\d.]+)em; '
+                       r'vertical-align: -([\d.]+)em" alt=""/>', html)
+    assert inline and 0 < float(inline.group(2)) < float(inline.group(1))
+    assert re.search(r'<div class="equation"><img class="math-display" src="math/[0-9a-f]{64}\.svg" '
+                     r'style="height: [\d.]+em" alt=""/></div>', html)
