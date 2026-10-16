@@ -1,0 +1,82 @@
+"""
+An equation's text, read by every side of the integrity gate: `ast_text` (the
+AST), `extract_text_from_html` over `extract`'s HTML (ast-assemble), and the
+EPUB's spine text (the epub stage). They agree only through
+`publisher_structure.mathml`; a fourth reading would be a drift.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+
+import pytest
+
+from publisher_stages import StageCtx, StageError
+from publisher_structure.mathml import MathMLError
+from publisher_structure.rules import extract_text_from_html, normalize_text
+from stages.rendering import ast_to_html
+from stages.text_stream import ast_text
+
+NS = 'xmlns="http://www.w3.org/1998/Math/MathML"'
+WAVE = (f'<math {NS}><mi>E</mi><mo>=</mo><mfrac><mn>1</mn><mn>8</mn></mfrac>'
+        '<mi>ρ</mi><mi>g</mi><msup><mi>H</mi><mn>2</mn></msup></math>')
+SUM = (f'<math {NS}><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow>'
+       '<mi>n</mi></munderover><msub><mi>x</mi><mi>i</mi></msub></math>')
+
+
+def _book() -> dict:
+    return {"schema": "doc-effective/1", "metadata": {"title": "T", "language": "en"},
+            "frontMatter": [], "backMatter": [], "body": [
+        {"type": "chapter", "attrs": {"number": 1, "id": "c1", "title": "Waves"}, "content": [
+            {"type": "paragraph", "content": [
+                {"type": "text", "text": "The energy grows as "},
+                {"type": "math", "content": WAVE},
+                {"type": "text", "text": ", and the sum"}]},
+            {"type": "equation", "content": SUM},
+            {"type": "paragraph", "content": [{"type": "text", "text": "closes the proof."}]}]}]}
+
+
+def _ctx(tmp_path) -> StageCtx:
+    return StageCtx(build_id="t", deterministic_seed="t", deadline=datetime.now(timezone.utc),
+                    memory_budget_mb=128, work_dir=str(tmp_path / "work"),
+                    cas_root=str(tmp_path / "cas"))
+
+
+def _doc(tmp_path, book: dict) -> str:
+    path = tmp_path / "doc.json"
+    path.write_text(json.dumps(book), encoding="utf-8")
+    return str(path)
+
+
+def test_the_print_gate_reads_an_equation_as_the_ast_does():
+    book = _book()
+    source = normalize_text(ast_text(book))
+    assert "grows as E=18ρgH2, and the sum ∑i=1nxi closes" in source
+    assert normalize_text(extract_text_from_html(ast_to_html(book))) == source
+
+
+def test_the_epub_stage_passes_its_own_text_check(tmp_path):
+    from stages.secondary_output_stages import epub
+    # The stage fails unless the stored package's text equals ast_text.
+    epub(_ctx(tmp_path), doc_path=_doc(tmp_path, _book()))
+
+
+def test_a_displayed_equation_is_a_block_and_an_inline_one_is_not():
+    html = ast_to_html(_book())
+    assert f'<div class="equation"><math {NS} display="block"><munderover>' in html
+    assert f'grows as <math {NS}><mi>E</mi>' in html
+
+
+def test_the_page_carries_parsed_mathml_not_the_stored_string():
+    book = _book()
+    book["body"][0]["content"][1]["content"] = SUM.replace("<mi>n</mi>", '<mi onclick="x()">n</mi>')
+    with pytest.raises(MathMLError):
+        ast_to_html(book)
+
+
+def test_the_css_path_refuses_an_equation_it_cannot_draw(tmp_path):
+    from stages.paginate_stage import paginate
+    with pytest.raises(StageError) as refused:
+        paginate(_ctx(tmp_path), doc_path=_doc(tmp_path, _book()))
+    assert "cannot draw equations" in refused.value.message

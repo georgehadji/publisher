@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from publisher_structure.mathml import math_text
+
 # ast.schema.json's `inlineNode` types, read from the schema: they sit inside a
 # block's text and are rendered inline, so no boundary goes between them.
 _AST_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "ast" / "ast.schema.json"
@@ -93,6 +95,8 @@ def ast_text(ast: dict) -> str:
                     # which ast_to_html prints in its <pre>. Skipped here, any
                     # book with a code block failed the gate with nothing lost.
                     texts.append(val)
+                elif isinstance(val, str) and kind in ("equation", "math"):
+                    texts.append(math_text(val))   # MathML; the one definition
                 elif isinstance(val, dict):
                     _walk(val)
             if kind == "epigraph" and attrs.get("source"):

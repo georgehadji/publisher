@@ -336,6 +336,20 @@ class HardBreak(BaseModel):
     type_: HardBreak_Type = Field(..., alias="type")
 
 
+class Math_Type(str, Enum):
+    MATH = "math"
+
+
+Mathml = str
+
+
+class Math(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    type_: Math_Type = Field(..., alias="type")
+    content: Mathml
+
+
 class IndexEntry_Type(str, Enum):
     INDEXENTRY = "indexEntry"
 
@@ -378,7 +392,7 @@ class CrossReference(BaseModel):
     content: list[InlineNode]
 
 
-InlineNode = Union[Text, Emphasis, Strong, Link, Superscript, Subscript, SmallCaps, CodeInline, HardBreak, IndexEntry, CrossReference]
+InlineNode = Union[Text, Emphasis, Strong, Link, Superscript, Subscript, SmallCaps, CodeInline, HardBreak, Math, IndexEntry, CrossReference]
 
 
 class Paragraph(BaseModel):
@@ -760,7 +774,7 @@ class Equation(BaseModel):
 
     type_: Equation_Type = Field(..., alias="type")
     attrs: Optional[Equation_Attrs] = Field(default=None)
-    content: str
+    content: Mathml
     sourceRef: Optional[SourceRefLink] = Field(default=None)
 
 

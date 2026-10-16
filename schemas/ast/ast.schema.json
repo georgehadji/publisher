@@ -593,10 +593,7 @@
           },
           "additionalProperties": false
         },
-        "content": {
-          "type": "string",
-          "description": "LaTeX or MathML expression"
-        },
+        "content": { "$ref": "#/$defs/mathml" },
         "sourceRef": { "$ref": "#/$defs/sourceRefLink" }
       },
       "required": ["type", "content"],
@@ -623,7 +620,7 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "type": "string", "enum": ["text", "emphasis", "strong", "link", "superscript", "subscript", "smallCaps", "codeInline", "hardBreak", "indexEntry", "crossReference"] }
+        "type": { "type": "string", "enum": ["text", "emphasis", "strong", "link", "superscript", "subscript", "smallCaps", "codeInline", "hardBreak", "math", "indexEntry", "crossReference"] }
       },
       "allOf": [
         { "if": { "properties": { "type": { "const": "text" } } }, "then": { "$ref": "#/$defs/text" } },
@@ -635,6 +632,7 @@
         { "if": { "properties": { "type": { "const": "smallCaps" } } }, "then": { "$ref": "#/$defs/smallCaps" } },
         { "if": { "properties": { "type": { "const": "codeInline" } } }, "then": { "$ref": "#/$defs/codeInline" } },
         { "if": { "properties": { "type": { "const": "hardBreak" } } }, "then": { "$ref": "#/$defs/hardBreak" } },
+        { "if": { "properties": { "type": { "const": "math" } } }, "then": { "$ref": "#/$defs/math" } },
         { "if": { "properties": { "type": { "const": "indexEntry" } } }, "then": { "$ref": "#/$defs/indexEntry" } },
         { "if": { "properties": { "type": { "const": "crossReference" } } }, "then": { "$ref": "#/$defs/crossReference" } }
       ]
@@ -780,6 +778,21 @@
       },
       "required": ["type"],
       "additionalProperties": false
+    },
+    "math": {
+      "$comment": "An equation set inside a line of text; `equation` is the displayed one.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["math"] },
+        "content": { "$ref": "#/$defs/mathml" }
+      },
+      "required": ["type", "content"],
+      "additionalProperties": false
+    },
+    "mathml": {
+      "type": "string",
+      "pattern": "^<math xmlns=\"http://www\\.w3\\.org/1998/Math/MathML\"[ >]",
+      "description": "Presentation MathML: one <math> element, compact (no whitespace between elements), from the allowlist in publisher_structure.mathml, which also defines its text (math_text) for the integrity gate."
     },
     "indexEntry": {
       "type": "object",

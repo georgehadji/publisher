@@ -222,6 +222,18 @@ export const HardBreakSchema = z.object({
 });
 export type HardBreak = z.infer<typeof HardBreakSchema>;
 
+export const Math_TypeSchema: z.ZodTypeAny = z.enum(["math"]);
+export type Math_Type = z.infer<typeof Math_TypeSchema>;
+
+export const MathmlSchema = z.string().regex(new RegExp("^<math xmlns=\"http://www\\.w3\\.org/1998/Math/MathML\"[ >]"));
+export type Mathml = z.infer<typeof MathmlSchema>;
+
+export const MathSchema = z.object({
+  "type": z.lazy(() => Math_TypeSchema),
+  "content": MathmlSchema,
+});
+export type Math = z.infer<typeof MathSchema>;
+
 export const IndexEntry_TypeSchema: z.ZodTypeAny = z.enum(["indexEntry"]);
 export type IndexEntry_Type = z.infer<typeof IndexEntry_TypeSchema>;
 
@@ -258,7 +270,7 @@ export const CrossReferenceSchema = z.object({
 });
 export type CrossReference = z.infer<typeof CrossReferenceSchema>;
 
-export const InlineNodeSchema: z.ZodTypeAny = z.union([TextSchema, EmphasisSchema, StrongSchema, LinkSchema, SuperscriptSchema, SubscriptSchema, SmallCapsSchema, CodeInlineSchema, HardBreakSchema, IndexEntrySchema, CrossReferenceSchema]);
+export const InlineNodeSchema: z.ZodTypeAny = z.union([TextSchema, EmphasisSchema, StrongSchema, LinkSchema, SuperscriptSchema, SubscriptSchema, SmallCapsSchema, CodeInlineSchema, HardBreakSchema, MathSchema, IndexEntrySchema, CrossReferenceSchema]);
 export type InlineNode = z.infer<typeof InlineNodeSchema>;
 
 export const ParagraphSchema = z.object({
@@ -588,7 +600,7 @@ export type Equation_Attrs = z.infer<typeof Equation_AttrsSchema>;
 export const EquationSchema = z.object({
   "type": z.lazy(() => Equation_TypeSchema),
   "attrs": z.lazy(() => Equation_AttrsSchema).optional(),
-  "content": z.string(),
+  "content": MathmlSchema,
   "sourceRef": SourceRefLinkSchema.optional(),
 });
 export type Equation = z.infer<typeof EquationSchema>;

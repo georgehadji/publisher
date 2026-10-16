@@ -24,6 +24,7 @@ import unicodedata
 # a DesignSpec reaches emit_css() as a plain dict with no schema defaults
 # applied at runtime, so a `.get(key)` with no fallback would emit CSS with a
 # missing value the moment a spec omits a field.
+from publisher_structure import mathml
 from templates import complete_designspec
 
 # ── ast_to_html (moved from extract_stage.py) ───────────────────────────────
@@ -154,6 +155,9 @@ def _render_inline(content: list) -> str:
 
         elif ntype == DROP_CAP:
             parts.append(f'<span class="drop-cap">{_render_inline(node["content"])}</span>')
+
+        elif ntype == "math":
+            parts.append(mathml.render(node["content"], display=False))
 
         else:
             parts.append(_escape_html(str(node.get("text", ""))))
@@ -619,6 +623,11 @@ def _render_content(content: list, notes: "EpubNotes | PrintNotes | None" = None
         elif ntype == "code":
             lang = (node.get("attrs") or {}).get("language", "")
             parts.append(f'<pre class="code-block" data-language="{lang}">{_escape_html(node.get("content", ""))}</pre>')
+
+        elif ntype == "equation":
+            # Re-serialized from the parsed MathML, never copied: the stored
+            # string is checked against publisher_structure.mathml's allowlist.
+            parts.append(f'<div class="equation">{mathml.render(node["content"], display=True)}</div>')
 
         elif ntype == "dialogue":
             speaker = (node.get("attrs") or {}).get("speaker", "")
