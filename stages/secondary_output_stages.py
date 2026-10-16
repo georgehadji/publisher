@@ -159,7 +159,7 @@ def _epub_font_salt(inputs: dict) -> str:
     # v2: rendered by stages/rendering.py (what the print gate verifies) instead
     # of the writer's own lossy walk, with figures, linked footnotes, all
     # front/back matter, and a text-integrity check on the stored package.
-    version=5,
+    version=6,
     inputs={"doc_path": "doc-effective/1", "designspec_path": "designspec/1"},
     outputs={"epub": "epub/1"},
     # `doc_path` is NOT root: it comes from `resolve`, so an EPUB can only be
@@ -250,7 +250,7 @@ def epub(ctx: StageCtx, doc_path: str | None = None,
     name="onix",
     # v4, v3, v2: no change to its output; its module changed (the epub stage), and
     # the version lint bumps every stage in a touched module.
-    version=5,
+    version=6,
     inputs={"doc_path": "doc-effective/1"},
     outputs={"onix": "onix/1"},
     terminal=True,

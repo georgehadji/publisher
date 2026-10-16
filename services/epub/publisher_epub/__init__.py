@@ -66,7 +66,14 @@ a[epub|type~='noteref'] { vertical-align: super; font-size: 0.7em; text-decorati
 aside[epub|type~='footnote'] { font-size: 0.85em; }
 aside[epub|type~='footnote'] p { text-indent: 0; }
 .small-caps { font-variant: small-caps; }
+div.equation { text-align: center; margin: 0.5em 0; }
 """
+
+MATHML_NS = "http://www.w3.org/1998/Math/MathML"
+
+
+def _has_math(section: Mapping) -> bool:
+    return f'<math xmlns="{MATHML_NS}"' in section["body"]
 
 
 class EPUBError(ValueError):
@@ -211,6 +218,8 @@ class EPUB3Writer:
             '<meta property="schema:accessModeSufficient">textual</meta>',
             '<meta property="schema:accessibilityFeature">structuralNavigation</meta>',
             '<meta property="schema:accessibilityFeature">tableOfContents</meta>',
+            *(['<meta property="schema:accessibilityFeature">MathML</meta>']
+              if any(_has_math(s) for s in self.sections) else []),
             '<meta property="schema:accessibilityHazard">none</meta>',
             # ACE (W10): a reader's one-line answer to "can I read this?". It
             # states only what this writer guarantees; figures' alt text is the
@@ -225,7 +234,9 @@ class EPUB3Writer:
             '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
             '<item id="css" href="book.css" media-type="text/css"/>',
         ]
-        items += [f'<item id="{s["id"]}" href="{s["id"]}.xhtml" media-type="application/xhtml+xml"/>'
+        # EPUB 3 requires `mathml` on every content document that holds MathML.
+        items += [f'<item id="{s["id"]}" href="{s["id"]}.xhtml" media-type="application/xhtml+xml"'
+                  + (' properties="mathml"' if _has_math(s) else "") + "/>"
                   for s in self.sections]
         items += [f'<item id="img{n}" href={quoteattr(href)} media-type="{item.media_type}"/>'
                   for n, (href, item) in enumerate(sorted(self.media.items()), 1)]

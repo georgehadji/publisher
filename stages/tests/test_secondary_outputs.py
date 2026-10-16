@@ -279,6 +279,30 @@ def test_the_package_declares_what_ace_checks_first(tmp_path):
     assert '<nav epub:type="toc" role="doc-toc"' in nav
 
 
+def _with_equations(doc: dict) -> dict:
+    """`doc` with an inline and a displayed equation: EPUBCheck requires the
+    `mathml` property on their documents, and ACE reads them."""
+    from stages.tests.test_equation_text import SUM, WAVE
+    doc["body"][0]["content"] += [
+        {"type": "paragraph", "content": [{"type": "text", "text": "So "},
+                                          {"type": "math", "content": WAVE}, {"type": "text", "text": "."}]},
+        {"type": "equation", "content": SUM}]
+    return doc
+
+
+def test_a_document_with_equations_declares_mathml(tmp_path):
+    ctx = _ctx(tmp_path)
+    _, digest = _png(tmp_path)
+    doc = tmp_path / "rich.json"
+    doc.write_text(json.dumps(_with_equations(_rich_doc(digest))), encoding="utf-8")
+    art = epub(ctx, doc_path=str(doc)).artifacts[0]
+    with zipfile.ZipFile(Path(ctx.cas_root) / art.hash[:2] / art.hash[2:4] / art.hash) as zf:
+        opf = zf.read("OEBPS/content.opf").decode("utf-8")
+    flagged = re.findall(r'<item id="([^"]+)"[^>]*properties="mathml"', opf)
+    assert len(flagged) == 1, opf
+    assert 'property="schema:accessibilityFeature">MathML<' in opf
+
+
 def test_epubcheck_accepts_the_epub(tmp_path):
     """BUILD_PLAN.md §3.12's gate. EPUBCheck is Java and not on the worker
     toolchain, so this runs where PUBLISHER_EPUBCHECK_JAR names its jar
@@ -293,7 +317,7 @@ def test_epubcheck_accepts_the_epub(tmp_path):
     ctx = _ctx(tmp_path)
     _, digest = _png(tmp_path)
     doc = tmp_path / "rich.json"
-    doc.write_text(json.dumps(_rich_doc(digest)), encoding="utf-8")
+    doc.write_text(json.dumps(_with_equations(_rich_doc(digest))), encoding="utf-8")
     art = epub(ctx, doc_path=str(doc)).artifacts[0]
     book = tmp_path / "book.epub"
     book.write_bytes((Path(ctx.cas_root) / art.hash[:2] / art.hash[2:4] / art.hash).read_bytes())
@@ -317,7 +341,7 @@ def test_ace_finds_no_serious_violation(tmp_path):
     ctx = _ctx(tmp_path)
     _, digest = _png(tmp_path)
     doc = tmp_path / "rich.json"
-    doc.write_text(json.dumps(_rich_doc(digest)), encoding="utf-8")
+    doc.write_text(json.dumps(_with_equations(_rich_doc(digest))), encoding="utf-8")
     art = epub(ctx, doc_path=str(doc)).artifacts[0]
     book = tmp_path / "book.epub"
     book.write_bytes((Path(ctx.cas_root) / art.hash[:2] / art.hash[2:4] / art.hash).read_bytes())
