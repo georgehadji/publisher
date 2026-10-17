@@ -21,7 +21,7 @@ so it exists *before* it is needed rather than after the gate slips.
 | `manuscripts/index.json` | The generated set's index: schema `corpus-index/1`, `generatedAt`, `seed`, template list, and one entry per manuscript. |
 | `manuscripts/minimal-novel.ast.json` | Simple 3-chapter novel, clean styles, no complications. |
 | `manuscripts/messy-novel.ast.json` | 6-chapter novel with typical hard-coded formatting. |
-| `manuscripts/technical-book.ast.json` | STEM book: code blocks, equations, tables, footnotes. |
+| `manuscripts/technical-book.ast.json` | STEM book: code blocks, tables, footnotes. Despite `index.json`'s feature list it holds no `equation` node; `word/word-equation.docx` carries them. |
 | `manuscripts/fiction-dialogue-heavy.ast.json` | Extensive dialogue, scene breaks, verse. |
 | `manuscripts/memoir-illustrated.ast.json` | Embedded images, sidebars, blockquotes. |
 | `manuscripts/stress-test.ast.json` | The everything-at-once case. |
@@ -32,7 +32,7 @@ so it exists *before* it is needed rather than after the gate slips.
 | `word/word-doubtful.docx` | The corpus's only doubted manuscript (F1): typed chapter titles and a mid-book APPENDIX, so ingest scores the chapter, the appendix and the titles it swallowed below 0.8. What `structure-infer` is pinned to send. |
 | `word/word-composition.docx` | A long plain book (4 chapters × 60 paragraphs whose lengths step through a cycle) for the Compositor's fix loop. Widows nowhere under the house stylesheet (`widows: 2`); under it with that one rule relaxed, some paragraph widows on any face. Driven end to end by `stages/tests/test_fit_loop.py` (COMPOSITOR_PATCH_PLAN **Live check**). |
 | `corpus/*.docx` (top level) | **Authors' real manuscripts, gitignored — never commit one.** The repo is public. Drop a book here to probe ingest locally; reproduce what it teaches in `word/` instead. |
-| `word/word-equation.docx` | Must be **refused** (`IngestError`): nothing renders an equation, so accepting one loses it later. |
+| `word/word-equation.docx` | Word-built equations, each structure ingest converts: an inline one, five displayed (sum, quadratic formula with a root, cube root, matrix, functions, Greek) and one typed as a tracked insertion. `test_word_corpus.py` pins each one's MathML text; `stages/tests/test_equation_text.py` runs it through the gate and has Typst draw all seven. |
 
 `corpus/golden/` is referenced by the README as the home for typographer-verified golden
 outputs; it is not populated yet.

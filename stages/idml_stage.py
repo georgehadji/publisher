@@ -42,7 +42,7 @@ IDML_SCHEMA = "idml/1"
 
 @stage(
     name="idml",
-    version=8,   # v7: layout from rendering.design_plan (same chapter-title size, gutter, alignment and fonts as CSS/Typst; no IDML-local defaults). v6: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages). v5: keep span: a paragraph's last two words never split in print (no runts). v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
+    version=9,   # v9: a book with equations is refused (ICML has none). v8: the HTML carries MathML. v7: layout from rendering.design_plan (same chapter-title size, gutter, alignment and fonts as CSS/Typst; no IDML-local defaults). v6: notes carry over in document order (data-seq, paginate_stage.notes_in_document_order); no footnote-policy: line (it stranded lines: 27 widows, 23 one-line pages). v5: keep span: a paragraph's last two words never split in print (no runts). v2: footnotes render inside the paragraph that cites them (a lone call number no longer gets a line).
                  # v3: link hrefs are percent-encoded (rendering._safe_href).
                  # v4: long footnotes set in pieces, own note numbers (rendering.PrintNotes), footnote area capped.
     inputs={
@@ -87,10 +87,16 @@ def idml(ctx: StageCtx, doc_path: str | None = None, pagemap_path: str | None = 
     # definitions and a <Document> root, and this package defines its styles
     # from the DesignSpec instead.
     from stages.rendering import ast_to_html, book_identity, design_plan
+    html = ast_to_html(doc)
+    if "<math" in html:
+        # ICML has no equations: pandoc writes their characters as plain text,
+        # a/2 as "a2". Refused, not degraded (ENGINE_BUG: the book is fine).
+        raise StageError(kind=ErrorKind.ENGINE_BUG,
+                         message="the IDML deliverable cannot carry equations yet")
     story_xml = _run(
         [pandoc, "--from=html", "--to=icml", "--wrap=preserve"],
         timeout=PANDOC_TIMEOUT_S, what="pandoc html -> icml",
-        stdin=ast_to_html(doc).encode("utf-8"),
+        stdin=html.encode("utf-8"),
     ).decode("utf-8")
 
     spec = None

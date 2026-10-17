@@ -308,13 +308,21 @@ def test_the_no_loss_check_counts_smartart_text():
     assert {"Ερώτηση", "Έλεγχος", "Ορισμός"} <= set(sources)
 
 
-def test_an_equation_word_built_becomes_mathml_in_its_sentence():
+def test_the_equations_word_built_become_mathml():
+    """Inline ones stay in their sentence (one typed as a tracked insertion);
+    displayed ones are blocks. Each structure: fraction, script, n-ary, root,
+    degree, brackets, matrix, function."""
     from publisher_structure.mathml import math_text
     ast = _ingest("word-equation.docx")
-    [math] = _nodes(ast, "math")
-    assert math_text(math["content"]) == "E=18ρgH2"
-    paragraph = next(p for p in _nodes(ast, "paragraph") if math in p["content"])
-    assert paragraph["content"][-1]["text"].endswith(".")
+    inline = [math_text(m["content"]) for m in _nodes(ast, "math")]
+    shown = [math_text(e["content"]) for e in _nodes(ast, "equation")]
+    assert inline == ["E=18ρgH2", "y=2x"]
+    assert shown == ["∑i=1nEi", "x=-b±b2-4ac2a", "α+β3=γ", "(1001)", "sinθ+cosθ"]
+    tracked = next(p for p in _nodes(ast, "paragraph")
+                   if any(n.get("type") == "math" and "y" in n["content"] for n in p["content"]))
+    assert "".join(n.get("text", "") for n in tracked["content"]) == "A tracked edit added  to this sentence."
+    for tag in ("<munderover>", "<msqrt>", "<mroot>", "<mtable>", '<mi mathvariant="normal">sin</mi>'):
+        assert any(tag in e["content"] for e in _nodes(ast, "equation")), tag
 
 
 def test_the_no_loss_check_counts_each_equation_where_it_sits():
@@ -324,6 +332,8 @@ def test_the_no_loss_check_counts_each_equation_where_it_sits():
 
     sources = docx_rich.source_texts(docx.Document(str(CORPUS / "word-equation.docx")))
     assert any(s.endswith(docx_rich.EQUATION + ".") for s in sources)
+    assert "A tracked edit added " + docx_rich.EQUATION + " to this sentence." in sources
+    assert sources.count(docx_rich.EQUATION) == 5             # the displayed ones, each its own
 
 
 def test_the_no_loss_check_does_not_trust_the_walk(monkeypatch):

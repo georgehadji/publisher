@@ -199,18 +199,46 @@ def technical(a: Author) -> None:
     a.end_para()
 
 
+WD_OMATH_DISPLAY = 0
+
+
+def omath(a: Author, linear: str, display: bool = False) -> None:
+    """An equation at the cursor, typed in Word's linear format (UnicodeMath) and
+    built up by Word itself, so the OMML is what Word writes."""
+    start = a.sel.Start
+    a.typed(linear)
+    a.doc.OMaths.Add(a.doc.Range(start, a.sel.Start))
+    built = a.doc.OMaths(a.doc.OMaths.Count)
+    if display:
+        built.Type = WD_OMATH_DISPLAY
+    built.BuildUp()
+    a.to_end()
+
+
 def equation(a: Author) -> None:
-    """Kept apart from `technical`: ingest refuses an equation outright (nothing
-    downstream renders one), so this file pins the refusal, not a build."""
+    """Kept apart from `technical`: the equations Word writes, inline and
+    displayed, each structure ingest converts, and one typed as a tracked change."""
     a.heading("CHAPTER ONE")
     a.typed(PROSE + "The energy of a breaking wave grows with the square of its height: ")
-    start = a.sel.Start
-    a.typed("E=1/8ρgH^2")
-    a.doc.OMaths.Add(a.doc.Range(start, a.sel.Start))
-    a.doc.OMaths(1).BuildUp()
-    a.to_end()
+    omath(a, "E=1/8ρgH^2")
     a.typed(".")
     a.end_para()
+    a.para("Summed over every wave in the train, the energy is")
+    for linear in ("∑_(i=1)^n▒E_i", "x=(-b±√(b^2-4ac))/2a", "∛(α+β)=γ",
+                   "(■(1&0@0&1))", "sin⁡θ+cos⁡θ"):
+        omath(a, linear, display=True)
+        a.end_para()
+    # The sentence first, then the equation typed into it as a tracked change:
+    # typed after a tracked equation, Word keeps the cursor in the math zone.
+    lead = "A tracked edit added "
+    start = a.sel.Start
+    a.typed(lead + " to this sentence.")
+    a.end_para()
+    at = start + len(lead)
+    a.sel.SetRange(at, at)
+    a.doc.TrackRevisions = True
+    omath(a, "y=2x")
+    a.doc.TrackRevisions = False
 
 
 def _png(path: Path) -> Path:

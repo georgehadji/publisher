@@ -501,8 +501,8 @@ two structure bugs:
 - A Word TOC's entries (style `toc 1`) and an upper-case title page were adjacent heading
   candidates, so they merged into chapter one's title. TOC entries are no longer headings,
   and a page or section break now separates headings.
-- Equations (`m:oMath`) are refused with an `IngestError` instead of vanishing, since no
-  renderer has an equation case.
+- Equations (`m:oMath`) were refused with an `IngestError` instead of vanishing, since no
+  renderer had an equation case. **They build since 2026-10-17** (§3.1, Equations, below).
 
 **First real manuscript (2026-09-24).** A Greek academic book: about 3,900 paragraphs, 477
 footnotes, 2 SmartArt diagrams, 5 images. It is **not committed**: this repo is public and
@@ -729,7 +729,34 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
   up its `basedOn` chain. Bold's toggle (XOR) semantics aren't modelled; the nearer setting wins.
 - Validating the book's AST takes about 22 s. It's linear now, but Python `jsonschema` is slow
   per node.
-- Equations need an OMML → MathML path and a renderer case before a STEM book can build.
+- ~~Equations need an OMML → MathML path and a renderer case before a STEM book can build.~~
+  **Done (2026-10-17).** Word's equations reach every output; inline ones stay in their
+  sentence (a `math` node), displayed ones (`m:oMathPara`) are `equation` blocks.
+  - *Ingest* (`publisher_ingest/omml.py`, our own converter: Microsoft's XSLT isn't
+    redistributable and no maintained Python one exists) maps each OMML structure onto one
+    presentation-MathML element. Glyphs Word keeps in properties (brackets, an integral or
+    sum, accents, with Word's defaults) become `mo`; anything unknown, and `m:phant`, is
+    refused by name. The no-loss check counts an equation as one U+FFFC where it sits, and
+    holds each to its own `m:t` characters (counted, not ordered: a root's degree moves).
+  - *The text*: `publisher_structure.mathml` is the one definition. An allowlist (no
+    `mphantom` or `annotation`, whose text would pass the gate unprinted), compact MathML,
+    no invisible operators; `math_text` is what `ast_text` reads, and the HTML gate and
+    the EPUB's spine text agree with it because of those rules. Renderers re-serialize the
+    parsed MathML, never the stored string.
+  - *Typst path*: pandoc reads the MathML as Typst math, set in New Computer Modern Math
+    (`rendering.MATH_FONT`, embedded in the pinned typst; OFL).
+  - *CSS path*: weasyprint has no MathML (it printed "a2" for a/2), so `paginate` has Typst
+    draw each equation as an SVG in the same face (`stages/math_render.py`), sized in em
+    and lowered by its measured depth. Typst's RGB black is rewritten to K alone: left as
+    RGB it reached the press as C72 M67 Y67 K88, and rich-black-text filters vector art out.
+  - *EPUB*: MathML as is, with the `mathml` manifest property. *IDML* refuses a book with
+    equations: ICML has none, and pandoc would flatten them to their characters.
+  - Not done: equation numbers and labels (the schema's `numbered`/`label` are unused), and
+    Word's legacy OLE equations (Equation 3.0, MathType), which ingest still counts as
+    `objects` and reports rather than converts.
+  - `corpus/word/word-equation.docx` (Word-built: fraction, sum, roots, matrix, functions,
+    Greek, inline and displayed, one typed as a tracked change) runs ingest, the gate and
+    both print paths.
 - ~~Endnotes become footnotes.~~ **Done (W9):** `ast/1` has an `endnote` node. Ingest emits
   it where Word has one, placed like a footnote; print, EPUB (`epub:type="endnotes"`) and
   Typst set them at the end of their chapter or section, numbered through the book; and

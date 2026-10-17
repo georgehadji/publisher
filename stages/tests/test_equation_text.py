@@ -128,3 +128,27 @@ def test_math_render_lowers_an_inline_equation_by_its_depth(tmp_path):
     assert inline and 0 < float(inline.group(2)) < float(inline.group(1))
     assert re.search(r'<div class="equation"><img class="math-display" src="math/[0-9a-f]{64}\.svg" '
                      r'style="height: [\d.]+em" alt=""/></div>', html)
+
+
+@pytest.mark.skipif(not shutil.which("pandoc"), reason="pandoc is not installed")
+def test_the_idml_deliverable_refuses_equations_rather_than_flatten_them(tmp_path):
+    from publisher_stages import StageError
+    from stages.idml_stage import idml
+    with pytest.raises(StageError) as refused:
+        idml(_ctx(tmp_path), doc_path=_doc(tmp_path, _book()))
+    assert "cannot carry equations" in refused.value.message
+
+
+@pytest.mark.skipif(not TOOLS, reason="pandoc or typst is not installed")
+def test_every_equation_word_writes_is_drawn(tmp_path):
+    """The Word fixture's matrix, roots, n-ary sum and functions go through
+    pandoc and Typst as the CSS path sends them; none is left as MathML."""
+    from publisher_ingest import docx_to_ast
+    from stages.math_render import typeset_equations
+    from stages.typst_stages import _run
+    word = Path(__file__).resolve().parents[2] / "corpus" / "word" / "word-equation.docx"
+    html = ast_to_html(docx_to_ast(word, store_media=lambda b, t, n: "0" * 64))
+    drawn = typeset_equations(html, tmp_path, pandoc=shutil.which("pandoc"),
+                              typst=shutil.which("typst"), run=_run)
+    assert "<math" not in drawn
+    assert drawn.count('<img class="math-display"') == 5 and drawn.count('<img class="math"') == 2
