@@ -68,7 +68,14 @@ def _k_only(svg: str) -> str:
         if k is None:
             raise ValueError(f"an equation is drawn in a colour ({match.group(2)}), not black")
         return f'{match.group(1)}="device-cmyk(0 0 0 {k:g})"'
-    return _HEX.sub(plate, svg)
+    out = _HEX.sub(plate, svg)
+    # Any paint left that is not K-only or none (a 3-digit hex, rgb(), a named
+    # colour -- another typst version's spelling) would reach the press as RGB.
+    left = [p for p in re.findall(r'(?:fill|stroke)="([^"]*)"', out)
+            if p != "none" and not p.startswith("device-cmyk(")]
+    if left:
+        raise ValueError(f"an equation's SVG paints in {sorted(set(left))}, which cannot be sent to K")
+    return out
 
 
 def typeset_equations(html: str, work: Path, *, pandoc: str, typst: str, run) -> str:

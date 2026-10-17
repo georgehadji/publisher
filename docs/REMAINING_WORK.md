@@ -754,6 +754,12 @@ rendered **858 pages**. Two real bugs surfaced, both fixed:
   - Not done: equation numbers and labels (the schema's `numbered`/`label` are unused), and
     Word's legacy OLE equations (Equation 3.0, MathType), which ingest still counts as
     `objects` and reports rather than converts.
+  - Equations carry no text layer in the PDF: the CSS path places images (`alt=""`), and
+    `pdftotext` drops the Typst path's math glyphs. Search and copy skip them; the EPUB's
+    MathML is the accessible form.
+  - `paginate`'s cache key does not include the pandoc or typst version, though a book with
+    equations now depends on both. Both are pinned (`Dockerfile.worker`, CI), so it holds
+    until either is bumped.
   - `corpus/word/word-equation.docx` (Word-built: fraction, sum, roots, matrix, functions,
     Greek, inline and displayed, one typed as a tracked change) runs ingest, the gate and
     both print paths.

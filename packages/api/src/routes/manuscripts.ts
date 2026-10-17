@@ -672,11 +672,15 @@ function blockView(node: any): BlockReview {
   };
 }
 
+/** Where an equation sits in a reviewer's excerpt: its MathML is markup, not prose. */
+export const EQUATION_EXCERPT = '[equation]';
+
 /** A node's text, runs joined, whitespace collapsed -- what a reviewer reads. */
 function allText(node: any): string {
   const parts: string[] = [];
   const walk = (n: any): void => {
     if (n?.type === 'text') parts.push(n.text ?? '');
+    if (n?.type === 'equation' || n?.type === 'math') parts.push(` ${EQUATION_EXCERPT} `);
     for (const child of Array.isArray(n?.content) ? n.content : []) walk(child);
   };
   walk(node);

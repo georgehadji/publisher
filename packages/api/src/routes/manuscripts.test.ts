@@ -7,7 +7,7 @@
  * and "not measured" (null) stays distinct from "measured, nothing low" ([]).
  */
 import { describe, expect, it } from 'vitest';
-import { LOW_CONFIDENCE_BELOW, fitOutcomes, layoutProposals, orphanedOps, pendingProposals, proposalOp, structureView } from './manuscripts.js';
+import { EQUATION_EXCERPT, LOW_CONFIDENCE_BELOW, fitOutcomes, layoutProposals, orphanedOps, pendingProposals, proposalOp, structureView } from './manuscripts.js';
 import { BLOCK_EXCERPT_CHARS } from '../contract.js';
 import type { OverrideOp } from '../contract.js';
 
@@ -45,6 +45,16 @@ describe('structureView', () => {
       { root: 'body', index: 1, type: 'chapter', title: 'NO!', docxId: 'chapter:2',
         text: 'prose of NO!', confidence: 0.7 },
     ]);
+  });
+
+  it('marks an equation in a block excerpt instead of leaving the block blank', () => {
+    const NS = 'xmlns="http://www.w3.org/1998/Math/MathML"';
+    const { chapters } = structureView({ body: [{
+      type: 'chapter', attrs: { number: 1, id: 'ch1', title: 'One' }, content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'So' }, { type: 'math', content: `<math ${NS}><mi>x</mi></math>` },
+                                       { type: 'text', text: 'holds.' }] },
+        { type: 'equation', content: `<math ${NS}><mi>y</mi></math>` }] }] });
+    expect(chapters[0].blocks.map((b: any) => b.excerpt)).toEqual([`So ${EQUATION_EXCERPT} holds.`, EQUATION_EXCERPT]);
   });
 
   it('gives each chapter the id an override op targets it by', () => {

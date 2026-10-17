@@ -152,3 +152,53 @@ def test_every_equation_word_writes_is_drawn(tmp_path):
                               typst=shutil.which("typst"), run=_run)
     assert "<math" not in drawn
     assert drawn.count('<img class="math-display"') == 5 and drawn.count('<img class="math"') == 2
+
+
+@pytest.mark.skipif(not TOOLS, reason="pandoc or typst is not installed")
+def test_the_word_equations_run_the_real_stage_chain_on_both_engines(tmp_path):
+    """ingest -> extract -> ast-assemble (the gate) -> resolve (with an override
+    on an equation) -> paginate and paginate-typst, as a build runs them."""
+    pytest.importorskip("weasyprint")
+    from publisher_prepress.fontvault import locate_font
+    from stages.extract_stage import extract
+    from stages.ingest_stage import ingest
+    from stages.paginate_stage import paginate
+    from stages.resolve_stage import resolve
+    from stages.structure_stage import ast_assemble
+    from stages.typst_stages import _emit_typst, paginate_typst
+    from templates import house_designspec
+
+    def out(result, kind):
+        digest = next(a.hash for a in result.artifacts if a.kind == kind)
+        return str(next(Path(ctx.cas_root).rglob(digest)))
+
+    ctx = _ctx(tmp_path)
+    word = Path(__file__).resolve().parents[2] / "corpus" / "word" / "word-equation.docx"
+    source = out(ingest(ctx, docx_path=str(word)), "source")
+    ast_path = out(ast_assemble(ctx, html=out(extract(ctx, source=source), "html"), source=source), "ast")
+    ast = json.loads(Path(ast_path).read_text(encoding="utf-8"))
+    equations = [n for c in ast["body"] for n in c["content"] if n["type"] == "equation"]
+    assert len(equations) == 5
+    gone = equations[3]["sourceRef"]["docxId"]                         # the matrix
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text(json.dumps({"schema": "overrides/1", "ops": [
+        {"id": "ov-1", "sourceRef": {"docxId": gone}, "op": "delete", "actor": "user:r", "at": "2026-10-17T00:00:00Z"}]}),
+        encoding="utf-8")
+    doc_path = out(resolve(ctx, ast=ast_path, overrides_path=str(overrides)), "doc")
+    doc = json.loads(Path(doc_path).read_text(encoding="utf-8"))
+    assert sum(n["type"] == "equation" for c in doc["body"] for n in c["content"]) == 4
+
+    assert paginate(ctx, doc_path=doc_path).metrics["page_count"] >= 1
+    if locate_font("GFS Didot", "regular") is None:
+        pytest.skip("the house face is not installed for the Typst half")
+    styles = tmp_path / "styles.typ"
+    styles.write_text(_emit_typst({**house_designspec(), "preferredEngine": "typst"}), encoding="utf-8")
+    assert paginate_typst(ctx, doc_path=doc_path, typ_path=str(styles)).metrics["page_count"] >= 1
+
+
+def test_paint_another_typst_writes_is_refused_not_passed_as_rgb():
+    from stages.math_render import _k_only
+    assert _k_only('<g fill="#000000"/><path fill="none"/>') == '<g fill="device-cmyk(0 0 0 1)"/><path fill="none"/>'
+    for paint in ('fill="#000"', 'stroke="rgb(0,0,0)"', 'fill="black"', 'fill="#FF0000"'):
+        with pytest.raises(ValueError):
+            _k_only(f"<g {paint}/>")

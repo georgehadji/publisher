@@ -162,5 +162,8 @@ def test_equations_are_typst_math_in_the_pinned_math_face(tmp_path):
     data = (Path(ctx.cas_root) / pdf.hash[:2] / pdf.hash[2:4] / pdf.hash).read_bytes()
     assert b"NewCMMath" in data
     main = next((tmp_path / "work").rglob("main.typ")).read_text(encoding="utf-8")
-    assert "$E = 1 / 8 rho g H^2$" in main            # inline, in its sentence
-    assert "$ sum_(i = 1)^n x_i $" in main             # displayed: spaces inside the $
+    # The shape, not one pandoc version's spelling (CI pins 3.5, as the worker):
+    # inline math hugs its `$`, displayed math has spaces inside them.
+    import re
+    assert re.search(r"grows as \$E[^$]*rho[^$]*\S\$, and", main)
+    assert re.search(r"\$ sum_[^$]+ \$", main)
